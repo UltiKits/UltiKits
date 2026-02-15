@@ -107,7 +107,7 @@ public class KitServiceImpl implements KitService {
             return CreateResult.INVALID_NAME;
         }
 
-        if (kits.containsKey(normalizedName)) {
+        if (kits.get(normalizedName) != null) {
             return CreateResult.ALREADY_EXISTS;
         }
 
@@ -144,7 +144,7 @@ public class KitServiceImpl implements KitService {
     @Override
     public boolean deleteKit(String name) {
         String normalizedName = name.toLowerCase().trim();
-        if (!kits.containsKey(normalizedName)) {
+        if (kits.get(normalizedName) == null) {
             return false;
         }
 
