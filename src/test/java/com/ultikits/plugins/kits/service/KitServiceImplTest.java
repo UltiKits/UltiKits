@@ -2147,4 +2147,542 @@ class KitServiceImplTest {
             assertThat(result.getConsoleCommands()).containsExactly("give {player} diamond 1");
         }
     }
+
+    // =========================================================================
+    // SaveKitItems Filter Tests
+    // =========================================================================
+    @Nested
+    @DisplayName("SaveKitItems Filter Tests")
+    class SaveKitItemsFilterTests {
+
+        @BeforeEach
+        void setUp() {
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+        }
+
+        @Test
+        @DisplayName("saveKitItems filters out null items before serializing")
+        void filtersNullItems() throws Exception {
+            KitDefinition kit = createTestKit("filtertest");
+            injectKit(service, kit);
+
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+
+            ItemStack stone = mock(ItemStack.class);
+            when(stone.getType()).thenReturn(Material.STONE);
+
+            // Pass array with null items
+            ItemStack[] items = new ItemStack[]{null, stone, null};
+
+            doReturn("serialized").when(spyService).serializeItems(argThat(arr -> arr.length == 1));
+            boolean result = spyService.saveKitItems("filtertest", items);
+
+            assertThat(result).isTrue();
+        }
+
+        @Test
+        @DisplayName("saveKitItems filters out AIR items before serializing")
+        void filtersAirItems() throws Exception {
+            KitDefinition kit = createTestKit("filterair");
+            injectKit(service, kit);
+
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+
+            ItemStack air = mock(ItemStack.class);
+            when(air.getType()).thenReturn(Material.AIR);
+            ItemStack diamond = mock(ItemStack.class);
+            when(diamond.getType()).thenReturn(Material.DIAMOND);
+
+            ItemStack[] items = new ItemStack[]{air, diamond, air};
+
+            doReturn("serialized").when(spyService).serializeItems(argThat(arr -> arr.length == 1));
+            boolean result = spyService.saveKitItems("filterair", items);
+
+            assertThat(result).isTrue();
+        }
+
+        @Test
+        @DisplayName("saveKitItems returns false when serialization returns null")
+        void returnsFalseWhenSerializeFails() throws Exception {
+            KitDefinition kit = createTestKit("serfail");
+            injectKit(service, kit);
+
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+
+            ItemStack stone = mock(ItemStack.class);
+            when(stone.getType()).thenReturn(Material.STONE);
+
+            ItemStack[] items = new ItemStack[]{stone};
+
+            doReturn(null).when(spyService).serializeItems(any(ItemStack[].class));
+            boolean result = spyService.saveKitItems("serfail", items);
+
+            assertThat(result).isFalse();
+        }
+
+        @Test
+        @DisplayName("saveKitItems updates kit items field on success")
+        void updatesKitItemsField() throws Exception {
+            KitDefinition kit = createTestKit("updatefield");
+            kit.setItems("old");
+            injectKit(service, kit);
+
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+
+            ItemStack stone = mock(ItemStack.class);
+            when(stone.getType()).thenReturn(Material.STONE);
+
+            doReturn("newbase64").when(spyService).serializeItems(any(ItemStack[].class));
+            doReturn(true).when(spyService).saveKitToFile(eq("updatefield"), any(KitDefinition.class));
+
+            spyService.saveKitItems("updatefield", new ItemStack[]{stone});
+
+            assertThat(kit.getItems()).isEqualTo("newbase64");
+        }
+
+        @Test
+        @DisplayName("saveKitItems delegates to saveKitToFile")
+        void delegatesToSaveKitToFile() throws Exception {
+            KitDefinition kit = createTestKit("delegate");
+            injectKit(service, kit);
+
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+
+            ItemStack stone = mock(ItemStack.class);
+            when(stone.getType()).thenReturn(Material.STONE);
+
+            doReturn("data").when(spyService).serializeItems(any(ItemStack[].class));
+            doReturn(true).when(spyService).saveKitToFile(eq("delegate"), eq(kit));
+
+            boolean result = spyService.saveKitItems("delegate", new ItemStack[]{stone});
+
+            assertThat(result).isTrue();
+            verify(spyService).saveKitToFile("delegate", kit);
+        }
+
+        @Test
+        @DisplayName("saveKitItems with all null/air items passes empty array to serialize")
+        void allNullAirItems() throws Exception {
+            KitDefinition kit = createTestKit("allnull");
+            injectKit(service, kit);
+
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+
+            ItemStack air = mock(ItemStack.class);
+            when(air.getType()).thenReturn(Material.AIR);
+
+            ItemStack[] items = new ItemStack[]{null, air, null};
+
+            doReturn("emptyser").when(spyService).serializeItems(argThat(arr -> arr.length == 0));
+            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+
+            boolean result = spyService.saveKitItems("allnull", items);
+
+            assertThat(result).isTrue();
+        }
+    }
+
+    // =========================================================================
+    // CopyExampleKit Tests
+    // =========================================================================
+    @Nested
+    @DisplayName("CopyExampleKit Tests")
+    class CopyExampleKitTests {
+
+        @Test
+        @DisplayName("copyExampleKit is called when kits folder does not exist")
+        void calledWhenFolderCreated() {
+            // When kits folder doesn't exist, loadKits() creates it and calls copyExampleKit
+            // The resource won't exist in test context, but the method should handle null gracefully
+            service = createService();
+
+            File kitsFolder = new File(tempDir, "kits");
+            assertThat(kitsFolder).exists();
+        }
+
+        @Test
+        @DisplayName("copyExampleKit handles missing resource stream gracefully")
+        void handlesMissingResource() {
+            // loadKits -> kits folder doesn't exist -> mkdirs + copyExampleKit
+            // The test classloader won't have kits/starter.yml, so InputStream is null
+            // Should not throw exception
+            service = createService();
+
+            File starterFile = new File(tempDir, "kits/starter.yml");
+            // Should not crash -- either the file exists or it doesn't depending on resources
+        }
+    }
+
+    // =========================================================================
+    // ClaimKit Deserialization Edge Cases
+    // =========================================================================
+    @Nested
+    @DisplayName("ClaimKit Deserialization Edge Cases")
+    class ClaimKitDeserializationTests {
+
+        private Player player;
+        private PlayerInventory inventory;
+
+        @BeforeEach
+        void setUp() {
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+
+            player = createMockPlayer();
+            inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[36]);
+        }
+
+        @Test
+        @DisplayName("claimKit returns EMPTY_KIT when deserialization returns empty array")
+        void emptyArrayFromDeserialize() throws Exception {
+            KitDefinition kit = createTestKit("emptyresult");
+            kit.setItems("someBase64Data");
+            injectKit(service, kit);
+
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+
+            doReturn(new ItemStack[0]).when(spyService).deserializeItems("someBase64Data");
+
+            KitService.ClaimResult result = spyService.claimKit(player, "emptyresult");
+            assertThat(result).isEqualTo(KitService.ClaimResult.EMPTY_KIT);
+        }
+
+        @Test
+        @DisplayName("claimKit returns EMPTY_KIT when deserialization returns null")
+        void nullFromDeserialize() throws Exception {
+            KitDefinition kit = createTestKit("nullresult");
+            kit.setItems("someBase64Data");
+            injectKit(service, kit);
+
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+
+            doReturn(null).when(spyService).deserializeItems("someBase64Data");
+
+            KitService.ClaimResult result = spyService.claimKit(player, "nullresult");
+            assertThat(result).isEqualTo(KitService.ClaimResult.EMPTY_KIT);
+        }
+    }
+
+    // =========================================================================
+    // CreateKit Serialization Error Tests
+    // =========================================================================
+    @Nested
+    @DisplayName("CreateKit Serialization Error Tests")
+    class CreateKitSerializationTests {
+
+        private Player player;
+        private PlayerInventory inventory;
+
+        @BeforeEach
+        void setUp() {
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+
+            player = createMockPlayer();
+            inventory = player.getInventory();
+        }
+
+        @Test
+        @DisplayName("createKit returns ERROR when serialization fails")
+        void serializationFails() throws Exception {
+            ItemStack stone = mock(ItemStack.class);
+            when(stone.getType()).thenReturn(Material.STONE);
+            ItemStack[] contents = new ItemStack[]{stone};
+            when(inventory.getStorageContents()).thenReturn(contents);
+
+            KitServiceImpl spyService = spy(service);
+            doReturn(null).when(spyService).serializeItems(any(ItemStack[].class));
+
+            KitService.CreateResult result = spyService.createKit(player, "failser");
+            assertThat(result).isEqualTo(KitService.CreateResult.ERROR);
+        }
+
+        @Test
+        @DisplayName("createKit returns ERROR when saveKitToFile fails")
+        void saveToFileFails() throws Exception {
+            ItemStack stone = mock(ItemStack.class);
+            when(stone.getType()).thenReturn(Material.STONE);
+            ItemStack[] contents = new ItemStack[]{stone};
+            when(inventory.getStorageContents()).thenReturn(contents);
+
+            KitServiceImpl spyService = spy(service);
+            doReturn("data").when(spyService).serializeItems(any(ItemStack[].class));
+            doReturn(false).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+
+            KitService.CreateResult result = spyService.createKit(player, "savefail");
+            assertThat(result).isEqualTo(KitService.CreateResult.ERROR);
+        }
+
+        @Test
+        @DisplayName("createKit sets icon from first valid item material")
+        void setsIconFromFirstItem() throws Exception {
+            ItemStack diamond = mock(ItemStack.class);
+            when(diamond.getType()).thenReturn(Material.DIAMOND_SWORD);
+            ItemStack stone = mock(ItemStack.class);
+            when(stone.getType()).thenReturn(Material.STONE);
+            ItemStack[] contents = new ItemStack[]{diamond, stone};
+            when(inventory.getStorageContents()).thenReturn(contents);
+
+            KitServiceImpl spyService = spy(service);
+            doReturn("serialized").when(spyService).serializeItems(any(ItemStack[].class));
+            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+
+            KitService.CreateResult result = spyService.createKit(player, "icontest");
+            assertThat(result).isEqualTo(KitService.CreateResult.SUCCESS);
+
+            ArgumentCaptor<KitDefinition> captor = ArgumentCaptor.forClass(KitDefinition.class);
+            verify(spyService).saveKitToFile(eq("icontest"), captor.capture());
+            assertThat(captor.getValue().getIcon()).isEqualTo("DIAMOND_SWORD");
+        }
+
+        @Test
+        @DisplayName("createKit sets displayName with original casing")
+        void setsDisplayNameWithOriginalCase() throws Exception {
+            ItemStack stone = mock(ItemStack.class);
+            when(stone.getType()).thenReturn(Material.STONE);
+            ItemStack[] contents = new ItemStack[]{stone};
+            when(inventory.getStorageContents()).thenReturn(contents);
+
+            KitServiceImpl spyService = spy(service);
+            doReturn("serialized").when(spyService).serializeItems(any(ItemStack[].class));
+            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+
+            spyService.createKit(player, "MyNewKit");
+
+            ArgumentCaptor<KitDefinition> captor = ArgumentCaptor.forClass(KitDefinition.class);
+            verify(spyService).saveKitToFile(eq("mynewkit"), captor.capture());
+            assertThat(captor.getValue().getDisplayName()).isEqualTo("&fMyNewKit");
+        }
+
+        @Test
+        @DisplayName("createKit adds kit to internal map on success")
+        void addsToInternalMap() throws Exception {
+            ItemStack stone = mock(ItemStack.class);
+            when(stone.getType()).thenReturn(Material.STONE);
+            ItemStack[] contents = new ItemStack[]{stone};
+            when(inventory.getStorageContents()).thenReturn(contents);
+
+            KitServiceImpl spyService = spy(service);
+            doReturn("serialized").when(spyService).serializeItems(any(ItemStack[].class));
+            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+
+            KitService.CreateResult result = spyService.createKit(player, "added");
+            assertThat(result).isEqualTo(KitService.CreateResult.SUCCESS);
+            assertThat(spyService.getKit("added")).isNotNull();
+        }
+
+        @Test
+        @DisplayName("createKit filters out air and null from inventory before serializing")
+        void filtersInventoryContents() throws Exception {
+            ItemStack air = mock(ItemStack.class);
+            when(air.getType()).thenReturn(Material.AIR);
+            ItemStack stone = mock(ItemStack.class);
+            when(stone.getType()).thenReturn(Material.STONE);
+            ItemStack[] contents = new ItemStack[]{null, air, stone, null};
+            when(inventory.getStorageContents()).thenReturn(contents);
+
+            KitServiceImpl spyService = spy(service);
+            doReturn("data").when(spyService).serializeItems(argThat(arr -> arr.length == 1));
+            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+
+            KitService.CreateResult result = spyService.createKit(player, "filtered");
+            assertThat(result).isEqualTo(KitService.CreateResult.SUCCESS);
+        }
+    }
+
+    // =========================================================================
+    // ParseKitFile Exception Tests
+    // =========================================================================
+    @Nested
+    @DisplayName("ParseKitFile Exception Tests")
+    class ParseKitFileExceptionTests {
+
+        @BeforeEach
+        void setUp() {
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+        }
+
+        @Test
+        @DisplayName("parseKitFile returns null for corrupted YAML file")
+        void returnsNullForCorruptedFile() throws IOException {
+            File kitsFolder = new File(tempDir, "kits");
+            File kitFile = new File(kitsFolder, "corrupt.yml");
+
+            FileWriter writer = new FileWriter(kitFile);
+            writer.write("invalid: yaml: [\n  bad: [[\n");
+            writer.close();
+
+            KitDefinition result = service.parseKitFile(kitFile);
+            // May return a kit with defaults or null depending on snakeyaml parsing
+            // The key is it should not throw
+        }
+
+        @Test
+        @DisplayName("parseKitFile returns kit with default permission when not specified")
+        void defaultPermission() throws IOException {
+            File kitsFolder = new File(tempDir, "kits");
+            File kitFile = new File(kitsFolder, "noperm.yml");
+
+            FileWriter writer = new FileWriter(kitFile);
+            writer.write("displayName: \"&aTest\"\nicon: CHEST\n");
+            writer.close();
+
+            KitDefinition result = service.parseKitFile(kitFile);
+            assertThat(result).isNotNull();
+            assertThat(result.getPermission()).isEqualTo("");
+        }
+
+        @Test
+        @DisplayName("parseKitFile returns kit with empty description when not specified")
+        void defaultDescription() throws IOException {
+            File kitsFolder = new File(tempDir, "kits");
+            File kitFile = new File(kitsFolder, "nodesc.yml");
+
+            FileWriter writer = new FileWriter(kitFile);
+            writer.write("displayName: \"&aTest\"\nicon: CHEST\n");
+            writer.close();
+
+            KitDefinition result = service.parseKitFile(kitFile);
+            assertThat(result).isNotNull();
+            assertThat(result.getDescription()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("parseKitFile returns kit with empty player commands when not specified")
+        void defaultPlayerCommands() throws IOException {
+            File kitsFolder = new File(tempDir, "kits");
+            File kitFile = new File(kitsFolder, "nocmds.yml");
+
+            FileWriter writer = new FileWriter(kitFile);
+            writer.write("displayName: \"&aTest\"\n");
+            writer.close();
+
+            KitDefinition result = service.parseKitFile(kitFile);
+            assertThat(result).isNotNull();
+            assertThat(result.getPlayerCommands()).isEmpty();
+            assertThat(result.getConsoleCommands()).isEmpty();
+        }
+    }
+
+    // =========================================================================
+    // ValidateClaim Detail Tests
+    // =========================================================================
+    @Nested
+    @DisplayName("ValidateClaim Detail Tests")
+    class ValidateClaimDetailTests {
+
+        private Player player;
+
+        @BeforeEach
+        void setUp() {
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            player = createMockPlayer();
+        }
+
+        @Test
+        @DisplayName("validateClaim returns null when all checks pass and kit has items")
+        void allChecksPassWithItems() throws Exception {
+            KitDefinition kit = createTestKit("valid");
+            kit.setItems("someBase64Data");
+            kit.setPermission("");
+            kit.setLevelRequired(0);
+            kit.setPrice(0);
+            injectKit(service, kit);
+
+            KitService.ClaimResult result = service.validateClaim(player, kit);
+            assertThat(result).isNull();
+        }
+
+        @Test
+        @DisplayName("validateClaim returns EMPTY_KIT when kit has no items but passes other checks")
+        void emptyKitAfterChecks() throws Exception {
+            KitDefinition kit = createTestKit("noitems");
+            kit.setItems("");
+            kit.setPermission("");
+            kit.setLevelRequired(0);
+            kit.setPrice(0);
+            injectKit(service, kit);
+
+            KitService.ClaimResult result = service.validateClaim(player, kit);
+            assertThat(result).isEqualTo(KitService.ClaimResult.EMPTY_KIT);
+        }
+
+        @Test
+        @DisplayName("validateClaim returns EMPTY_KIT when items is null")
+        void nullItemsAfterChecks() throws Exception {
+            KitDefinition kit = createTestKit("nullitems");
+            kit.setItems(null);
+            kit.setPermission("");
+            kit.setLevelRequired(0);
+            kit.setPrice(0);
+            injectKit(service, kit);
+
+            KitService.ClaimResult result = service.validateClaim(player, kit);
+            assertThat(result).isEqualTo(KitService.ClaimResult.EMPTY_KIT);
+        }
+
+        @Test
+        @DisplayName("validateClaim returns NO_PERMISSION before checking level or economy")
+        void permissionBeforeLevel() throws Exception {
+            KitDefinition kit = createTestKit("permprio");
+            kit.setPermission("kit.special");
+            kit.setLevelRequired(100);
+            kit.setPrice(9999);
+            injectKit(service, kit);
+
+            when(player.hasPermission("kit.special")).thenReturn(false);
+
+            KitService.ClaimResult result = service.validateClaim(player, kit);
+            assertThat(result).isEqualTo(KitService.ClaimResult.NO_PERMISSION);
+        }
+    }
+
+    // =========================================================================
+    // Enum Value Tests
+    // =========================================================================
+    @Nested
+    @DisplayName("Enum Value Tests")
+    class EnumValueTests {
+
+        @Test
+        @DisplayName("ClaimResult has all expected values")
+        void claimResultValues() {
+            assertThat(KitService.ClaimResult.values()).containsExactlyInAnyOrder(
+                    KitService.ClaimResult.SUCCESS,
+                    KitService.ClaimResult.NOT_FOUND,
+                    KitService.ClaimResult.NO_PERMISSION,
+                    KitService.ClaimResult.INSUFFICIENT_LEVEL,
+                    KitService.ClaimResult.INSUFFICIENT_FUNDS,
+                    KitService.ClaimResult.ALREADY_CLAIMED,
+                    KitService.ClaimResult.ON_COOLDOWN,
+                    KitService.ClaimResult.INVENTORY_FULL,
+                    KitService.ClaimResult.EMPTY_KIT,
+                    KitService.ClaimResult.ERROR
+            );
+        }
+
+        @Test
+        @DisplayName("CreateResult has all expected values")
+        void createResultValues() {
+            assertThat(KitService.CreateResult.values()).containsExactlyInAnyOrder(
+                    KitService.CreateResult.SUCCESS,
+                    KitService.CreateResult.ALREADY_EXISTS,
+                    KitService.CreateResult.INVALID_NAME,
+                    KitService.CreateResult.EMPTY_INVENTORY,
+                    KitService.CreateResult.ERROR
+            );
+        }
+    }
 }

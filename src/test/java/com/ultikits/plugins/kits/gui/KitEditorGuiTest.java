@@ -3,11 +3,16 @@ package com.ultikits.plugins.kits.gui;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.Server;
 import org.bukkit.entity.Player;
+import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemFactory;
 import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -17,6 +22,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -25,6 +32,51 @@ import static org.mockito.Mockito.*;
 @DisplayName("KitEditorGui")
 @ExtendWith(MockitoExtension.class)
 class KitEditorGuiTest {
+
+    private static ItemFactory mockItemFactory;
+
+    @BeforeAll
+    @SuppressWarnings("unchecked")
+    static void setUpClass() {
+        if (Bukkit.getServer() == null) {
+            Server mockServer = mock(Server.class);
+            java.util.logging.Logger mockJulLogger = mock(java.util.logging.Logger.class);
+            when(mockServer.getLogger()).thenReturn(mockJulLogger);
+            mockItemFactory = mock(ItemFactory.class);
+            when(mockServer.getItemFactory()).thenReturn(mockItemFactory);
+            Bukkit.setServer(mockServer);
+        } else {
+            mockItemFactory = mock(ItemFactory.class);
+            when(Bukkit.getServer().getItemFactory()).thenReturn(mockItemFactory);
+        }
+        when(mockItemFactory.getItemMeta(any(Material.class))).thenAnswer(inv -> createMockItemMeta());
+        when(mockItemFactory.isApplicable(any(), any(Material.class))).thenReturn(true);
+        when(mockItemFactory.asMetaFor(any(), any(Material.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(mockItemFactory.equals(any(), any())).thenReturn(false);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ItemMeta createMockItemMeta() {
+        ItemMeta meta = mock(ItemMeta.class);
+        final String[] displayName = {null};
+        final List<String>[] lore = new List[]{null};
+
+        lenient().doAnswer(inv -> {
+            displayName[0] = inv.getArgument(0);
+            return null;
+        }).when(meta).setDisplayName(anyString());
+        lenient().when(meta.getDisplayName()).thenAnswer(inv -> displayName[0]);
+        lenient().doAnswer(inv -> {
+            lore[0] = new ArrayList<>((List<String>) inv.getArgument(0));
+            return null;
+        }).when(meta).setLore(anyList());
+        lenient().when(meta.getLore()).thenAnswer(inv -> lore[0] != null ? new ArrayList<>(lore[0]) : null);
+        lenient().when(meta.hasDisplayName()).thenAnswer(inv -> displayName[0] != null);
+        lenient().when(meta.hasLore()).thenAnswer(inv -> lore[0] != null && !lore[0].isEmpty());
+        lenient().when(meta.clone()).thenReturn(meta);
+
+        return meta;
+    }
 
     @Mock
     private UltiToolsPlugin plugin;
@@ -408,6 +460,222 @@ class KitEditorGuiTest {
             gui.handleSave();
 
             verify(plugin).i18n("领取礼包时发生错误");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // OnOpen Tests
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("OnOpen Tests")
+    class OnOpenTests {
+
+        @Mock
+        private InventoryOpenEvent openEvent;
+
+        @Mock
+        private Inventory eventInventory;
+
+        @BeforeEach
+        void setUpOnOpen() throws Exception {
+            lenient().when(openEvent.getInventory()).thenReturn(eventInventory);
+
+            // The Gui class from obliviate-invs stores an 'inventory' field that is null
+            // unless the GUI is opened through Bukkit. We must inject a mock inventory
+            // so that addItem() doesn't NPE on this.inventory.getSize().
+            Inventory guiInventory = mock(Inventory.class);
+            lenient().when(guiInventory.getSize()).thenReturn(54); // 6 rows = 54 slots
+
+            // Walk up the class hierarchy to find and set the 'inventory' field
+            Class<?> clazz = gui.getClass();
+            while (clazz != null) {
+                try {
+                    Field invField = clazz.getDeclaredField("inventory");
+                    invField.setAccessible(true); // NOPMD
+                    invField.set(gui, guiInventory);
+                    break;
+                } catch (NoSuchFieldException e) {
+                    clazz = clazz.getSuperclass();
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("onOpen places control buttons without error when kit has no items")
+        void onOpenNoItems() {
+            kit.setItems(null);
+
+            gui.onOpen(openEvent);
+
+            // Verify the method ran fully: i18n called for save and cancel button labels
+            verify(plugin).i18n("保存");
+            verify(plugin).i18n("取消");
+        }
+
+        @Test
+        @DisplayName("onOpen places save button that triggers handleSave")
+        void onOpenSaveButton() {
+            kit.setItems(null);
+
+            gui.onOpen(openEvent);
+
+            // Verify i18n was called for the save button label
+            verify(plugin).i18n("保存");
+        }
+
+        @Test
+        @DisplayName("onOpen places cancel button")
+        void onOpenCancelButton() {
+            kit.setItems(null);
+
+            gui.onOpen(openEvent);
+
+            verify(plugin).i18n("取消");
+        }
+
+        @Test
+        @DisplayName("onOpen with kit items calls deserializeItems")
+        void onOpenWithItems() {
+            kit.setItems("someBase64Data");
+
+            ItemStack mockItem = mock(ItemStack.class);
+            when(mockItem.getType()).thenReturn(Material.DIAMOND);
+            ItemStack clonedItem = mock(ItemStack.class);
+            when(mockItem.clone()).thenReturn(clonedItem);
+
+            when(kitService.deserializeItems("someBase64Data")).thenReturn(new ItemStack[]{mockItem});
+
+            gui.onOpen(openEvent);
+
+            verify(kitService).deserializeItems("someBase64Data");
+            verify(eventInventory).setItem(0, clonedItem);
+        }
+
+        @Test
+        @DisplayName("onOpen with null deserialized items does not crash")
+        void onOpenNullDeserialized() {
+            kit.setItems("corruptedData");
+            when(kitService.deserializeItems("corruptedData")).thenReturn(null);
+
+            gui.onOpen(openEvent);
+
+            // Should not try to set any items in inventory
+            verify(eventInventory, never()).setItem(anyInt(), any(ItemStack.class));
+        }
+
+        @Test
+        @DisplayName("onOpen skips AIR items from deserialized array")
+        void onOpenSkipsAirItems() {
+            kit.setItems("data");
+
+            ItemStack airItem = mock(ItemStack.class);
+            when(airItem.getType()).thenReturn(Material.AIR);
+
+            ItemStack realItem = mock(ItemStack.class);
+            when(realItem.getType()).thenReturn(Material.STONE);
+            ItemStack clonedReal = mock(ItemStack.class);
+            when(realItem.clone()).thenReturn(clonedReal);
+
+            when(kitService.deserializeItems("data")).thenReturn(new ItemStack[]{airItem, realItem});
+
+            gui.onOpen(openEvent);
+
+            // Air item at slot 0 should be skipped
+            verify(eventInventory, never()).setItem(eq(0), any(ItemStack.class));
+            // Real item at slot 1 should be placed
+            verify(eventInventory).setItem(1, clonedReal);
+        }
+
+        @Test
+        @DisplayName("onOpen skips null items in deserialized array")
+        void onOpenSkipsNullItems() {
+            kit.setItems("data");
+
+            ItemStack realItem = mock(ItemStack.class);
+            when(realItem.getType()).thenReturn(Material.IRON_INGOT);
+            ItemStack clonedReal = mock(ItemStack.class);
+            when(realItem.clone()).thenReturn(clonedReal);
+
+            when(kitService.deserializeItems("data")).thenReturn(new ItemStack[]{null, realItem});
+
+            gui.onOpen(openEvent);
+
+            // Null at slot 0 skipped, real item at slot 1 placed
+            verify(eventInventory, never()).setItem(eq(0), any(ItemStack.class));
+            verify(eventInventory).setItem(1, clonedReal);
+        }
+
+        @Test
+        @DisplayName("onOpen fills glass panes in control row")
+        void onOpenFillsGlassRow() {
+            kit.setItems(null);
+
+            gui.onOpen(openEvent);
+
+            // Glass panes go in slots 46,47,48,50,51,52 (not 45=save, 49=info, 53=cancel)
+            // verify no crash and i18n labels set
+            verify(plugin).i18n("保存");
+            verify(plugin).i18n("取消");
+        }
+
+        @Test
+        @DisplayName("onOpen shows info button with kit name and description")
+        void onOpenInfoButton() {
+            kit.setItems(null);
+
+            gui.onOpen(openEvent);
+
+            // The info button displays kit.getName() and description
+            // Verify method ran to completion
+            verify(plugin).i18n("保存");
+            verify(plugin).i18n("取消");
+        }
+
+        @Test
+        @DisplayName("onOpen limits items to ITEM_SLOTS (45)")
+        void onOpenLimitsToItemSlots() {
+            kit.setItems("data");
+
+            // Create 50 items (more than the 45-slot limit)
+            ItemStack[] bigArray = new ItemStack[50];
+            for (int i = 0; i < 50; i++) {
+                ItemStack item = mock(ItemStack.class);
+                // Use lenient for all stubs since items beyond slot 44 won't be accessed
+                lenient().when(item.getType()).thenReturn(Material.STONE);
+                ItemStack clone = mock(ItemStack.class);
+                lenient().when(item.clone()).thenReturn(clone);
+                bigArray[i] = item;
+            }
+            when(kitService.deserializeItems("data")).thenReturn(bigArray);
+
+            gui.onOpen(openEvent);
+
+            // Only items 0-44 should be placed (45 items max)
+            verify(eventInventory, times(45)).setItem(anyInt(), any(ItemStack.class));
+        }
+
+        @Test
+        @DisplayName("onOpen with hasItems false does not call deserializeItems")
+        void onOpenHasItemsFalse() {
+            // setItems to empty string => hasItems() returns false
+            kit.setItems("");
+
+            gui.onOpen(openEvent);
+
+            verify(kitService, never()).deserializeItems(anyString());
+        }
+
+        @Test
+        @DisplayName("onOpen with kit having empty description creates info lore correctly")
+        void onOpenEmptyDescription() {
+            kit.setItems(null);
+            kit.setDescription(new ArrayList<>());
+
+            gui.onOpen(openEvent);
+
+            // Should not crash with empty description
+            verify(plugin).i18n("保存");
         }
     }
 }

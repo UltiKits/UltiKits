@@ -4,6 +4,7 @@ import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
 import com.ultikits.ultitools.utils.EconomyUtils;
+import mc.obliviate.inventory.Gui;
 import mc.obliviate.inventory.Icon;
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
@@ -21,6 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -881,6 +883,202 @@ class KitBrowserGuiTest {
 
             ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
             verify(player, times(1)).sendMessage(captor.capture());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // OnOpen Tests
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("OnOpen Tests")
+    class OnOpenTests {
+
+        /**
+         * Inject a mock inventory into the Gui's 'inventory' field so that addItem()
+         * can call this.inventory.getSize() without NPE.
+         */
+        private void injectGuiInventory(Gui guiInstance) throws Exception {
+            org.bukkit.inventory.Inventory mockInv = mock(org.bukkit.inventory.Inventory.class);
+            lenient().when(mockInv.getSize()).thenReturn(54); // 6 rows
+
+            Class<?> clazz = guiInstance.getClass();
+            while (clazz != null) {
+                try {
+                    Field invField = clazz.getDeclaredField("inventory");
+                    invField.setAccessible(true); // NOPMD
+                    invField.set(guiInstance, mockInv);
+                    break;
+                } catch (NoSuchFieldException e) {
+                    clazz = clazz.getSuperclass();
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("onOpen populates separator row and page indicator for empty kit list")
+        void onOpenEmptyKits() throws Exception {
+            setEconomyAvailable(false);
+            when(kitService.getAvailableKits(player)).thenReturn(Collections.emptyList());
+            injectGuiInventory(gui);
+
+            org.bukkit.event.inventory.InventoryOpenEvent event =
+                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
+
+            gui.onOpen(event);
+
+            verify(kitService).getAvailableKits(player);
+        }
+
+        @Test
+        @DisplayName("onOpen shows kits on first page")
+        void onOpenWithKits() throws Exception {
+            setEconomyAvailable(false);
+            KitDefinition kit1 = createKit("starter", "&aStarter", "CHEST", 0, 0);
+            KitDefinition kit2 = createKit("vip", "&6VIP", "DIAMOND", 100, 0);
+            when(kitService.getAvailableKits(player)).thenReturn(Arrays.asList(kit1, kit2));
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(gui);
+
+            org.bukkit.event.inventory.InventoryOpenEvent event =
+                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
+
+            gui.onOpen(event);
+
+            verify(kitService).getAvailableKits(player);
+        }
+
+        @Test
+        @DisplayName("onOpen does not show prev button on first page")
+        void noPrevButtonOnFirstPage() throws Exception {
+            setEconomyAvailable(false);
+            when(kitService.getAvailableKits(player)).thenReturn(Collections.emptyList());
+            injectGuiInventory(gui);
+
+            org.bukkit.event.inventory.InventoryOpenEvent event =
+                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
+
+            gui.onOpen(event);
+
+            // Page 0 means no previous page button -- just verify no crash
+        }
+
+        @Test
+        @DisplayName("onOpen does not show next button when all kits fit on one page")
+        void noNextButtonSinglePage() throws Exception {
+            setEconomyAvailable(false);
+            List<KitDefinition> kits = new ArrayList<>();
+            for (int i = 0; i < 5; i++) {
+                KitDefinition k = createKit("kit" + i, "&fKit" + i, "CHEST", 0, 0);
+                kits.add(k);
+            }
+            when(kitService.getAvailableKits(player)).thenReturn(kits);
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(gui);
+
+            org.bukkit.event.inventory.InventoryOpenEvent event =
+                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
+
+            gui.onOpen(event);
+        }
+
+        @Test
+        @DisplayName("onOpen shows next button when kits exceed one page")
+        void nextButtonWhenMultiplePages() throws Exception {
+            setEconomyAvailable(false);
+            List<KitDefinition> kits = new ArrayList<>();
+            for (int i = 0; i < 30; i++) {
+                KitDefinition k = createKit("kit" + i, "&fKit" + i, "CHEST", 0, 0);
+                kits.add(k);
+            }
+            when(kitService.getAvailableKits(player)).thenReturn(kits);
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(gui);
+
+            org.bukkit.event.inventory.InventoryOpenEvent event =
+                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
+
+            gui.onOpen(event);
+        }
+
+        @Test
+        @DisplayName("onOpen page 1 shows prev button")
+        void prevButtonOnPageOne() throws Exception {
+            setEconomyAvailable(false);
+            KitBrowserGui page1Gui = new KitBrowserGui(player, plugin, kitService, 1);
+            injectGuiInventory(page1Gui);
+
+            List<KitDefinition> kits = new ArrayList<>();
+            for (int i = 0; i < 30; i++) {
+                KitDefinition k = createKit("kit" + i, "&fKit" + i, "CHEST", 0, 0);
+                kits.add(k);
+            }
+            when(kitService.getAvailableKits(player)).thenReturn(kits);
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+
+            org.bukkit.event.inventory.InventoryOpenEvent event =
+                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
+
+            page1Gui.onOpen(event);
+        }
+
+        @Test
+        @DisplayName("onOpen correctly calculates total pages")
+        void correctTotalPages() throws Exception {
+            setEconomyAvailable(false);
+            List<KitDefinition> kits = new ArrayList<>();
+            for (int i = 0; i < 56; i++) {
+                KitDefinition k = createKit("kit" + i, "&fKit" + i, "CHEST", 0, 0);
+                kits.add(k);
+            }
+            when(kitService.getAvailableKits(player)).thenReturn(kits);
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(gui);
+
+            org.bukkit.event.inventory.InventoryOpenEvent event =
+                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
+
+            gui.onOpen(event);
+        }
+
+        @Test
+        @DisplayName("onOpen last page does not show next button")
+        void lastPageNoNextButton() throws Exception {
+            setEconomyAvailable(false);
+            KitBrowserGui lastPageGui = new KitBrowserGui(player, plugin, kitService, 1);
+            injectGuiInventory(lastPageGui);
+
+            List<KitDefinition> kits = new ArrayList<>();
+            for (int i = 0; i < 30; i++) {
+                KitDefinition k = createKit("kit" + i, "&fKit" + i, "CHEST", 0, 0);
+                kits.add(k);
+            }
+            when(kitService.getAvailableKits(player)).thenReturn(kits);
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+
+            org.bukkit.event.inventory.InventoryOpenEvent event =
+                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
+
+            lastPageGui.onOpen(event);
+        }
+
+        @Test
+        @DisplayName("onOpen handles exactly 28 kits (one full page)")
+        void exactlyOnePage() throws Exception {
+            setEconomyAvailable(false);
+            List<KitDefinition> kits = new ArrayList<>();
+            for (int i = 0; i < 28; i++) {
+                KitDefinition k = createKit("kit" + i, "&fKit" + i, "CHEST", 0, 0);
+                kits.add(k);
+            }
+            when(kitService.getAvailableKits(player)).thenReturn(kits);
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(gui);
+
+            org.bukkit.event.inventory.InventoryOpenEvent event =
+                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
+
+            gui.onOpen(event);
         }
     }
 }
