@@ -1,6 +1,5 @@
 package com.ultikits.plugins.kits.entity;
 
-import java.util.UUID;
 import com.ultikits.ultitools.abstracts.data.BaseDataEntity;
 import com.ultikits.ultitools.annotations.Column;
 import com.ultikits.ultitools.annotations.Table;
@@ -16,10 +15,10 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = true)
 @Table("kits_claims")
-public class KitClaimData extends BaseDataEntity<UUID> {
+public class KitClaimData extends BaseDataEntity<String> {
 
     @Column("uuid")
-    private UUID uuid;
+    private String uuid;
 
     @Column("player_uuid")
     private String playerUuid;
@@ -34,12 +33,12 @@ public class KitClaimData extends BaseDataEntity<UUID> {
     private int claimCount;
 
     @Override
-    public UUID getId() {
+    public String getId() {
         return uuid;
     }
 
     @Override
-    public void setId(UUID id) {
+    public void setId(String id) {
         this.uuid = id;
     }
 }

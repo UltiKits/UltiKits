@@ -976,7 +976,7 @@ class KitServiceImplTest {
             injectKit(service, kit);
 
             KitClaimData existingClaim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid(player.getUniqueId().toString())
                     .kitName("onetime")
                     .lastClaim(System.currentTimeMillis())
@@ -998,7 +998,7 @@ class KitServiceImplTest {
             injectKit(service, kit);
 
             KitClaimData existingClaim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid(player.getUniqueId().toString())
                     .kitName("cooldown")
                     .lastClaim(System.currentTimeMillis())
@@ -1162,7 +1162,7 @@ class KitServiceImplTest {
             injectKit(service, kit);
 
             KitClaimData oldClaim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid(player.getUniqueId().toString())
                     .kitName("reclaim")
                     .lastClaim(System.currentTimeMillis() - 20000) // 20s ago, cooldown 10s
@@ -1215,7 +1215,7 @@ class KitServiceImplTest {
             injectKit(service, kit);
 
             KitClaimData existingClaim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid(player.getUniqueId().toString())
                     .kitName("rebuyable")
                     .lastClaim(System.currentTimeMillis())
@@ -1326,7 +1326,7 @@ class KitServiceImplTest {
             kit.setReBuyable(false);
 
             KitClaimData claim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid(player.getUniqueId().toString())
                     .kitName("once")
                     .lastClaim(System.currentTimeMillis())
@@ -1359,7 +1359,7 @@ class KitServiceImplTest {
             kit.setCooldown(3600);
 
             KitClaimData claim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid(player.getUniqueId().toString())
                     .kitName("cd")
                     .lastClaim(System.currentTimeMillis())
@@ -1381,7 +1381,7 @@ class KitServiceImplTest {
             kit.setCooldown(10);
 
             KitClaimData claim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid(player.getUniqueId().toString())
                     .kitName("expired")
                     .lastClaim(System.currentTimeMillis() - 20000)
@@ -1402,7 +1402,7 @@ class KitServiceImplTest {
             kit.setCooldown(0);
 
             KitClaimData claim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid(player.getUniqueId().toString())
                     .kitName("zerocool")
                     .lastClaim(System.currentTimeMillis())
@@ -1423,7 +1423,7 @@ class KitServiceImplTest {
             kit.setCooldown(1);
 
             KitClaimData claim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid(player.getUniqueId().toString())
                     .kitName("veryold")
                     .lastClaim(System.currentTimeMillis() - 1000000)
@@ -1913,7 +1913,7 @@ class KitServiceImplTest {
         @DisplayName("getClaimData finds claim by kit name (case insensitive)")
         void getClaimDataFindsByName() {
             KitClaimData claim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid("00000000-0000-0000-0000-000000000001")
                     .kitName("Starter")
                     .lastClaim(System.currentTimeMillis())
@@ -1931,7 +1931,7 @@ class KitServiceImplTest {
         @DisplayName("getClaimData ignores claims for different kits")
         void getClaimDataIgnoresDifferentKits() {
             KitClaimData claim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid("00000000-0000-0000-0000-000000000001")
                     .kitName("vip")
                     .lastClaim(System.currentTimeMillis())
@@ -1949,7 +1949,7 @@ class KitServiceImplTest {
         @DisplayName("getClaimData finds correct claim among multiple")
         void getClaimDataFindsAmongMultiple() {
             KitClaimData starterClaim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid("00000000-0000-0000-0000-000000000001")
                     .kitName("starter")
                     .lastClaim(1000L)
@@ -1957,7 +1957,7 @@ class KitServiceImplTest {
                     .build();
 
             KitClaimData vipClaim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid("00000000-0000-0000-0000-000000000001")
                     .kitName("vip")
                     .lastClaim(2000L)
@@ -2004,7 +2004,7 @@ class KitServiceImplTest {
         @DisplayName("updateClaimData updates existing record incrementing claim count")
         void updateClaimDataUpdates() throws Exception {
             KitClaimData existing = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid("00000000-0000-0000-0000-000000000001")
                     .kitName("starter")
                     .lastClaim(1000L)
@@ -2024,7 +2024,7 @@ class KitServiceImplTest {
         @DisplayName("updateClaimData logs error on update failure")
         void updateClaimDataLogsError() throws Exception {
             KitClaimData existing = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid("00000000-0000-0000-0000-000000000001")
                     .kitName("starter")
                     .lastClaim(1000L)
