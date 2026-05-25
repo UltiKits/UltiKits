@@ -18,7 +18,7 @@ class KitClaimDataTest {
         @Test
         @DisplayName("builds with all fields set")
         void buildsWithAllFields() {
-            UUID id = UUID.randomUUID();
+            String id = UUID.randomUUID().toString();
             String playerUuid = UUID.randomUUID().toString();
 
             KitClaimData data = KitClaimData.builder()
@@ -56,7 +56,7 @@ class KitClaimDataTest {
         @Test
         @DisplayName("getId returns uuid field")
         void getIdReturnsUuid() {
-            UUID id = UUID.randomUUID();
+            String id = UUID.randomUUID().toString();
             KitClaimData data = KitClaimData.builder().uuid(id).build();
 
             assertThat(data.getId()).isEqualTo(id);
@@ -66,7 +66,7 @@ class KitClaimDataTest {
         @DisplayName("setId updates uuid field")
         void setIdUpdatesUuid() {
             KitClaimData data = new KitClaimData();
-            UUID id = UUID.randomUUID();
+            String id = UUID.randomUUID().toString();
 
             data.setId(id);
 
@@ -77,7 +77,7 @@ class KitClaimDataTest {
         @Test
         @DisplayName("setId with null sets uuid to null")
         void setIdNull() {
-            UUID id = UUID.randomUUID();
+            String id = UUID.randomUUID().toString();
             KitClaimData data = KitClaimData.builder().uuid(id).build();
 
             data.setId(null);
@@ -102,7 +102,7 @@ class KitClaimDataTest {
         @DisplayName("isNew returns false when uuid is set")
         void isNotNewWhenUuidSet() {
             KitClaimData data = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .build();
             assertThat(data.isNew()).isFalse();
         }
@@ -132,7 +132,7 @@ class KitClaimDataTest {
         @Test
         @DisplayName("all-args constructor sets all fields")
         void allArgsConstructor() {
-            UUID id = UUID.randomUUID();
+            String id = UUID.randomUUID().toString();
             String playerUuid = "player-123";
 
             KitClaimData data = new KitClaimData(id, playerUuid, "vip", 5000L, 10);

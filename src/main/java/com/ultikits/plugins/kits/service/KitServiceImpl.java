@@ -384,7 +384,7 @@ public class KitServiceImpl implements KitService {
             }
         } else {
             KitClaimData claim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID())
+                    .uuid(UUID.randomUUID().toString())
                     .playerUuid(playerUuid.toString())
                     .kitName(kitName)
                     .lastClaim(System.currentTimeMillis())
