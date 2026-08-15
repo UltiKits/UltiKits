@@ -1,6 +1,6 @@
 # UltiKits - 礼包模块 / Kit System Module
 
-[![UltiTools-API](https://img.shields.io/badge/UltiTools--API-6.2.0-blue)](https://github.com/UltiKits/UltiTools-Reborn)
+[![UltiTools-API](https://img.shields.io/badge/UltiTools--API-6.2.1-blue)](https://github.com/UltiKits/UltiTools-Reborn)
 [![Java](https://img.shields.io/badge/Java-8%2B-orange)](https://openjdk.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](../../LICENSE)
 
