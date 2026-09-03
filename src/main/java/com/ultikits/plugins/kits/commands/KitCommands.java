@@ -4,8 +4,8 @@ import com.ultikits.plugins.kits.gui.KitBrowserGui;
 import com.ultikits.plugins.kits.gui.KitEditorGui;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
-import com.ultikits.ultitools.abstracts.AbstractCommandExecutor;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
+import com.ultikits.ultitools.abstracts.command.BaseCommandExecutor;
 import com.ultikits.ultitools.annotations.command.*;
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
@@ -23,7 +23,7 @@ import java.util.stream.Collectors;
         description = "礼包管理命令",
         alias = {"kits", "kit"}
 )
-public class KitCommands extends AbstractCommandExecutor {
+public class KitCommands extends BaseCommandExecutor {
 
     private final UltiToolsPlugin plugin;
     private final KitService kitService;
