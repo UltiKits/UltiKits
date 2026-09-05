@@ -3,18 +3,15 @@ package com.ultikits.plugins.kits.gui;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
-import org.bukkit.Bukkit;
 import org.bukkit.Material;
-import org.bukkit.Server;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.inventory.Inventory;
-import org.bukkit.inventory.ItemFactory;
 import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.meta.ItemMeta;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockbukkit.mockbukkit.MockBukkit;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -32,51 +29,6 @@ import static org.mockito.Mockito.*;
 @DisplayName("KitEditorGui")
 @ExtendWith(MockitoExtension.class)
 class KitEditorGuiTest {
-
-    private static ItemFactory mockItemFactory;
-
-    @BeforeAll
-    @SuppressWarnings("unchecked")
-    static void setUpClass() {
-        if (Bukkit.getServer() == null) {
-            Server mockServer = mock(Server.class);
-            java.util.logging.Logger mockJulLogger = mock(java.util.logging.Logger.class);
-            when(mockServer.getLogger()).thenReturn(mockJulLogger);
-            mockItemFactory = mock(ItemFactory.class);
-            when(mockServer.getItemFactory()).thenReturn(mockItemFactory);
-            Bukkit.setServer(mockServer);
-        } else {
-            mockItemFactory = mock(ItemFactory.class);
-            when(Bukkit.getServer().getItemFactory()).thenReturn(mockItemFactory);
-        }
-        when(mockItemFactory.getItemMeta(any(Material.class))).thenAnswer(inv -> createMockItemMeta());
-        when(mockItemFactory.isApplicable(any(), any(Material.class))).thenReturn(true);
-        when(mockItemFactory.asMetaFor(any(), any(Material.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(mockItemFactory.equals(any(), any())).thenReturn(false);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static ItemMeta createMockItemMeta() {
-        ItemMeta meta = mock(ItemMeta.class);
-        final String[] displayName = {null};
-        final List<String>[] lore = new List[]{null};
-
-        lenient().doAnswer(inv -> {
-            displayName[0] = inv.getArgument(0);
-            return null;
-        }).when(meta).setDisplayName(anyString());
-        lenient().when(meta.getDisplayName()).thenAnswer(inv -> displayName[0]);
-        lenient().doAnswer(inv -> {
-            lore[0] = new ArrayList<>((List<String>) inv.getArgument(0));
-            return null;
-        }).when(meta).setLore(anyList());
-        lenient().when(meta.getLore()).thenAnswer(inv -> lore[0] != null ? new ArrayList<>(lore[0]) : null);
-        lenient().when(meta.hasDisplayName()).thenAnswer(inv -> displayName[0] != null);
-        lenient().when(meta.hasLore()).thenAnswer(inv -> lore[0] != null && !lore[0].isEmpty());
-        lenient().when(meta.clone()).thenReturn(meta);
-
-        return meta;
-    }
 
     @Mock
     private UltiToolsPlugin plugin;
@@ -98,6 +50,7 @@ class KitEditorGuiTest {
 
     @BeforeEach
     void setUp() {
+        MockBukkit.mock();
         lenient().when(plugin.i18n(anyString())).thenAnswer(inv -> inv.getArgument(0));
 
         kit = new KitDefinition();
@@ -109,6 +62,11 @@ class KitEditorGuiTest {
 
         lenient().when(player.getOpenInventory()).thenReturn(inventoryView);
         lenient().when(inventoryView.getTopInventory()).thenReturn(topInventory);
+    }
+
+    @AfterEach
+    void tearDown() {
+        MockBukkit.unmock();
     }
 
     // -----------------------------------------------------------------------
