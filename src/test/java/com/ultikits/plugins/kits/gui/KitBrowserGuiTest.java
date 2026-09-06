@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.gui;
 
+import com.ultikits.plugins.kits.MockBukkitSupport;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
@@ -7,11 +8,7 @@ import com.ultikits.ultitools.utils.EconomyUtils;
 import mc.obliviate.inventory.Gui;
 import mc.obliviate.inventory.Icon;
 import net.milkbowl.vault.economy.Economy;
-import org.bukkit.Bukkit;
-import org.bukkit.Material;
-import org.bukkit.Server;
 import org.bukkit.entity.Player;
-import org.bukkit.inventory.ItemFactory;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -45,56 +42,11 @@ class KitBrowserGuiTest {
     @Mock
     private Economy economy;
 
-    private static ItemFactory mockItemFactory;
-
     private KitBrowserGui gui;
-
-    @BeforeAll
-    @SuppressWarnings("unchecked")
-    static void setUpClass() {
-        if (Bukkit.getServer() == null) {
-            Server mockServer = mock(Server.class);
-            java.util.logging.Logger mockLogger = mock(java.util.logging.Logger.class);
-            when(mockServer.getLogger()).thenReturn(mockLogger);
-            mockItemFactory = mock(ItemFactory.class);
-            when(mockServer.getItemFactory()).thenReturn(mockItemFactory);
-            Bukkit.setServer(mockServer);
-        } else {
-            mockItemFactory = mock(ItemFactory.class);
-            when(Bukkit.getServer().getItemFactory()).thenReturn(mockItemFactory);
-        }
-        // Configure ItemFactory to return working ItemMeta mocks
-        when(mockItemFactory.getItemMeta(any(Material.class))).thenAnswer(inv -> createMockItemMeta());
-        when(mockItemFactory.isApplicable(any(), any(Material.class))).thenReturn(true);
-        when(mockItemFactory.asMetaFor(any(), any(Material.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(mockItemFactory.equals(any(), any())).thenReturn(false);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static ItemMeta createMockItemMeta() {
-        ItemMeta meta = mock(ItemMeta.class);
-        final String[] displayName = {null};
-        final List<String>[] lore = new List[]{null};
-
-        lenient().doAnswer(inv -> {
-            displayName[0] = inv.getArgument(0);
-            return null;
-        }).when(meta).setDisplayName(anyString());
-        lenient().when(meta.getDisplayName()).thenAnswer(inv -> displayName[0]);
-        lenient().doAnswer(inv -> {
-            lore[0] = new ArrayList<>((List<String>) inv.getArgument(0));
-            return null;
-        }).when(meta).setLore(anyList());
-        lenient().when(meta.getLore()).thenAnswer(inv -> lore[0] != null ? new ArrayList<>(lore[0]) : null);
-        lenient().when(meta.hasDisplayName()).thenAnswer(inv -> displayName[0] != null);
-        lenient().when(meta.hasLore()).thenAnswer(inv -> lore[0] != null && !lore[0].isEmpty());
-        lenient().when(meta.clone()).thenReturn(meta);
-
-        return meta;
-    }
 
     @BeforeEach
     void setUp() {
+        MockBukkitSupport.bootstrap();
         lenient().when(plugin.i18n(anyString())).thenAnswer(inv -> inv.getArgument(0));
         gui = new KitBrowserGui(player, plugin, kitService, 0);
 
@@ -104,6 +56,7 @@ class KitBrowserGuiTest {
     @AfterEach
     void tearDown() {
         EconomyUtils.reset();
+        MockBukkitSupport.shutdown();
     }
 
     private void setEconomyAvailable(boolean available) throws Exception {
