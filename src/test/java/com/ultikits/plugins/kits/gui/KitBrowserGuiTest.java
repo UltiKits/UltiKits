@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.gui;
 
+import com.ultikits.plugins.kits.MockBukkitSupport;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
@@ -11,7 +12,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockbukkit.mockbukkit.MockBukkit;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -46,7 +46,7 @@ class KitBrowserGuiTest {
 
     @BeforeEach
     void setUp() {
-        MockBukkit.mock();
+        MockBukkitSupport.bootstrap();
         lenient().when(plugin.i18n(anyString())).thenAnswer(inv -> inv.getArgument(0));
         gui = new KitBrowserGui(player, plugin, kitService, 0);
 
@@ -56,7 +56,7 @@ class KitBrowserGuiTest {
     @AfterEach
     void tearDown() {
         EconomyUtils.reset();
-        MockBukkit.unmock();
+        MockBukkitSupport.shutdown();
     }
 
     private void setEconomyAvailable(boolean available) throws Exception {

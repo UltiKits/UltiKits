@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.gui;
 
+import com.ultikits.plugins.kits.MockBukkitSupport;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
@@ -11,7 +12,6 @@ import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockbukkit.mockbukkit.MockBukkit;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -50,7 +50,7 @@ class KitEditorGuiTest {
 
     @BeforeEach
     void setUp() {
-        MockBukkit.mock();
+        MockBukkitSupport.bootstrap();
         lenient().when(plugin.i18n(anyString())).thenAnswer(inv -> inv.getArgument(0));
 
         kit = new KitDefinition();
@@ -66,7 +66,7 @@ class KitEditorGuiTest {
 
     @AfterEach
     void tearDown() {
-        MockBukkit.unmock();
+        MockBukkitSupport.shutdown();
     }
 
     // -----------------------------------------------------------------------

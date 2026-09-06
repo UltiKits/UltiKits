@@ -6,7 +6,6 @@ import org.bukkit.inventory.ItemStack;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockbukkit.mockbukkit.MockBukkit;
 
 import java.util.UUID;
 
@@ -18,17 +17,23 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  * server-backed value, never a bare registry constant -- a bare constant resolves via
  * ServiceLoader from the classpath alone and would stay green even if the bootstrap were
  * silently deleted from this module (see 14-VALIDATION.md's Sentinel Design Constraint).
+ * <p>
+ * Deliberately bootstraps through {@link MockBukkitSupport#bootstrap()} /
+ * {@link MockBukkitSupport#shutdown()} -- the same shared entry point every other bootstrapped
+ * test class in this module uses -- rather than calling {@code MockBukkit.mock()} itself. A
+ * sentinel that mocks its own unrelated live server stays green even after the shared bootstrap is
+ * silently removed or broken, which defeats the reopen guard this class exists to provide.
  */
 public class UltiKitsRegistrySentinelTest {
 
     @BeforeEach
     void setUp() {
-        MockBukkit.mock();
+        MockBukkitSupport.bootstrap();
     }
 
     @AfterEach
     void tearDown() {
-        MockBukkit.unmock();
+        MockBukkitSupport.shutdown();
     }
 
     @Test
