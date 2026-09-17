@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.service;
 
+import com.ultikits.plugins.kits.MockBukkitSupport;
 import com.ultikits.plugins.kits.entity.KitClaimData;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
@@ -16,10 +17,12 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
+import org.bukkit.plugin.ServicePriority;
 import org.bukkit.scheduler.BukkitScheduler;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.*;
+import org.mockbukkit.mockbukkit.MockBukkit;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -67,6 +70,9 @@ class KitServiceImplTest {
     @AfterEach
     void tearDown() {
         EconomyUtils.reset();
+        if (MockBukkit.isMocked()) {
+            MockBukkitSupport.shutdown();
+        }
     }
 
     /**
@@ -145,18 +151,19 @@ class KitServiceImplTest {
     }
 
     /**
-     * Set up EconomyUtils with a mock Economy via reflection.
+     * Makes a mock Vault economy available through the public Bukkit/Vault types only
+     * (UltiKits/UltiKits#19): boots the module's shared MockBukkit server (shut down again in
+     * {@link #tearDown()}), adds a mock plugin named {@code Vault} and registers the returned
+     * {@link Economy} with the live services manager, which is exactly what the framework's
+     * default economy bridge resolves. No framework-internal seam or private field is touched.
      */
-    private Economy setupMockEconomy() throws Exception {
+    private Economy setupMockEconomy() {
         Economy mockEconomy = mock(Economy.class);
-        Field economyField = EconomyUtils.class.getDeclaredField("economy");
-        economyField.setAccessible(true); // NOPMD
-        economyField.set(null, mockEconomy);
-
-        Field setupAttemptedField = EconomyUtils.class.getDeclaredField("setupAttempted");
-        setupAttemptedField.setAccessible(true); // NOPMD
-        setupAttemptedField.set(null, true);
-
+        MockBukkitSupport.bootstrap();
+        Plugin vault = MockBukkit.createMockPlugin("Vault");
+        Bukkit.getServicesManager().register(Economy.class, mockEconomy, vault, ServicePriority.Normal);
+        EconomyUtils.reset();
+        assertThat(EconomyUtils.isAvailable()).isTrue();
         return mockEconomy;
     }
 
@@ -942,6 +949,8 @@ class KitServiceImplTest {
 
             KitService.ClaimResult result = service.claimKit(player, "expensive");
             assertThat(result).isEqualTo(KitService.ClaimResult.INSUFFICIENT_FUNDS);
+            verify(mockEconomy).has(player, 500.0);
+            verify(mockEconomy, never()).withdrawPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble());
         }
 
         @Test
