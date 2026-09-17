@@ -1117,9 +1117,21 @@ class KitServiceImplTest {
             verify(mockEconomy).withdrawPlayer(eq(player), eq(100.0));
         }
 
+        /**
+         * What this test guards: a free kit is still claimed and delivered when a Vault economy is
+         * present, and the economy never sees a withdrawal.
+         * <p>
+         * What it does NOT guard: the module's own {@code !kit.isFree()} check in
+         * {@code KitServiceImpl#deliverKit}. Through the public Vault path, the framework's economy
+         * bridge refuses a zero amount before it reaches the registered {@link Economy}, so the
+         * {@code never()} verification below would hold even if that check were removed (measured by
+         * the gate-1 review, UltiKits/UltiKits#19 IN-01). On a live server the same framework refusal
+         * also stops a free kit from being charged. The GUI's separate {@code !kit.isFree()} check
+         * (the "deducted" message) is guarded by {@code KitBrowserGuiTest#successFreeKit}.
+         */
         @Test
-        @DisplayName("claimKit does not deduct for free kit even when economy available")
-        void claimFreeKitNoDeduction() throws Exception {
+        @DisplayName("claimKit delivers a free kit with an economy present and the economy sees no withdrawal")
+        void claimFreeKitDeliveredWithEconomyPresent() throws Exception {
             KitDefinition kit = createTestKit("freenodeduct");
             kit.setPrice(0);
             kit.setItems("someBase64Data");
@@ -1137,7 +1149,9 @@ class KitServiceImplTest {
 
             KitService.ClaimResult result = spyService.claimKit(player, "freenodeduct");
             assertThat(result).isEqualTo(KitService.ClaimResult.SUCCESS);
+            verify(inventory).addItem(mockItem);
 
+            // Also enforced by the framework bridge's zero-amount refusal; see the javadoc above.
             verify(mockEconomy, never()).withdrawPlayer(any(Player.class), anyDouble());
         }
 
