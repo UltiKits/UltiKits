@@ -33,6 +33,18 @@ public class KitServiceImpl implements KitService {
     private final UltiToolsPlugin plugin;
     private final PluginLogger logger;
     private final Map<String, KitDefinition> kits = new LinkedHashMap<>();
+    /**
+     * Kits whose refused-withdrawal warning has already been written this session, so the console
+     * gets one line per kit rather than one per attempt. Claiming is player-triggered behind only
+     * the browser's 200ms debounce, and {@code /kits claim} has no cooldown at all, so during an
+     * economy outage the unthrottled form buries the log in the window an operator most needs to
+     * read it. This follows the framework's own precedent - {@code EconomyUtils} emits exactly one
+     * line per calling module per server session for the adjacent condition. Bounded by the size
+     * of the kit catalogue, and cleared by {@link #loadKits()} so a reload re-arms it.
+     * <p>
+     * 每个礼包每个会话只记录一次扣款被拒的警告，避免经济系统故障时刷屏；重新加载礼包会重置。
+     */
+    private final Set<String> refusalWarnedKits = Collections.synchronizedSet(new LinkedHashSet<>());
     private DataOperator<KitClaimData> claimOperator;
 
     public KitServiceImpl(UltiToolsPlugin plugin) {
@@ -45,6 +57,7 @@ public class KitServiceImpl implements KitService {
     @Override
     public void loadKits() {
         kits.clear();
+        refusalWarnedKits.clear();
 
         File kitsFolder = new File(plugin.getResourceFolderPath(), "kits");
         if (!kitsFolder.exists()) {
@@ -260,34 +273,59 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
-     * Charges for the kit, then delivers it. The order matters: the price is taken first and its
-     * result is checked, so a refused payment leaves nothing half-applied - no items, no reward
-     * commands and no claim record. Only after the money has actually moved is anything the
-     * player keeps handed over, and the claim record is written last, because a paid, delivered
-     * kit that was not recorded merely lets the player buy it again, whereas a recorded claim
-     * that was never delivered would consume a one-time kit for nothing.
+     * Charges for the kit, then delivers it. The order is the load-bearing part.
      * <p>
-     * 先扣款并检查扣款结果，再发放物品与执行命令，最后写入领取记录。
+     * The price is taken <b>first</b> and its result checked, so a refused payment leaves nothing
+     * half-applied - no items, no reward commands, no claim record. Paying after delivery was
+     * rejected: undoing a delivery means reclaiming items the player may already have moved,
+     * equipped or traded, which is not a compensation anyone can trust.
+     * <p>
+     * After the money moves, the claim record is written <b>before</b> the reward commands, because
+     * those commands are the step most likely to fail: {@code player.performCommand} propagates
+     * {@code CommandException} out of any third-party executor that throws, and a kit pointing at a
+     * broken command would otherwise take the money, hand over the items and never record the
+     * claim - silently making a one-time kit claimable again, which is the whole product of a
+     * one-time kit. Nothing here can produce "recorded but not delivered", because the record is
+     * written after the items are in the inventory.
+     * <p>
+     * 顺序：先扣款并检查结果，再发放物品，随后写入领取记录，最后执行奖励命令。
      *
      * @return {@link ClaimResult#PAYMENT_FAILED} when the price could not be withdrawn, otherwise
      *         {@link ClaimResult#SUCCESS}
      */
     private ClaimResult deliverKit(Player player, KitDefinition kit, ItemStack[] items) {
-        if (!kit.isFree() && EconomyUtils.isAvailable() && !EconomyUtils.withdraw(player, kit.getPrice())) {
+        // No isAvailable() term here on purpose: it would short-circuit this whole condition to
+        // false if the Vault provider were deregistered after checkPrerequisites ran, delivering
+        // the paid kit free - the very outcome this guard exists to stop (UltiKits/UltiKits#20,
+        // gate-1 WR-01). The framework's bridge already returns false when no provider is
+        // registered, so the term bought nothing and could only turn a refusal into a giveaway.
+        if (!kit.isFree() && !EconomyUtils.withdraw(player, kit.getPrice())) {
             // checkPrerequisites saw the player could afford this, so reaching here means the
-            // balance moved in between or the economy rejected the transaction
-            // (UltiKits/UltiKits#20).
-            logger.warn("Kit '" + kit.getName() + "' was not delivered to " + player.getName()
-                    + ": the economy refused to withdraw " + kit.getPrice());
+            // balance moved in between, the economy rejected the transaction, or the provider went
+            // away.
+            warnRefusedWithdrawalOnce(player, kit);
             return ClaimResult.PAYMENT_FAILED;
         }
         for (ItemStack item : items) {
             player.getInventory().addItem(item.clone());
         }
+        updateClaimData(player.getUniqueId(), kit.getName());
         executePlayerCommands(player, kit.getPlayerCommands());
         executeConsoleCommands(player, kit.getConsoleCommands());
-        updateClaimData(player.getUniqueId(), kit.getName());
         return ClaimResult.SUCCESS;
+    }
+
+    /**
+     * Writes one console warning per kit per server session for a refused withdrawal. See
+     * {@link #refusalWarnedKits} for why it is throttled and how an operator re-arms it.
+     */
+    private void warnRefusedWithdrawalOnce(Player player, KitDefinition kit) {
+        if (!refusalWarnedKits.add(kit.getName())) {
+            return;
+        }
+        logger.warn("Kit '" + kit.getName() + "' was not delivered to " + player.getName()
+                + ": the economy refused to withdraw " + kit.getPrice()
+                + ". Further refusals for this kit are not logged until the kits are reloaded.");
     }
 
     @Override

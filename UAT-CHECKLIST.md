@@ -58,8 +58,8 @@ for real-machine verification, not user-facing documentation.
 | ultikits.kits.list.neg-console-sees-all | Same two kits as above (`starter`, `restricted`) | Run `/kits list` from the server console | BOTH `starter` AND `restricted` appear — `KitCommands#onList`'s console branch calls `getKitNames()`/`getKit()` directly, unconditionally, never `getAvailableKits`'s permission filter, which only applies to a `Player` sender | server | |
 | ultikits.kits.open | `Tester1` holds `ultikits.kits.use`, with at least one kit available | Run bare `/kits` (no arguments) | The `ultikits.gui.kit-browser` GUI opens for `Tester1`; this row proves only that the bare command opens the browser — its own interactions are covered by `ultikits.gui.kit-browser` below | server | KitBrowserGui |
 | ultikits.kits.claim | `language: en`; a FREE kit `starter` exists with no permission/level requirement, `reBuyable: false`, non-empty items, and configured with one `playerCommands` entry (e.g. `say {player} claimed starter`) and one `consoleCommands` entry (e.g. `broadcast {player} got the starter kit`); `Tester1` has never claimed it; `Tester1` has enough empty inventory slots for its item count | `Tester1` runs `/kits claim starter` | Chat shows `Successfully claimed kit: starter` (green) — `KitCommands#handleClaimResult` formats this with the RAW `kitName` command argument, not `kit.getDisplayName()` (unlike the GUI's own click-claim path, `ultikits.gui.kit-browser`, which does use the display name); the kit's items now appear in `Tester1`'s inventory; the configured `playerCommands` entry runs AS `Tester1` (chat shows the `say` output with `{player}` replaced by `Tester1`'s name) and the configured `consoleCommands` entry runs as the SERVER CONSOLE one tick later via `Bukkit.getScheduler().runTask` (the broadcast reaches every online player, also with `{player}` substituted); a new `kits_claims` row exists for `Tester1`+`starter` | server | |
-| ultikits.kits.claim.paid | `language: en`; Vault plus an economy plugin installed and `/balance`-readable; a PAID kit `premium` exists with `price: 100`, `reBuyable: true`, `cooldown: 0`, non-empty items, no permission or level requirement; the claiming player holds `ultikits.kits.use`, has a balance of at least 100, and has enough empty inventory slots for the kit's item count | Read the claiming player's balance, then have that player run `/kits claim premium`, then read the balance again | Chat shows `Successfully claimed kit: premium` (green); the kit's items appear in the player's inventory; the balance read afterwards is EXACTLY the balance read before minus 100, not merely lower; a `kits_claims` row exists for that player and `premium` | server | |
-| ultikits.kits.claim.neg-insufficient-funds | `language: en`; the same paid kit `premium` (`price: 100`) as `ultikits.kits.claim.paid`; the claiming player holds `ultikits.kits.use` and has a balance BELOW 100 | Read the claiming player's balance, then have that player run `/kits claim premium`, then read the balance again | Chat shows `Insufficient balance, requires 100.0` (red) and NOT `Payment failed - the kit was not claimed` — the two replies are different on purpose, this one being the affordability check refusing before any withdrawal is attempted; no items are delivered; the balance read afterwards is unchanged; no `kits_claims` row is created for that player and `premium` | server | |
+| ultikits.kits.claim.paid | `language: en`; a Vault economy **provider** is installed and registered, not merely Vault itself — the UAT server ships Vault with no provider, so confirm first that `/balance` (or the provider's own balance command) returns a number for the claiming player; if it does not, this row is `blocked`, never `pass`; a PAID kit `premium` exists with `price: 100`, `reBuyable: true`, `cooldown: 0`, non-empty items, no permission or level requirement; the claiming player holds `ultikits.kits.use`, has **never claimed `premium`**, has a balance of at least 100, and has enough empty inventory slots for the kit's item count | 1. Read the claiming player's balance. 2. Read the `kits_claims` table (the module's ORM backend, per `plugins/UltiTools/config.yml`'s `datasource.type`) for rows matching that player and `premium`. 3. Have that player run `/kits claim premium`. 4. Read the balance again, then read `kits_claims` again | Step 2 finds NO row for that player and `premium` — if it finds one the precondition was not met and the row is `blocked`. After step 3 chat shows `Successfully claimed kit: premium` (green) and the kit's items appear in the player's inventory. The balance read in step 4 is EXACTLY the balance read in step 1 minus 100, not merely lower. The `kits_claims` read in step 4 finds exactly one row for that player and `premium` with `claimCount` 1, where step 2 found none | server | |
+| ultikits.kits.claim.neg-insufficient-funds | `language: en`; a Vault economy **provider** is installed and registered, not merely Vault itself — the UAT server ships Vault with no provider, so confirm first that `/balance` (or the provider's own balance command) returns a number for the claiming player; if it does not, this row is `blocked`, never `pass`; the same paid kit `premium` (`price: 100`) as `ultikits.kits.claim.paid`; a **different** player from the one used there, who holds `ultikits.kits.use`, has **never claimed `premium`**, and has a balance BELOW 100 | 1. Read that player's balance. 2. Read `kits_claims` for rows matching that player and `premium`. 3. Have that player run `/kits claim premium`. 4. Read the balance again, then read `kits_claims` again | Step 2 finds NO row for that player and `premium`. After step 3 chat shows `Insufficient balance, requires 100.0` (red) and NOT `Payment failed - the kit was not claimed` — the two replies are different on purpose, this one being the affordability check refusing before any withdrawal is attempted; no items are delivered. The balance read in step 4 is unchanged from step 1, and the `kits_claims` read in step 4 is unchanged from step 2 (still no row for that player and `premium`) | server | |
 | ultikits.kits.claim.neg-not-found | `language: en`; `Tester1` online | `Tester1` runs `/kits claim does-not-exist` | Chat shows `Kit 'does-not-exist' does not exist` (red) | server | |
 | ultikits.kits.claim.neg-no-permission | `language: en`; a kit `restricted` exists with a `permission` key `Tester1` does NOT hold | `Tester1` runs `/kits claim restricted` | Chat shows `You don't have permission to use this kit` (red); no items are delivered | server | |
 | ultikits.kits.claim.neg-insufficient-level | `language: en`; a kit `veteran` exists with `levelRequired` higher than `Tester1`'s current experience level | `Tester1` runs `/kits claim veteran` | Chat shows `Level too low, requires level N` (red, `N` matching the kit's `levelRequired`); no items are delivered | server | |
@@ -76,6 +76,44 @@ for real-machine verification, not user-facing documentation.
 | ultikits.kits.reload.neg-no-permission | `language: en`; `Tester1` holds `ultikits.kits.use` but NOT `ultikits.kits.admin` | `Tester1` runs `/kits reload` | Chat shows `You don't have permission to execute this command` (red); the kit catalogue is unchanged | server | |
 | ultikits.kits.help | `language: en`; `Tester1` online | `Tester1` runs `/kits help` | Chat shows `=== UltiKits ===` (gold) followed by seven lines: `/kits` (list kits, i18n), `/kits claim <name>` (available, i18n), `/kits list` (list kits, i18n), `/kits edit <name>` (hardcoded English "Edit kit", NOT i18n — renders identically regardless of `language`), `/kits create <name>` (hardcoded English "Create kit"), `/kits delete <name>` (hardcoded English "Delete kit"), `/kits reload` (hardcoded English "Reload kits" — FOUR of the seven lines are hardcoded English, not three; only the first three lines route through `i18n()`) | server | |
 | ultikits.kits.list.neg-empty | No kits present at all (every `.yml` file removed from `plugins/UltiTools/pluginConfig/UltiTools-Kits/kits/`, then `/kits reload` run to clear the in-memory catalogue) | `Tester1` runs `/kits list` | Chat shows `No kits available` (red), no header line, no item lines — the ONLY correct empty-state text, not a bare header with zero entries | server | |
+
+### `PAYMENT_FAILED` is deliberately `not covered` by any row above
+
+`ClaimResult.PAYMENT_FAILED` — the refused-withdrawal branch added for `UltiKits/UltiKits#20` — has
+**no executable row here**, so the reply `Payment failed - the kit was not claimed` is never observed
+on a real machine and its rendering under `language: en` is unverified outside the unit suite. This
+is recorded as `not covered` rather than left implicit, and it is a deliberate decision, not an
+omission.
+
+Reaching that branch needs `has(player, price)` to return `true` and the withdrawal that follows it to
+fail anyway. Two ways in, and neither is executable by hand:
+
+- **A race.** The balance moves between the affordability check and the withdrawal. Those two run
+  microseconds apart inside one tick; a row whose precondition is "arrange that" asserts platform
+  behaviour nobody can establish.
+- **An economy that refuses a transaction the player can afford.** This depends on the economy
+  provider, so it was measured against the one available here rather than assumed. `UltiEconomy`, the
+  only Vault economy provider in this workspace (the UAT server ships Vault with no provider at all),
+  reads `has` from `EconomyServiceImpl#getCash` and performs the withdrawal through
+  `EconomyServiceImpl#takeCash`, which guards on the same `cash >= amount` comparison against the same
+  stored account — so **no configuration of it produces the divergence**. Its only `min-*` setting is
+  `bank.min-deposit`, which governs deposits into the bank and does not gate withdrawals. The
+  remaining path is a persistence write failing inside `takeCash`, which is not arrangeable by hand
+  and was not verified on a live server.
+
+  *Positive control for that negative*: reading a provider's `has` and withdrawal side by side and
+  comparing their guards **does** find divergences where they exist — the framework's own
+  `VaultEconomyProvider` guards `amount <= 0` in `withdraw` and not in `has`. That divergence is
+  simply unreachable from here, because `KitDefinition#isFree()` excludes a price of zero or less
+  before a claim can get that far. The inspection has discriminating power; the answer for
+  `UltiEconomy` is zero.
+
+What does hold the branch instead: `KitServiceImplTest$PaymentFailureTests` (twelve tests, including
+the balance-moved-in-between race, an outright rejection, a provider deregistered mid-claim, and the
+console-warning throttle), `KitBrowserGuiTest#paymentFailedSaysNoDeduction` and
+`KitCommandsTest#paymentFailedSendsOwnMessage`. `ultikits.kits.claim.neg-insufficient-funds` above
+does prove the two replies are **distinct** — a wrong implementation reusing one for the other would
+fail it — but nothing here proves the payment-failure reply is ever produced.
 
 ## GUI
 
