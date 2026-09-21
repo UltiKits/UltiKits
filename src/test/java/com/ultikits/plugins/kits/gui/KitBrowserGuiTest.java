@@ -845,8 +845,14 @@ class KitBrowserGuiTest {
             assertThat(captor.getAllValues()).noneMatch(m -> m.contains("已扣除"));
         }
 
+        /**
+         * Regression guard, NOT evidence: this passes with and without the fix, because before it
+         * PAYMENT_FAILED fell to the default branch, which also does not close the inventory. It
+         * earns its place because the sibling {@code nonSuccessNoClose} drives only
+         * INSUFFICIENT_FUNDS despite its name, so nothing else pins this branch (gate-1 IN-02).
+         */
         @Test
-        @DisplayName("PAYMENT_FAILED does not close the inventory")
+        @DisplayName("PAYMENT_FAILED does not close the inventory (guard, passes either way)")
         void paymentFailedNoClose() {
             KitDefinition kit = createKit("paid", "&6Paid", "CHEST", 50.0, 0);
             when(kitService.claimKit(player, "paid")).thenReturn(KitService.ClaimResult.PAYMENT_FAILED);
