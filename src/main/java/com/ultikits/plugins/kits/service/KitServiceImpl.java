@@ -199,8 +199,7 @@ public class KitServiceImpl implements KitService {
             return ClaimResult.INVENTORY_FULL;
         }
 
-        deliverKit(player, kit, items);
-        return ClaimResult.SUCCESS;
+        return deliverKit(player, kit, items);
     }
 
     /**
@@ -260,9 +259,27 @@ public class KitServiceImpl implements KitService {
         return count;
     }
 
-    private void deliverKit(Player player, KitDefinition kit, ItemStack[] items) {
-        if (!kit.isFree() && EconomyUtils.isAvailable()) {
-            EconomyUtils.withdraw(player, kit.getPrice());
+    /**
+     * Charges for the kit, then delivers it. The order matters: the price is taken first and its
+     * result is checked, so a refused payment leaves nothing half-applied - no items, no reward
+     * commands and no claim record. Only after the money has actually moved is anything the
+     * player keeps handed over, and the claim record is written last, because a paid, delivered
+     * kit that was not recorded merely lets the player buy it again, whereas a recorded claim
+     * that was never delivered would consume a one-time kit for nothing.
+     * <p>
+     * 先扣款并检查扣款结果，再发放物品与执行命令，最后写入领取记录。
+     *
+     * @return {@link ClaimResult#PAYMENT_FAILED} when the price could not be withdrawn, otherwise
+     *         {@link ClaimResult#SUCCESS}
+     */
+    private ClaimResult deliverKit(Player player, KitDefinition kit, ItemStack[] items) {
+        if (!kit.isFree() && EconomyUtils.isAvailable() && !EconomyUtils.withdraw(player, kit.getPrice())) {
+            // checkPrerequisites saw the player could afford this, so reaching here means the
+            // balance moved in between or the economy rejected the transaction
+            // (UltiKits/UltiKits#20).
+            logger.warn("Kit '" + kit.getName() + "' was not delivered to " + player.getName()
+                    + ": the economy refused to withdraw " + kit.getPrice());
+            return ClaimResult.PAYMENT_FAILED;
         }
         for (ItemStack item : items) {
             player.getInventory().addItem(item.clone());
@@ -270,6 +287,7 @@ public class KitServiceImpl implements KitService {
         executePlayerCommands(player, kit.getPlayerCommands());
         executeConsoleCommands(player, kit.getConsoleCommands());
         updateClaimData(player.getUniqueId(), kit.getName());
+        return ClaimResult.SUCCESS;
     }
 
     @Override
