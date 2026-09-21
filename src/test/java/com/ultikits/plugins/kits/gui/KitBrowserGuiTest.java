@@ -8,13 +8,17 @@ import com.ultikits.ultitools.utils.EconomyUtils;
 import mc.obliviate.inventory.Gui;
 import mc.obliviate.inventory.Icon;
 import net.milkbowl.vault.economy.Economy;
+import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.ServicePriority;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockbukkit.mockbukkit.MockBukkit;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -44,6 +48,8 @@ class KitBrowserGuiTest {
 
     private KitBrowserGui gui;
 
+    private Plugin vault;
+
     @BeforeEach
     void setUp() {
         MockBukkitSupport.bootstrap();
@@ -55,26 +61,28 @@ class KitBrowserGuiTest {
 
     @AfterEach
     void tearDown() {
+        if (vault != null) {
+            Bukkit.getServicesManager().unregisterAll(vault);
+            vault = null;
+        }
         EconomyUtils.reset();
         MockBukkitSupport.shutdown();
     }
 
-    private void setEconomyAvailable(boolean available) throws Exception {
+    /**
+     * Makes the Vault economy available or unavailable through the public Bukkit/Vault types only
+     * (UltiKits/UltiKits#19): when available, a mock plugin named {@code Vault} plus the mocked Vault
+     * {@link Economy} registered with the live MockBukkit services manager, which is exactly what
+     * the framework's default economy bridge resolves; when unavailable, no {@code Vault} plugin at
+     * all. No framework-internal seam or private field is touched.
+     */
+    private void setEconomyAvailable(boolean available) {
+        EconomyUtils.reset();
         if (available) {
-            Field economyField = EconomyUtils.class.getDeclaredField("economy");
-            economyField.setAccessible(true); // NOPMD
-            economyField.set(null, economy);
-
-            Field setupField = EconomyUtils.class.getDeclaredField("setupAttempted");
-            setupField.setAccessible(true); // NOPMD
-            setupField.set(null, true);
-        } else {
-            EconomyUtils.reset();
-            // Mark setup as attempted but with no economy provider
-            Field setupField = EconomyUtils.class.getDeclaredField("setupAttempted");
-            setupField.setAccessible(true); // NOPMD
-            setupField.set(null, true);
+            vault = MockBukkit.createMockPlugin("Vault");
+            Bukkit.getServicesManager().register(Economy.class, economy, vault, ServicePriority.Normal);
         }
+        assertThat(EconomyUtils.isAvailable()).isEqualTo(available);
     }
 
     private void resetDebounce() throws Exception {
