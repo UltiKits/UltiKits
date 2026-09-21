@@ -17,7 +17,16 @@ public interface KitService {
     enum ClaimResult {
         SUCCESS, NOT_FOUND, NO_PERMISSION, INSUFFICIENT_LEVEL,
         INSUFFICIENT_FUNDS, ALREADY_CLAIMED, ON_COOLDOWN,
-        INVENTORY_FULL, EMPTY_KIT, ERROR
+        INVENTORY_FULL, EMPTY_KIT,
+        /**
+         * The kit's price could not be withdrawn even though the earlier affordability check
+         * passed - the balance was spent between the two calls, or the economy rejected the
+         * transaction. Distinct from {@link #INSUFFICIENT_FUNDS}, which is that earlier check
+         * failing, because telling a player "insufficient balance" when the economy refused a
+         * transaction they could afford would be a false statement (UltiKits/UltiKits#20).
+         * 扣款失败：余额检查通过后扣款仍未成功。
+         */
+        PAYMENT_FAILED, ERROR
     }
 
     enum CreateResult {

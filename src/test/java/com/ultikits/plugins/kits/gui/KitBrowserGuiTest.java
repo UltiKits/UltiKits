@@ -823,6 +823,39 @@ class KitBrowserGuiTest {
             assertThat(captor.getValue()).contains("领取礼包时发生错误");
         }
 
+        /**
+         * UltiKits/UltiKits#20: a refused payment must NOT produce the "deducted" line. Before the
+         * fix the service returned SUCCESS on a failed withdrawal, so this branch ran and told the
+         * player a price had been taken that never was.
+         */
+        @Test
+        @DisplayName("PAYMENT_FAILED says the payment failed and never says a price was deducted")
+        void paymentFailedSaysNoDeduction() {
+            setEconomyAvailable(true);
+            KitDefinition kit = createKit("paid", "&6Paid", "CHEST", 50.0, 0);
+            when(kitService.claimKit(player, "paid")).thenReturn(KitService.ClaimResult.PAYMENT_FAILED);
+
+            gui.handleKitClick(kit);
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue()).contains("扣款失败");
+            // The control that this is not vacuous: successPaidKit() proves this same fixture DOES
+            // emit the deduction line on SUCCESS, with the economy available and the kit priced.
+            assertThat(captor.getAllValues()).noneMatch(m -> m.contains("已扣除"));
+        }
+
+        @Test
+        @DisplayName("PAYMENT_FAILED does not close the inventory")
+        void paymentFailedNoClose() {
+            KitDefinition kit = createKit("paid", "&6Paid", "CHEST", 50.0, 0);
+            when(kitService.claimKit(player, "paid")).thenReturn(KitService.ClaimResult.PAYMENT_FAILED);
+
+            gui.handleKitClick(kit);
+
+            verify(player, never()).closeInventory();
+        }
+
         @Test
         @DisplayName("non-SUCCESS results do not close inventory")
         void nonSuccessNoClose() {
