@@ -285,8 +285,17 @@ public class KitServiceImpl implements KitService {
      * {@code CommandException} out of any third-party executor that throws, and a kit pointing at a
      * broken command would otherwise take the money, hand over the items and never record the
      * claim - silently making a one-time kit claimable again, which is the whole product of a
-     * one-time kit. Nothing here can produce "recorded but not delivered", because the record is
-     * written after the items are in the inventory.
+     * one-time kit. No <em>reordering</em> here can produce "recorded but not delivered", because the
+     * record is written after the items have been added to the inventory - subject to the
+     * pre-existing overflow path this ordering does not address, where {@code countEmptySlots}
+     * counts stacks against slots and {@code addItem}'s leftovers are discarded, so an over-sized
+     * stack can be recorded as claimed while only partly delivered (UltiKits/UltiKits#24).
+     * <p>
+     * The cost of putting the record first, stated rather than left implicit: a storage fault in
+     * {@code updateClaimData} now also skips the reward commands, where the previous order would
+     * have run them. That is the favourable side of the trade - a claim that goes unrecorded now
+     * duplicates fewer effects when it is made again - but it is a real change, and what to do
+     * about the unguarded write itself is owned by UltiKits/UltiKits#26, not decided here.
      * <p>
      * 顺序：先扣款并检查结果，再发放物品，随后写入领取记录，最后执行奖励命令。
      *
