@@ -61,7 +61,14 @@ public class KitBrowserGui extends Gui {
         int kitsPerPage = config.getKitsPerPage();
         List<KitDefinition> availableKits = kitService.getAvailableKits(player);
         int totalPages = Math.max(1, (int) Math.ceil((double) availableKits.size() / kitsPerPage));
-        int startIndex = page * kitsPerPage;
+        // The page index this browser was built with can have stopped existing since: `kits_per_page`
+        // is live, so raising it collapses the page count, and `/kits reload` can shrink the
+        // catalogue. Rendering such an index unclamped produces an empty inventory titled with an
+        // impossible `Page 5/2`. Clamping HERE rather than at the callers covers every way a browser
+        // is built, now and later, because obliviate calls onOpen on every open whoever constructed
+        // it. Only the rendered page is clamped; the `page` field keeps what it was built with.
+        int currentPage = Math.min(Math.max(page, 0), totalPages - 1);
+        int startIndex = currentPage * kitsPerPage;
         int endIndex = Math.min(startIndex + kitsPerPage, availableKits.size());
 
         // Fill separator row (row 5, slots 36-44)
@@ -88,7 +95,7 @@ public class KitBrowserGui extends Gui {
         }
 
         // Navigation - Previous page (slot 45)
-        if (page > 0) {
+        if (currentPage > 0) {
             ItemStack prevItem = new ItemStack(Material.ARROW);
             ItemMeta prevMeta = prevItem.getItemMeta();
             if (prevMeta != null) {
@@ -98,7 +105,7 @@ public class KitBrowserGui extends Gui {
             Icon prevIcon = new Icon(prevItem);
             prevIcon.onClick(e -> {
                 e.setCancelled(true);
-                openPage(page - 1);
+                openPage(currentPage - 1);
             });
             addItem(45, prevIcon);
         }
@@ -107,7 +114,7 @@ public class KitBrowserGui extends Gui {
         ItemStack pageItem = new ItemStack(Material.PAPER);
         ItemMeta pageMeta = pageItem.getItemMeta();
         if (pageMeta != null) {
-            pageMeta.setDisplayName(ChatColor.WHITE + String.format(plugin.i18n("第 %d/%d 页"), page + 1, totalPages));
+            pageMeta.setDisplayName(ChatColor.WHITE + String.format(plugin.i18n("第 %d/%d 页"), currentPage + 1, totalPages));
             pageItem.setItemMeta(pageMeta);
         }
         Icon pageIcon = new Icon(pageItem);
@@ -115,7 +122,7 @@ public class KitBrowserGui extends Gui {
         addItem(49, pageIcon);
 
         // Navigation - Next page (slot 53)
-        if (page < totalPages - 1) {
+        if (currentPage < totalPages - 1) {
             ItemStack nextItem = new ItemStack(Material.ARROW);
             ItemMeta nextMeta = nextItem.getItemMeta();
             if (nextMeta != null) {
@@ -125,7 +132,7 @@ public class KitBrowserGui extends Gui {
             Icon nextIcon = new Icon(nextItem);
             nextIcon.onClick(e -> {
                 e.setCancelled(true);
-                openPage(page + 1);
+                openPage(currentPage + 1);
             });
             addItem(53, nextIcon);
         }
@@ -145,21 +152,32 @@ public class KitBrowserGui extends Gui {
      * looking at, and nothing new is rendered. Claiming from that still-open page is refused
      * separately, by {@link com.ultikits.plugins.kits.service.KitService#claimKit}.
      * <p>
-     * 翻页只经由此方法，总开关因此只检查一处。被拒绝时保留当前页面，不渲染新页面。
+     * The switch is read inside the scheduled task, not before scheduling it. The reopen happens a
+     * tick after the click, and an operator's {@code /ul reload UltiTools-Kits} can land in that
+     * window: a check taken at click time would already have passed, and the callback would then
+     * open a fresh catalogue page for a system that is now off. Reading it in the task is one check
+     * at the moment the browser would actually be built, rather than one check plus a race.
+     * {@code closeInventory()} moved in with it for the same reason - the current page is closed
+     * only once the replacement is certain, so a refusal costs the player nothing.
+     * <p>
+     * 翻页只经由此方法。开关在延迟任务内部读取（而非调度之前），因为重开发生在下一 tick，
+     * 运维的 `/ul reload` 可能正落在这个窗口里。被拒绝时保留当前页面，不渲染新页面。
      *
      * @param targetPage the zero-based page to open / 目标页码（从 0 开始）
      */
     private void openPage(int targetPage) {
-        if (!config.isEnabled()) {
-            player.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
+        org.bukkit.plugin.Plugin ultiTools = Bukkit.getPluginManager().getPlugin("UltiTools");
+        if (ultiTools == null) {
             return;
         }
-        player.closeInventory();
-        org.bukkit.plugin.Plugin ultiTools = Bukkit.getPluginManager().getPlugin("UltiTools");
-        if (ultiTools != null) {
-            Bukkit.getScheduler().runTask(ultiTools, () ->
-                    new KitBrowserGui(player, plugin, kitService, config, targetPage).open());
-        }
+        Bukkit.getScheduler().runTask(ultiTools, () -> {
+            if (!config.isEnabled()) {
+                player.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
+                return;
+            }
+            player.closeInventory();
+            new KitBrowserGui(player, plugin, kitService, config, targetPage).open();
+        });
     }
 
     Icon buildKitIcon(KitDefinition kit) {
