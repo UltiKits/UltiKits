@@ -1278,10 +1278,17 @@ class KitBrowserGuiTest {
 
     /**
      * The browser is opened by {@code /kits}, which refuses while the master switch is off, so the
-     * only way a click can reach a disabled kit system is a browser that was ALREADY OPEN when the
+     * only way this GUI can meet a disabled kit system is a browser that was ALREADY OPEN when the
      * switch was flipped. Every test here therefore builds the browser with the switch on -- the
      * shared {@code setUp} does exactly that, since `enabled` defaults to true -- and flips it
-     * afterwards. A test that set the switch before construction would not exercise this path at all.
+     * afterwards. A test that set the switch before construction would not exercise this path.
+     * <p>
+     * Two different mechanisms are covered, and they are deliberately not the same mechanism. A
+     * CLAIM is refused by {@code KitService#claimKit} returning {@code SYSTEM_DISABLED}, which this
+     * class only renders -- the guard itself is tested at the gateway, in
+     * {@code KitServiceImplTest$ClaimTests$MasterSwitchTests}, because that is where a caller added
+     * later would meet it. A PAGE TURN is refused by this class's own single page-turn method,
+     * since turning a page never reaches the service at all.
      */
     @Nested
     @DisplayName("Master Switch On An Open Browser Tests")
@@ -1302,36 +1309,76 @@ class KitBrowserGuiTest {
         }
 
         @Test
-        @DisplayName("switch flipped off AFTER the browser was opened: the same click is refused")
-        void switchFlippedOffAfterOpenRefusesTheClick() throws Exception {
+        @DisplayName("SYSTEM_DISABLED from the gateway is rendered as the refusal, not a generic error")
+        void systemDisabledIsRenderedAsTheRefusal() throws Exception {
             KitDefinition kit = createKit("test", "&fTest", "CHEST", 0, 0);
-
-            // The browser already exists at this point, built while the switch was on. This is what
-            // ConfigManager#reloadConfigs does on /ul reload: it re-reads the file into the same
-            // KitsConfig instance this browser holds.
-            config.setEnabled(false);
+            when(kitService.claimKit(player, "test"))
+                    .thenReturn(KitService.ClaimResult.SYSTEM_DISABLED);
 
             gui.handleKitClick(kit);
 
-            verifyNoInteractions(kitService);
             ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
             verify(player).sendMessage(captor.capture());
-            assertThat(captor.getValue()).contains("礼包系统当前已关闭");
+            assertThat(captor.getValue())
+                    .contains("礼包系统当前已关闭")
+                    .doesNotContain("领取礼包时发生错误");
         }
 
         @Test
         @DisplayName("the debounce still runs first, so a refused click cannot be spammed")
         void refusalIsThrottledByTheDebounce() throws Exception {
             KitDefinition kit = createKit("test", "&fTest", "CHEST", 0, 0);
+            when(kitService.claimKit(player, "test"))
+                    .thenReturn(KitService.ClaimResult.SYSTEM_DISABLED);
+
+            gui.handleKitClick(kit);
+            gui.handleKitClick(kit);
+
+            // One refusal, not two: the second click is inside the 200ms debounce window and is
+            // dropped before the gateway is called at all.
+            verify(kitService, times(1)).claimKit(player, "test");
+            verify(player, times(1)).sendMessage(anyString());
+        }
+
+        /** Opens page 0 of a 30-kit catalogue and hands back its next-page arrow at slot 53. */
+        private Icon nextPageArrow() throws Exception {
+            setEconomyAvailable(false);
+            when(kitService.getAvailableKits(player)).thenReturn(freeKits(30));
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(gui);
+            gui.onOpen(mock(org.bukkit.event.inventory.InventoryOpenEvent.class));
+            return (Icon) gui.getItems().get(53);
+        }
+
+        @Test
+        @DisplayName("switch on: the next-page arrow closes the current page to open the next one")
+        void switchOnLetsThePageTurn() throws Exception {
+            Icon arrow = nextPageArrow();
+
+            arrow.getClickAction().accept(mock(org.bukkit.event.inventory.InventoryClickEvent.class));
+
+            // closeInventory is the observable first step of a page turn; the reopen itself is
+            // scheduled against the UltiTools plugin, which is absent in this harness.
+            verify(player).closeInventory();
+            verify(player, never()).sendMessage(anyString());
+        }
+
+        @Test
+        @DisplayName("switch flipped off after the open: the page arrow refuses and keeps the page")
+        void switchFlippedOffAfterOpenRefusesThePageTurn() throws Exception {
+            Icon arrow = nextPageArrow();
+
+            // The browser already exists and is showing page 0 at this point.
             config.setEnabled(false);
 
-            gui.handleKitClick(kit);
-            gui.handleKitClick(kit);
+            arrow.getClickAction().accept(mock(org.bukkit.event.inventory.InventoryClickEvent.class));
 
-            verifyNoInteractions(kitService);
-            // One refusal, not two: the second click is inside the 200ms debounce window and is
-            // dropped before the switch is consulted.
-            verify(player, times(1)).sendMessage(anyString());
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue()).contains("礼包系统当前已关闭");
+            // The page the player was already looking at is left alone: refusing the turn is the
+            // whole action, and no fresh page of the catalogue is rendered.
+            verify(player, never()).closeInventory();
         }
     }
 }

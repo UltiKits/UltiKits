@@ -730,6 +730,46 @@ class KitCommandsTest {
         }
 
         @Test
+        @DisplayName("disabled refuses /kits help, which the framework short-circuits past every mapping")
+        void disabledRefusesHelp() {
+            config.setEnabled(false);
+
+            kitCommands.handleHelp(consoleSender);
+
+            verifyNoInteractions(kitService);
+            assertRefusedAsDisabled(consoleSender);
+        }
+
+        @Test
+        @DisplayName("declared default true still prints the usage summary")
+        void declaredDefaultStillPrintsHelp() {
+            kitCommands.handleHelp(consoleSender);
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(consoleSender, atLeast(2)).sendMessage(captor.capture());
+            assertThat(captor.getAllValues()).anyMatch(line -> line.contains("/kits claim <name>"));
+            assertThat(captor.getAllValues()).noneMatch(line -> line.contains("礼包系统当前已关闭"));
+        }
+
+        @Test
+        @DisplayName("SYSTEM_DISABLED from the gateway renders the refusal, not a generic error")
+        void systemDisabledFromTheGatewayIsRendered() {
+            // The command gate is left ON deliberately: this is the shape of a future caller that
+            // reaches the service without pre-checking, which is the case the gateway guard exists
+            // for. The renderer must name the switch rather than fall into "Error claiming kit".
+            when(kitService.claimKit(player, "starter"))
+                    .thenReturn(KitService.ClaimResult.SYSTEM_DISABLED);
+
+            kitCommands.onClaim(player, "starter");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .contains("礼包系统当前已关闭")
+                    .doesNotContain("领取礼包时发生错误");
+        }
+
+        @Test
         @DisplayName("a switch flip back to true re-enables the command in the same way")
         void flipBackReEnables() {
             when(kitService.claimKit(player, "starter")).thenReturn(KitService.ClaimResult.SUCCESS);

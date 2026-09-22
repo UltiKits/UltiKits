@@ -1,6 +1,7 @@
 package com.ultikits.plugins.kits.service;
 
 import com.ultikits.plugins.kits.MockBukkitSupport;
+import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.entity.KitClaimData;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
@@ -47,12 +48,14 @@ class KitServiceImplTest {
     private DataOperator<KitClaimData> mockClaimOperator;
     @SuppressWarnings("unchecked")
     private Query<KitClaimData> mockQuery;
+    private KitsConfig config;
     private KitServiceImpl service;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
     void setUp() {
         plugin = mock(UltiToolsPlugin.class);
+        config = new KitsConfig("config/config.yml");
         mockLogger = mock(PluginLogger.class);
         mockClaimOperator = mock(DataOperator.class);
         mockQuery = mock(Query.class);
@@ -81,7 +84,7 @@ class KitServiceImplTest {
      * The constructor calls loadKits(), so files must exist before construction.
      */
     private KitServiceImpl createService() {
-        return new KitServiceImpl(plugin);
+        return new KitServiceImpl(plugin, config);
     }
 
     /**
@@ -854,6 +857,90 @@ class KitServiceImplTest {
             inventory = player.getInventory();
             // Default: plenty of empty slots
             when(inventory.getStorageContents()).thenReturn(new ItemStack[36]);
+        }
+
+        /**
+         * The master switch, enforced at the claim gateway rather than at its callers.
+         * <p>
+         * This is the test that fails when the guard is gone. It exercises {@code claimKit}
+         * directly, i.e. as an arbitrary caller with no pre-check of its own, which is exactly the
+         * shape of the future caller the guard exists for - the module's own enumeration of callers
+         * came up short twice before the guard moved here (UltiKits/UltiKits#13).
+         */
+        @Nested
+        @DisplayName("Master Switch Tests")
+        class MasterSwitchTests {
+
+            /** A free, unrestricted, deliverable kit, so only the switch can decide the outcome. */
+            private KitServiceImpl serviceWithDeliverableKit(ItemStack item) throws Exception {
+                KitDefinition kit = createTestKit("free");
+                kit.setPrice(0);
+                kit.setItems("someBase64Data");
+
+                KitServiceImpl spyService = spy(service);
+                injectKit(spyService, kit);
+                doReturn(new ItemStack[]{item}).when(spyService).deserializeItems("someBase64Data");
+                when(inventory.getStorageContents()).thenReturn(new ItemStack[36]);
+                return spyService;
+            }
+
+            @Test
+            @DisplayName("declared default true: the same claim succeeds and delivers")
+            void declaredDefaultAllowsTheClaim() throws Exception {
+                ItemStack mockItem = mock(ItemStack.class);
+                when(mockItem.clone()).thenReturn(mockItem);
+                KitServiceImpl spyService = serviceWithDeliverableKit(mockItem);
+
+                KitService.ClaimResult result = spyService.claimKit(player, "free");
+
+                assertThat(result).isEqualTo(KitService.ClaimResult.SUCCESS);
+                verify(inventory).addItem(mockItem);
+            }
+
+            @Test
+            @DisplayName("enabled false: SYSTEM_DISABLED, no items delivered, no claim row written")
+            void disabledRefusesAtTheGatewayAndDeliversNothing() throws Exception {
+                ItemStack mockItem = mock(ItemStack.class);
+                KitServiceImpl spyService = serviceWithDeliverableKit(mockItem);
+
+                config.setEnabled(false);
+
+                KitService.ClaimResult result = spyService.claimKit(player, "free");
+
+                assertThat(result).isEqualTo(KitService.ClaimResult.SYSTEM_DISABLED);
+                verify(inventory, never()).addItem(any(ItemStack.class));
+                verify(mockClaimOperator, never()).insert(any(KitClaimData.class));
+                verify(mockClaimOperator, never()).update(any(KitClaimData.class));
+            }
+
+            @Test
+            @DisplayName("the switch is read per claim, so a flip applies to the very next one")
+            void theSwitchIsReadPerClaim() throws Exception {
+                ItemStack mockItem = mock(ItemStack.class);
+                when(mockItem.clone()).thenReturn(mockItem);
+                KitServiceImpl spyService = serviceWithDeliverableKit(mockItem);
+
+                assertThat(spyService.claimKit(player, "free"))
+                        .isEqualTo(KitService.ClaimResult.SUCCESS);
+
+                // Mirrors ConfigManager#reloadConfigs: the file is re-read into the SAME instance
+                // the service already holds. A value cached in the constructor would survive this.
+                config.setEnabled(false);
+
+                assertThat(spyService.claimKit(player, "free"))
+                        .isEqualTo(KitService.ClaimResult.SYSTEM_DISABLED);
+            }
+
+            @Test
+            @DisplayName("the switch is checked before the kit is even looked up")
+            void theSwitchPrecedesTheLookup() {
+                config.setEnabled(false);
+
+                // "nonexistent" would be NOT_FOUND if the lookup ran first. SYSTEM_DISABLED proves
+                // the guard is the gateway's first statement, so no later branch can step around it.
+                assertThat(service.claimKit(player, "nonexistent"))
+                        .isEqualTo(KitService.ClaimResult.SYSTEM_DISABLED);
+            }
         }
 
         @Test
@@ -3057,6 +3144,7 @@ class KitServiceImplTest {
                     KitService.ClaimResult.INVENTORY_FULL,
                     KitService.ClaimResult.EMPTY_KIT,
                     KitService.ClaimResult.PAYMENT_FAILED,
+                    KitService.ClaimResult.SYSTEM_DISABLED,
                     KitService.ClaimResult.ERROR
             );
         }
