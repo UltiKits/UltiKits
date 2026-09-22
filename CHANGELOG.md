@@ -9,6 +9,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The kit browser no longer shows an empty page titled with a page number that cannot exist. If the
+  kit list shrinks while a browser is open — `/kits reload` removing kits, or `kits_per_page` being
+  raised so there are fewer pages — the page the browser was on can stop existing; it now shows the
+  last real page instead, with working navigation arrows (UltiKits/UltiKits#13).
+- 礼包浏览界面不会再出现「页码超出总页数的空白页面」。当界面打开期间礼包列表变短时——`/kits reload`
+  删除了礼包，或 `kits_per_page` 被调大导致总页数减少——原先所在的页可能已不存在；现在会改为显示最后
+  一个真实存在的页面，翻页按钮同样正常（UltiKits/UltiKits#13）。
 - `config/config.yml: kits_per_page` now decides how many kits one page of the kit browser shows.
   Previously the browser paged on a hardcoded 28 regardless of what the key said; it now follows
   `kits_per_page`, whose default is still 28, so a server that never edited the key sees no change.
