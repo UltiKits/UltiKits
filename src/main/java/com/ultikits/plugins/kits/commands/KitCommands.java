@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.commands;
 
+import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.gui.KitBrowserGui;
 import com.ultikits.plugins.kits.gui.KitEditorGui;
 import com.ultikits.plugins.kits.model.KitDefinition;
@@ -27,10 +28,48 @@ public class KitCommands extends BaseCommandExecutor {
 
     private final UltiToolsPlugin plugin;
     private final KitService kitService;
+    /**
+     * The module's live configuration object, not a snapshot of its values. {@code ConfigManager}
+     * re-reads the file into this same instance on {@code /ul reload}, so {@link #refusedAsDisabled}
+     * reads {@code enabled} at the moment a command runs and a flip of the switch applies to the
+     * very next command without a server restart.
+     * <p>
+     * 模块的实时配置对象（而非取值快照）。{@code /ul reload} 会把文件重新读入同一个实例，
+     * 因此总开关在下一条命令上即刻生效，无需重启服务器。
+     */
+    private final KitsConfig config;
 
-    public KitCommands(UltiToolsPlugin plugin, KitService kitService) {
+    public KitCommands(UltiToolsPlugin plugin, KitService kitService, KitsConfig config) {
         this.plugin = plugin;
         this.kitService = kitService;
+        this.config = config;
+    }
+
+    /**
+     * Refuses the command when the kit system's master switch ({@code config.yml: enabled}) is off, and
+     * says so, so an operator who turned the module off gets a reason rather than silence.
+     * <p>
+     * The switch is enforced here, at each command entry point, rather than by withholding the
+     * command registration: an unregistered command answers with Bukkit's own "Unknown command",
+     * which reads as a typo rather than a deliberate setting. Registration-time gating
+     * ({@code @ConditionalOnConfig}) is also evaluated once at component scan, so a change would
+     * need a full server restart in either direction; read here, the switch follows
+     * {@code /ul reload}. The kit browser is reachable only through {@code /kits}, so gating the
+     * commands also gates the GUI - a browser a player already had open when the switch was
+     * flipped is not force-closed, and its clicks keep working until it is closed.
+     * <p>
+     * 总开关（{@code config.yml: enabled}）关闭时拒绝命令并给出提示，而不是静默无响应。
+     *
+     * @param sender the command sender to answer / 命令发送者
+     * @return true when the command was refused and the caller must return immediately /
+     *         为 true 时表示命令已被拒绝，调用方应立即返回
+     */
+    private boolean refusedAsDisabled(CommandSender sender) {
+        if (config.isEnabled()) {
+            return false;
+        }
+        sender.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
+        return true;
     }
 
     /**
@@ -39,7 +78,10 @@ public class KitCommands extends BaseCommandExecutor {
     @CmdMapping(format = "")
     @CmdTarget(CmdTarget.CmdTargetType.PLAYER)
     public void onOpenGui(@CmdSender Player player) {
-        new KitBrowserGui(player, plugin, kitService, 0).open();
+        if (refusedAsDisabled(player)) {
+            return;
+        }
+        new KitBrowserGui(player, plugin, kitService, config, 0).open();
     }
 
     /**
@@ -50,6 +92,9 @@ public class KitCommands extends BaseCommandExecutor {
     public void onClaim(
             @CmdSender Player player,
             @CmdParam(value = "name", suggest = "suggestKitNames") String name) {
+        if (refusedAsDisabled(player)) {
+            return;
+        }
         KitService.ClaimResult result = kitService.claimKit(player, name);
         handleClaimResult(player, name, result);
     }
@@ -59,6 +104,9 @@ public class KitCommands extends BaseCommandExecutor {
      */
     @CmdMapping(format = "list")
     public void onList(@CmdSender CommandSender sender) {
+        if (refusedAsDisabled(sender)) {
+            return;
+        }
         List<KitDefinition> allKits;
 
         if (sender instanceof Player) {
@@ -93,6 +141,9 @@ public class KitCommands extends BaseCommandExecutor {
     public void onEdit(
             @CmdSender Player player,
             @CmdParam(value = "name", suggest = "suggestKitNames") String name) {
+        if (refusedAsDisabled(player)) {
+            return;
+        }
         if (!player.hasPermission("ultikits.kits.admin")) {
             player.sendMessage(ChatColor.RED + plugin.i18n("你没有权限执行此命令"));
             return;
@@ -113,6 +164,9 @@ public class KitCommands extends BaseCommandExecutor {
     @CmdMapping(format = "create <name>")
     @CmdTarget(CmdTarget.CmdTargetType.PLAYER)
     public void onCreate(@CmdSender Player player, @CmdParam("name") String name) {
+        if (refusedAsDisabled(player)) {
+            return;
+        }
         if (!player.hasPermission("ultikits.kits.admin")) {
             player.sendMessage(ChatColor.RED + plugin.i18n("你没有权限执行此命令"));
             return;
@@ -145,6 +199,9 @@ public class KitCommands extends BaseCommandExecutor {
     public void onDelete(
             @CmdSender CommandSender sender,
             @CmdParam(value = "name", suggest = "suggestKitNames") String name) {
+        if (refusedAsDisabled(sender)) {
+            return;
+        }
         if (!sender.hasPermission("ultikits.kits.admin")) {
             sender.sendMessage(ChatColor.RED + plugin.i18n("你没有权限执行此命令"));
             return;
@@ -162,6 +219,9 @@ public class KitCommands extends BaseCommandExecutor {
      */
     @CmdMapping(format = "reload")
     public void onReload(@CmdSender CommandSender sender) {
+        if (refusedAsDisabled(sender)) {
+            return;
+        }
         if (!sender.hasPermission("ultikits.kits.admin")) {
             sender.sendMessage(ChatColor.RED + plugin.i18n("你没有权限执行此命令"));
             return;

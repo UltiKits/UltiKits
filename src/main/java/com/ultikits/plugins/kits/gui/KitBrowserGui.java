@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.gui;
 
+import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
@@ -26,24 +27,36 @@ public class KitBrowserGui extends Gui {
     private final Player player;
     private final UltiToolsPlugin plugin;
     private final KitService kitService;
+    /**
+     * The module's live configuration object, not a snapshot of its values. {@code ConfigManager}
+     * re-reads the file into this same instance on {@code /ul reload}, so every read below happens
+     * at the moment the value is used - at open for the page size, at click for the debounce
+     * window - and a reload therefore takes effect without reopening the browser or restarting.
+     * <p>
+     * 模块的实时配置对象（而非取值快照）。{@code /ul reload} 会把文件重新读入同一个实例，
+     * 因此下面每一处都在用到的那一刻才读取，重载无需重启即可生效。
+     */
+    private final KitsConfig config;
     private final int page;
-    private final int kitsPerPage;
     private long lastClickTime = 0;
-    private static final long CLICK_COOLDOWN_MS = 200;
 
-    public KitBrowserGui(Player player, UltiToolsPlugin plugin, KitService kitService, int page) {
+    public KitBrowserGui(Player player, UltiToolsPlugin plugin, KitService kitService,
+                         KitsConfig config, int page) {
         super(player, "kit_browser_" + page,
                 ChatColor.translateAlternateColorCodes('&', "&6&l" + plugin.i18n("礼包列表")),
                 6);
         this.player = player;
         this.plugin = plugin;
         this.kitService = kitService;
+        this.config = config;
         this.page = page;
-        this.kitsPerPage = 28;
     }
 
     @Override
     public void onOpen(InventoryOpenEvent event) {
+        // Read once per frame so the page count, the start index and the end index below cannot
+        // disagree with each other, and re-read on every open so a reloaded value applies at once.
+        int kitsPerPage = config.getKitsPerPage();
         List<KitDefinition> availableKits = kitService.getAvailableKits(player);
         int totalPages = Math.max(1, (int) Math.ceil((double) availableKits.size() / kitsPerPage));
         int startIndex = page * kitsPerPage;
@@ -62,7 +75,7 @@ public class KitBrowserGui extends Gui {
             addItem(i, separator);
         }
 
-        // Add kit items (slots 0-35, up to 28 per page based on kitsPerPage)
+        // Add kit items (slots 0-35, up to config.kits_per_page per page)
         for (int i = startIndex; i < endIndex; i++) {
             int slot = i - startIndex;
             if (slot >= 36) break;
@@ -87,7 +100,7 @@ public class KitBrowserGui extends Gui {
                 org.bukkit.plugin.Plugin ultiTools = Bukkit.getPluginManager().getPlugin("UltiTools");
                 if (ultiTools != null) {
                     Bukkit.getScheduler().runTask(ultiTools, () ->
-                            new KitBrowserGui(player, plugin, kitService, page - 1).open());
+                            new KitBrowserGui(player, plugin, kitService, config, page - 1).open());
                 }
             });
             addItem(45, prevIcon);
@@ -119,7 +132,7 @@ public class KitBrowserGui extends Gui {
                 org.bukkit.plugin.Plugin ultiTools = Bukkit.getPluginManager().getPlugin("UltiTools");
                 if (ultiTools != null) {
                     Bukkit.getScheduler().runTask(ultiTools, () ->
-                            new KitBrowserGui(player, plugin, kitService, page + 1).open());
+                            new KitBrowserGui(player, plugin, kitService, config, page + 1).open());
                 }
             });
             addItem(53, nextIcon);
@@ -185,7 +198,7 @@ public class KitBrowserGui extends Gui {
 
     void handleKitClick(KitDefinition kit) {
         long now = System.currentTimeMillis();
-        if (now - lastClickTime < CLICK_COOLDOWN_MS) {
+        if (now - lastClickTime < config.getClickCooldownMs()) {
             return;
         }
         lastClickTime = now;
