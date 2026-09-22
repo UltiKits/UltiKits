@@ -2071,13 +2071,51 @@ class KitServiceImplTest {
         }
 
         @Test
+        @DisplayName("saveKitItems returns SYSTEM_DISABLED and writes nothing while the switch is off")
+        void saveRefusedWhileDisabled() throws Exception {
+            KitDefinition kit = createTestKit("editable");
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+            doReturn("data").when(spyService).serializeItems(any(ItemStack[].class));
+            ItemStack stone = mock(ItemStack.class);
+            lenient().when(stone.getType()).thenReturn(Material.STONE);
+
+            config.setEnabled(false);
+
+            KitService.SaveResult result = spyService.saveKitItems("editable", new ItemStack[]{stone});
+
+            assertThat(result).isEqualTo(KitService.SaveResult.SYSTEM_DISABLED);
+            // Nothing was written and nothing was even serialized: the guard is the gateway's first
+            // statement, so a caller that outlives the command gate cannot get past it.
+            verify(spyService, never()).saveKitToFile(anyString(), any(KitDefinition.class));
+            verify(spyService, never()).serializeItems(any(ItemStack[].class));
+        }
+
+        @Test
+        @DisplayName("saveKitItems still saves at the declared default")
+        void saveAllowedAtTheDeclaredDefault() throws Exception {
+            KitDefinition kit = createTestKit("editable");
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+            doReturn("data").when(spyService).serializeItems(any(ItemStack[].class));
+            doReturn(true).when(spyService).saveKitToFile(eq("editable"), eq(kit));
+            ItemStack stone = mock(ItemStack.class);
+            when(stone.getType()).thenReturn(Material.STONE);
+
+            KitService.SaveResult result = spyService.saveKitItems("editable", new ItemStack[]{stone});
+
+            assertThat(result).isEqualTo(KitService.SaveResult.SUCCESS);
+            verify(spyService).saveKitToFile("editable", kit);
+        }
+
+        @Test
         @DisplayName("saveKitItems returns false for nonexistent kit")
         void saveNonexistentKit() {
             ItemStack mockItem = mock(ItemStack.class);
             when(mockItem.getType()).thenReturn(Material.STONE);
 
-            boolean result = service.saveKitItems("nosuchkit", new ItemStack[]{mockItem});
-            assertThat(result).isFalse();
+            KitService.SaveResult result = service.saveKitItems("nosuchkit", new ItemStack[]{mockItem});
+            assertThat(result).isEqualTo(KitService.SaveResult.FAILED);
         }
 
         @Test
@@ -2651,9 +2689,9 @@ class KitServiceImplTest {
             ItemStack[] items = new ItemStack[]{null, stone, null};
 
             doReturn("serialized").when(spyService).serializeItems(argThat(arr -> arr.length == 1));
-            boolean result = spyService.saveKitItems("filtertest", items);
+            KitService.SaveResult result = spyService.saveKitItems("filtertest", items);
 
-            assertThat(result).isTrue();
+            assertThat(result).isEqualTo(KitService.SaveResult.SUCCESS);
         }
 
         @Test
@@ -2673,9 +2711,9 @@ class KitServiceImplTest {
             ItemStack[] items = new ItemStack[]{air, diamond, air};
 
             doReturn("serialized").when(spyService).serializeItems(argThat(arr -> arr.length == 1));
-            boolean result = spyService.saveKitItems("filterair", items);
+            KitService.SaveResult result = spyService.saveKitItems("filterair", items);
 
-            assertThat(result).isTrue();
+            assertThat(result).isEqualTo(KitService.SaveResult.SUCCESS);
         }
 
         @Test
@@ -2693,9 +2731,9 @@ class KitServiceImplTest {
             ItemStack[] items = new ItemStack[]{stone};
 
             doReturn(null).when(spyService).serializeItems(any(ItemStack[].class));
-            boolean result = spyService.saveKitItems("serfail", items);
+            KitService.SaveResult result = spyService.saveKitItems("serfail", items);
 
-            assertThat(result).isFalse();
+            assertThat(result).isEqualTo(KitService.SaveResult.FAILED);
         }
 
         @Test
@@ -2734,9 +2772,9 @@ class KitServiceImplTest {
             doReturn("data").when(spyService).serializeItems(any(ItemStack[].class));
             doReturn(true).when(spyService).saveKitToFile(eq("delegate"), eq(kit));
 
-            boolean result = spyService.saveKitItems("delegate", new ItemStack[]{stone});
+            KitService.SaveResult result = spyService.saveKitItems("delegate", new ItemStack[]{stone});
 
-            assertThat(result).isTrue();
+            assertThat(result).isEqualTo(KitService.SaveResult.SUCCESS);
             verify(spyService).saveKitToFile("delegate", kit);
         }
 
@@ -2757,9 +2795,9 @@ class KitServiceImplTest {
             doReturn("emptyser").when(spyService).serializeItems(argThat(arr -> arr.length == 0));
             doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
 
-            boolean result = spyService.saveKitItems("allnull", items);
+            KitService.SaveResult result = spyService.saveKitItems("allnull", items);
 
-            assertThat(result).isTrue();
+            assertThat(result).isEqualTo(KitService.SaveResult.SUCCESS);
         }
     }
 
