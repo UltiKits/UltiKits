@@ -9,6 +9,28 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A paid kit whose price could not actually be withdrawn is no longer delivered. Previously, when
+  the balance check passed but the withdrawal itself did not go through — the balance was spent
+  elsewhere in between, or the economy plugin rejected the transaction — `/kits claim <name>` and
+  the kit browser still gave the player the items, ran the kit's configured player and console
+  commands, recorded a one-time kit as claimed, and the browser told the player the price had been
+  deducted. Both paths now reply `Payment failed - the kit was not claimed`, deliver nothing and
+  record nothing, and the server console gets a `WARNING` naming the kit, the player and the
+  amount — written for the first refusal of each kit in each server session, so an economy
+  outage cannot bury the log; `/kits reload` re-arms it (UltiKits/UltiKits#20).
+- A successful claim now records the claim before running the kit's configured player and
+  console commands, instead of after. A reward command that fails used to leave the player
+  charged and holding the items with no claim recorded, which silently made a one-time kit
+  claimable again (UltiKits/UltiKits#20).
+- 付费礼包若扣款未真正成功，现在不再发放。此前只要余额检查通过而扣款本身失败——余额在两次调用之间被
+  花掉，或经济插件拒绝了该笔交易——`/kits claim <名称>` 与礼包浏览界面仍会把物品发给玩家、执行礼包
+  配置的玩家命令与控制台命令、把一次性礼包记为已领取，浏览界面还会提示价格“已扣除”。现在两条路径都会
+  回复“扣款失败，礼包未领取”，既不发放也不记录，服务器控制台还会输出一条包含礼包名、玩家名与金额的
+  `WARNING`——每个礼包每个会话只输出一次，避免经济系统故障时刷屏；`/kits reload` 可重置
+  （UltiKits/UltiKits#20）。
+- 领取成功时，领取记录现在先于礼包配置的玩家命令与控制台命令写入，而非之后。此前奖励命令若执行
+  失败，会出现玩家已被扣款、已拿到物品、却没有领取记录的状态，使一次性礼包被悄悄重新变为可领取
+  （UltiKits/UltiKits#20）。
 - After `/upm uninstall UltiTools-Kits`, this module's `/kits` (`/kit`) command is now really removed.
   Previously the command stayed registered until the server restarted, because this module replaced
   the framework's unload method with an empty one (UltiKits/UltiKits#18).

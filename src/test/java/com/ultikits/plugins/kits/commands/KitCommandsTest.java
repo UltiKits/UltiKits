@@ -198,6 +198,26 @@ class KitCommandsTest {
             assertThat(captor.getValue()).contains("礼包内容为空");
         }
 
+        /**
+         * UltiKits/UltiKits#20: a refused payment gets its own reply, not the generic
+         * "error claiming kit" line the {@code default} branch would otherwise produce, and not
+         * the "insufficient balance" line - the balance check passed, the withdrawal did not.
+         */
+        @Test
+        @DisplayName("PAYMENT_FAILED sends its own message, neither the generic error nor insufficient balance")
+        void paymentFailedSendsOwnMessage() {
+            when(kitService.claimKit(player, "paid")).thenReturn(KitService.ClaimResult.PAYMENT_FAILED);
+
+            kitCommands.onClaim(player, "paid");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .contains("扣款失败")
+                    .doesNotContain("领取礼包时发生错误")
+                    .doesNotContain("余额不足");
+        }
+
         @Test
         @DisplayName("ERROR sends generic error message")
         void errorSendsMessage() {

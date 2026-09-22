@@ -205,6 +205,9 @@ public class KitCommands extends BaseCommandExecutor {
                 String price = fundKit != null ? String.valueOf(fundKit.getPrice()) : "?";
                 player.sendMessage(ChatColor.RED + String.format(plugin.i18n("余额不足，需要 %s"), price));
                 break;
+            case PAYMENT_FAILED:
+                player.sendMessage(ChatColor.RED + plugin.i18n("扣款失败，礼包未领取"));
+                break;
             case ALREADY_CLAIMED:
                 player.sendMessage(ChatColor.RED + plugin.i18n("你已经领取过此礼包"));
                 break;

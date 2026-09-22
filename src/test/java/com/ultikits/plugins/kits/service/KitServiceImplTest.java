@@ -29,6 +29,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -1310,6 +1311,369 @@ class KitServiceImplTest {
 
             KitService.ClaimResult result = spyService.claimKit(player, "aircheck");
             assertThat(result).isEqualTo(KitService.ClaimResult.SUCCESS);
+        }
+    }
+
+    // =========================================================================
+    // Payment Failure Tests (UltiKits/UltiKits#20)
+    // =========================================================================
+
+    /**
+     * Covers UltiKits/UltiKits#20: a paid kit whose withdrawal does NOT go through must deliver
+     * nothing, record nothing and report a non-SUCCESS result.
+     * <p>
+     * Every test here drives a Vault {@link Economy} backed by a real mutable balance, so the
+     * assertion "the player was not charged" reads the balance itself rather than only which
+     * methods were called. {@link #successfulPaymentChargesAndDelivers()} is the control that
+     * makes the other tests non-vacuous: on the same fixture, a successful withdrawal DOES move
+     * the balance, DOES deliver the items and DOES write a claim row — so a "balance unchanged /
+     * nothing delivered / nothing recorded" assertion cannot be passing merely because the
+     * fixture is inert.
+     */
+    @Nested
+    @DisplayName("Payment Failure Tests")
+    class PaymentFailureTests {
+
+        private static final double PRICE = 100.0;
+
+        private Player player;
+        private PlayerInventory inventory;
+        private ItemStack kitItem;
+
+        /** The economy's real balance. Index 0 so the lambdas below can mutate it on Java 8. */
+        private final double[] balance = {500.0};
+
+        /** Counts calls the module makes to {@code Economy#has}, to prove the race actually ran. */
+        private final AtomicInteger hasCalls = new AtomicInteger();
+
+        @BeforeEach
+        void setUp() {
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            player = createMockPlayer();
+            inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[36]);
+            kitItem = mock(ItemStack.class);
+            when(kitItem.clone()).thenReturn(kitItem);
+        }
+
+        /**
+         * Registers a Vault economy whose {@code has} reads {@link #balance} and whose
+         * {@code withdrawPlayer} debits it only when {@code withdrawalSucceeds}. Registration goes
+         * through the public Bukkit/Vault types only (UltiKits/UltiKits#19).
+         */
+        private Economy statefulEconomy(boolean withdrawalSucceeds) {
+            Economy mockEconomy = setupMockEconomy();
+            when(mockEconomy.has(any(org.bukkit.OfflinePlayer.class), anyDouble())).thenAnswer(inv -> {
+                hasCalls.incrementAndGet();
+                return balance[0] >= (Double) inv.getArgument(1);
+            });
+            when(mockEconomy.withdrawPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble())).thenAnswer(inv -> {
+                double amount = inv.getArgument(1);
+                if (!withdrawalSucceeds) {
+                    return new EconomyResponse(amount, balance[0],
+                            EconomyResponse.ResponseType.FAILURE, "economy rejected the transaction");
+                }
+                balance[0] -= amount;
+                return new EconomyResponse(amount, balance[0], EconomyResponse.ResponseType.SUCCESS, "");
+            });
+            return mockEconomy;
+        }
+
+        private KitDefinition buildPaidKit(String name, boolean oneTime) {
+            KitDefinition kit = createTestKit(name);
+            kit.setPrice(PRICE);
+            kit.setReBuyable(!oneTime);
+            kit.setItems("someBase64Data");
+            return kit;
+        }
+
+        private KitServiceImpl serviceWithKits(KitDefinition... kits) throws Exception {
+            for (KitDefinition kit : kits) {
+                injectKit(service, kit);
+            }
+            KitServiceImpl spyService = spy(service);
+            for (KitDefinition kit : kits) {
+                injectKit(spyService, kit);
+            }
+            doReturn(new ItemStack[]{kitItem}).when(spyService).deserializeItems("someBase64Data");
+            return spyService;
+        }
+
+        private KitServiceImpl paidKitService(String name, boolean oneTime) throws Exception {
+            return serviceWithKits(buildPaidKit(name, oneTime));
+        }
+
+        /**
+         * Every console line the module wrote that is a payment refusal.
+         * <p>
+         * Filtering by content is not cosmetic: {@code loadKits()} writes its own
+         * "no kit configuration files found" warning when the service is constructed against an
+         * empty fixture folder, so a bare {@code verify(mockLogger, times(n)).warn(...)} would be
+         * counting that line too and would silently mean something other than it says.
+         */
+        private List<String> refusalWarnings() {
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(captor.capture());
+            List<String> refusals = new ArrayList<>();
+            for (String message : captor.getAllValues()) {
+                if (message.contains("refused")) {
+                    refusals.add(message);
+                }
+            }
+            return refusals;
+        }
+
+        /** Nothing was delivered, nothing was recorded, and no reward command ran. */
+        private void assertNothingHappened() throws IllegalAccessException {
+            verify(inventory, never()).addItem(any(ItemStack.class));
+            verify(mockClaimOperator, never()).insert(any(KitClaimData.class));
+            verify(mockClaimOperator, never()).update(any(KitClaimData.class));
+            verify(player, never()).performCommand(anyString());
+        }
+
+        @Test
+        @DisplayName("balance spent between the affordability check and the withdrawal: nothing is delivered, recorded or charged")
+        void balanceSpentBetweenCheckAndWithdrawal() throws Exception {
+            // The issue's own scenario: has() passes, then the balance is spent elsewhere (an
+            // economy backed by a database shared with another server) before the withdrawal.
+            Economy mockEconomy = setupMockEconomy();
+            when(mockEconomy.has(any(org.bukkit.OfflinePlayer.class), anyDouble())).thenAnswer(inv -> {
+                boolean affordable = balance[0] >= (Double) inv.getArgument(1);
+                if (hasCalls.incrementAndGet() == 1) {
+                    balance[0] = 50.0; // spent on the other server, right after the check
+                }
+                return affordable;
+            });
+
+            KitServiceImpl spyService = paidKitService("racy", true);
+            KitService.ClaimResult result = spyService.claimKit(player, "racy");
+
+            // Pre-assertion: the race really ran. Without a second has() the module never got
+            // as far as the withdrawal, and a non-SUCCESS result would prove nothing.
+            assertThat(hasCalls.get()).isGreaterThanOrEqualTo(2);
+            assertThat(result).isEqualTo(KitService.ClaimResult.PAYMENT_FAILED);
+            assertThat(balance[0]).isEqualTo(50.0); // only the external spend; the kit charged nothing
+            verify(mockEconomy, never()).withdrawPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble());
+            assertNothingHappened();
+        }
+
+        @Test
+        @DisplayName("economy rejects the transaction: nothing is delivered, recorded or charged")
+        void economyRejectsTheWithdrawal() throws Exception {
+            Economy mockEconomy = statefulEconomy(false);
+
+            KitServiceImpl spyService = paidKitService("rejected", true);
+            KitService.ClaimResult result = spyService.claimKit(player, "rejected");
+
+            // Pre-assertion: the withdrawal was actually attempted, so the failure below cannot
+            // have come from an earlier check short-circuiting the payment away.
+            verify(mockEconomy).withdrawPlayer(player, PRICE);
+            assertThat(result).isEqualTo(KitService.ClaimResult.PAYMENT_FAILED);
+            assertThat(balance[0]).isEqualTo(500.0);
+            assertNothingHappened();
+        }
+
+        @Test
+        @DisplayName("a refused payment leaves a one-time kit claimable, and the second attempt is not ALREADY_CLAIMED")
+        void refusedPaymentLeavesOneTimeKitClaimable() throws Exception {
+            statefulEconomy(false);
+
+            KitServiceImpl spyService = paidKitService("onetimepaid", true);
+            spyService.claimKit(player, "onetimepaid");
+
+            // The claim row is what makes a one-time kit unclaimable. Nothing was written, so the
+            // player has not burned their single claim on a kit they never received and never
+            // paid for.
+            verify(mockClaimOperator, never()).insert(any(KitClaimData.class));
+            KitService.ClaimResult second = spyService.claimKit(player, "onetimepaid");
+            assertThat(second).isEqualTo(KitService.ClaimResult.PAYMENT_FAILED);
+            assertThat(second).isNotEqualTo(KitService.ClaimResult.ALREADY_CLAIMED);
+        }
+
+        @Test
+        @DisplayName("control: a successful payment charges the balance, delivers the items and records the claim")
+        void successfulPaymentChargesAndDelivers() throws Exception {
+            statefulEconomy(true);
+
+            KitServiceImpl spyService = paidKitService("bought", true);
+            KitService.ClaimResult result = spyService.claimKit(player, "bought");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.SUCCESS);
+            assertThat(balance[0]).isEqualTo(400.0);
+            verify(inventory).addItem(kitItem);
+            verify(mockClaimOperator).insert(any(KitClaimData.class));
+        }
+
+        @Test
+        @DisplayName("ordering: the money moves before the items and the claim record, so a refused payment cannot leave half a claim")
+        void withdrawalHappensBeforeDeliveryAndClaimRecord() throws Exception {
+            Economy mockEconomy = statefulEconomy(true);
+
+            KitServiceImpl spyService = paidKitService("ordered", true);
+            assertThat(spyService.claimKit(player, "ordered")).isEqualTo(KitService.ClaimResult.SUCCESS);
+
+            InOrder order = inOrder(mockEconomy, inventory, mockClaimOperator);
+            order.verify(mockEconomy).withdrawPlayer(player, PRICE);
+            order.verify(inventory).addItem(kitItem);
+            order.verify(mockClaimOperator).insert(any(KitClaimData.class));
+        }
+
+        /**
+         * The console line is promised by {@code FEATURES.md} and {@code CHANGELOG.md} to name the
+         * kit, the player AND the amount, so all three are asserted (gate-1 WR-04). The kit is
+         * named {@code vipcrate} rather than something like {@code logged}, which occurs in the
+         * message template itself and would let almost any warning satisfy the assertion.
+         */
+        @Test
+        @DisplayName("a refused payment is reported to the console naming the kit, the player and the amount")
+        void refusedPaymentIsLoggedWithKitPlayerAndAmount() throws Exception {
+            statefulEconomy(false);
+
+            KitServiceImpl spyService = paidKitService("vipcrate", true);
+            spyService.claimKit(player, "vipcrate");
+
+            List<String> refusals = refusalWarnings();
+            assertThat(refusals).hasSize(1);
+            assertThat(refusals.get(0))
+                    .contains("vipcrate")
+                    .contains(player.getName())
+                    .contains(String.valueOf(PRICE));
+        }
+
+        /**
+         * Throttling, gate-1 WR-05. The claim path is player-triggered behind only a 200ms GUI
+         * debounce, and {@code /kits claim} carries no cooldown at all, so one line per refused
+         * attempt floods the console during an economy outage - in the window an operator most
+         * needs to read it. The framework's own {@code EconomyUtils} already took this position for
+         * the adjacent condition: one line per calling module per server session.
+         */
+        @Test
+        @DisplayName("repeated refusals for the same kit are logged once, not once per attempt")
+        void repeatedRefusalsForTheSameKitAreLoggedOnce() throws Exception {
+            statefulEconomy(false);
+
+            KitServiceImpl spyService = paidKitService("vipcrate", false);
+            for (int attempt = 0; attempt < 5; attempt++) {
+                // each iteration asserts a refusal really happened, so "one line" cannot be
+                // passing because the later attempts never reached the guard
+                assertThat(spyService.claimKit(player, "vipcrate"))
+                        .isEqualTo(KitService.ClaimResult.PAYMENT_FAILED);
+            }
+
+            assertThat(refusalWarnings()).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("a second kit gets its own warning: the throttle is per kit, not global")
+        void refusalsForDifferentKitsAreEachLogged() throws Exception {
+            statefulEconomy(false);
+
+            KitServiceImpl spyService = serviceWithKits(
+                    buildPaidKit("vipcrate", false), buildPaidKit("goldcrate", false));
+
+            assertThat(spyService.claimKit(player, "vipcrate"))
+                    .isEqualTo(KitService.ClaimResult.PAYMENT_FAILED);
+            assertThat(spyService.claimKit(player, "goldcrate"))
+                    .isEqualTo(KitService.ClaimResult.PAYMENT_FAILED);
+
+            List<String> refusals = refusalWarnings();
+            assertThat(refusals).hasSize(2);
+            assertThat(refusals.get(0)).contains("vipcrate");
+            assertThat(refusals.get(1)).contains("goldcrate");
+        }
+
+        @Test
+        @DisplayName("reloading the kits re-arms the warning, so an operator has a way to see it again")
+        void reloadingKitsReArmsTheRefusalWarning() throws Exception {
+            statefulEconomy(false);
+
+            KitDefinition kit = buildPaidKit("vipcrate", false);
+            KitServiceImpl spyService = serviceWithKits(kit);
+
+            assertThat(spyService.claimKit(player, "vipcrate"))
+                    .isEqualTo(KitService.ClaimResult.PAYMENT_FAILED);
+            assertThat(refusalWarnings()).hasSize(1);
+
+            spyService.reload();
+            injectKit(spyService, kit); // a real server re-reads this kit from its own kits/*.yml
+
+            assertThat(spyService.claimKit(player, "vipcrate"))
+                    .isEqualTo(KitService.ClaimResult.PAYMENT_FAILED);
+            assertThat(refusalWarnings()).hasSize(2);
+        }
+
+        /**
+         * gate-1 WR-01. The guard this fix first wrote read
+         * {@code !kit.isFree() && EconomyUtils.isAvailable() && !EconomyUtils.withdraw(...)}. If the
+         * Vault provider is deregistered after {@code canAfford} passed, that middle term
+         * short-circuits the whole condition to false and control falls through to delivery -
+         * reproducing #20's own outcome inside the guard that closes #20. The term bought nothing:
+         * the framework's bridge already returns false when no provider is registered.
+         */
+        @Test
+        @DisplayName("economy deregistered between the affordability check and the withdrawal: nothing is delivered")
+        void economyDeregisteredBetweenCheckAndWithdrawal() throws Exception {
+            Economy mockEconomy = setupMockEconomy();
+            when(mockEconomy.has(any(org.bukkit.OfflinePlayer.class), anyDouble())).thenAnswer(inv -> {
+                if (hasCalls.incrementAndGet() == 1) {
+                    // an economy plugin re-registering its provider during its own reload
+                    Bukkit.getServicesManager().unregister(Economy.class, mockEconomy);
+                }
+                return true;
+            });
+
+            KitServiceImpl spyService = paidKitService("dereg", true);
+            KitService.ClaimResult result = spyService.claimKit(player, "dereg");
+
+            // Pre-assertions: the affordability check really passed, and the provider really went
+            // away - so neither an earlier refusal nor an inert fixture is producing the result.
+            assertThat(hasCalls.get()).isEqualTo(1);
+            assertThat(EconomyUtils.isAvailable()).isFalse();
+            assertThat(result).isEqualTo(KitService.ClaimResult.PAYMENT_FAILED);
+            verify(mockEconomy, never()).withdrawPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble());
+            assertNothingHappened();
+        }
+
+        /**
+         * gate-1 WR-06. {@code player.performCommand} propagates {@code CommandException} out of any
+         * third-party executor that throws, so a reward command failing between the money moving and
+         * the claim being recorded would leave a one-time kit silently claimable again. The claim
+         * record is therefore written before the reward commands run.
+         */
+        @Test
+        @DisplayName("ordering: the claim is recorded before the reward commands, the likeliest step to fail")
+        void claimIsRecordedBeforeTheRewardCommands() throws Exception {
+            statefulEconomy(true);
+
+            KitDefinition kit = buildPaidKit("rewarded", true);
+            kit.setPlayerCommands(Collections.singletonList("warp vip"));
+            KitServiceImpl spyService = serviceWithKits(kit);
+
+            assertThat(spyService.claimKit(player, "rewarded")).isEqualTo(KitService.ClaimResult.SUCCESS);
+
+            InOrder order = inOrder(inventory, mockClaimOperator, player);
+            order.verify(inventory).addItem(kitItem);
+            order.verify(mockClaimOperator).insert(any(KitClaimData.class));
+            order.verify(player).performCommand("warp vip");
+        }
+
+        @Test
+        @DisplayName("a free kit is unaffected: it is still delivered when an economy is present")
+        void freeKitStillDelivered() throws Exception {
+            statefulEconomy(false);
+
+            KitDefinition kit = createTestKit("freebie");
+            kit.setPrice(0);
+            kit.setItems("someBase64Data");
+            injectKit(service, kit);
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+            doReturn(new ItemStack[]{kitItem}).when(spyService).deserializeItems("someBase64Data");
+
+            assertThat(spyService.claimKit(player, "freebie")).isEqualTo(KitService.ClaimResult.SUCCESS);
+            verify(inventory).addItem(kitItem);
+            assertThat(balance[0]).isEqualTo(500.0);
         }
     }
 
@@ -2692,6 +3056,7 @@ class KitServiceImplTest {
                     KitService.ClaimResult.ON_COOLDOWN,
                     KitService.ClaimResult.INVENTORY_FULL,
                     KitService.ClaimResult.EMPTY_KIT,
+                    KitService.ClaimResult.PAYMENT_FAILED,
                     KitService.ClaimResult.ERROR
             );
         }

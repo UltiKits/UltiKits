@@ -11,6 +11,7 @@
   "等级不足，需要 %d 级": "Level too low, requires level %d",
   "余额不足，需要 %s": "Insufficient balance, requires %s",
   "已扣除 %s": "Deducted %s",
+  "扣款失败，礼包未领取": "Payment failed - the kit was not claimed",
   "经济系统不可用": "Economy system is not available",
   "你已经领取过此礼包": "You have already claimed this kit",
   "礼包冷却中，剩余: %s": "Kit on cooldown, remaining: %s",
