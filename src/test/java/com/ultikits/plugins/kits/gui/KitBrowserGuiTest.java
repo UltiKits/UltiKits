@@ -1,6 +1,7 @@
 package com.ultikits.plugins.kits.gui;
 
 import com.ultikits.plugins.kits.MockBukkitSupport;
+import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
@@ -24,7 +25,10 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -48,13 +52,16 @@ class KitBrowserGuiTest {
 
     private KitBrowserGui gui;
 
+    private KitsConfig config;
+
     private Plugin vault;
 
     @BeforeEach
     void setUp() {
         MockBukkitSupport.bootstrap();
         lenient().when(plugin.i18n(anyString())).thenAnswer(inv -> inv.getArgument(0));
-        gui = new KitBrowserGui(player, plugin, kitService, 0);
+        config = new KitsConfig("config/config.yml");
+        gui = new KitBrowserGui(player, plugin, kitService, config, 0);
 
         EconomyUtils.reset();
     }
@@ -86,9 +93,87 @@ class KitBrowserGuiTest {
     }
 
     private void resetDebounce() throws Exception {
+        setLastClickTime(gui, 0L);
+    }
+
+    /**
+     * Places the browser's last-click stamp at a known point in the past, so a debounce test states
+     * how long ago the previous click was instead of racing the clock. Reflection is used because
+     * {@code lastClickTime} is the class's own private state and this module exposes no seam for it;
+     * the pre-existing {@link #resetDebounce()} helper already reached the same field this way.
+     */
+    private void setLastClickTime(KitBrowserGui target, long value) throws Exception {
         Field lastClickField = KitBrowserGui.class.getDeclaredField("lastClickTime");
         lastClickField.setAccessible(true); // NOPMD
-        lastClickField.set(gui, 0L);
+        lastClickField.set(target, value);
+    }
+
+    /**
+     * Injects a mock inventory into the Gui's 'inventory' field so that addItem() can call
+     * this.inventory.getSize() without NPE.
+     */
+    private void injectGuiInventory(Gui guiInstance) throws Exception {
+        org.bukkit.inventory.Inventory mockInv = mock(org.bukkit.inventory.Inventory.class);
+        lenient().when(mockInv.getSize()).thenReturn(54); // 6 rows
+
+        Class<?> clazz = guiInstance.getClass();
+        while (clazz != null) {
+            try {
+                Field invField = clazz.getDeclaredField("inventory");
+                invField.setAccessible(true); // NOPMD
+                invField.set(guiInstance, mockInv);
+                break;
+            } catch (NoSuchFieldException e) {
+                clazz = clazz.getSuperclass();
+            }
+        }
+    }
+
+    /**
+     * The chrome slots {@code onOpen} always fills regardless of page size: the separator row
+     * (36-44) and the page indicator (49). The navigation arrows (45, 53) are conditional, so they
+     * are excluded here as well and asserted separately where a row cares about them.
+     */
+    private static final Set<Integer> CHROME_SLOTS = chromeSlots();
+
+    private static Set<Integer> chromeSlots() {
+        Set<Integer> slots = new LinkedHashSet<>();
+        for (int i = 36; i <= 44; i++) {
+            slots.add(i);
+        }
+        slots.add(45);
+        slots.add(49);
+        slots.add(53);
+        return slots;
+    }
+
+    /** The slots {@code onOpen} filled with kit icons, i.e. every filled slot that is not chrome. */
+    private Set<Integer> kitSlotsOf(KitBrowserGui target) {
+        Set<Integer> slots = new TreeSet<>(target.getItems().keySet());
+        slots.removeAll(CHROME_SLOTS);
+        return slots;
+    }
+
+    /** The page indicator's display name, which carries the {@code Page x/y} text. */
+    private String pageIndicatorTextOf(KitBrowserGui target) {
+        ItemMeta meta = target.getItems().get(49).getItem().getItemMeta();
+        return meta == null ? "" : meta.getDisplayName();
+    }
+
+    private Set<Integer> slotRange(int fromInclusive, int toExclusive) {
+        Set<Integer> slots = new TreeSet<>();
+        for (int i = fromInclusive; i < toExclusive; i++) {
+            slots.add(i);
+        }
+        return slots;
+    }
+
+    private List<KitDefinition> freeKits(int count) {
+        List<KitDefinition> list = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            list.add(createKit("kit" + i, "&fKit" + i, "CHEST", 0, 0));
+        }
+        return list;
     }
 
     private KitDefinition createKit(String name, String displayName, String icon, double price, int level) {
@@ -143,11 +228,11 @@ class KitBrowserGuiTest {
         }
 
         @Test
-        @DisplayName("kitsPerPage defaults to 28")
-        void kitsPerPageDefault() throws Exception {
-            Field kppField = KitBrowserGui.class.getDeclaredField("kitsPerPage");
-            kppField.setAccessible(true); // NOPMD
-            assertThat(kppField.getInt(gui)).isEqualTo(28);
+        @DisplayName("stores config reference")
+        void storesConfig() throws Exception {
+            Field configField = KitBrowserGui.class.getDeclaredField("config");
+            configField.setAccessible(true); // NOPMD
+            assertThat(configField.get(gui)).isSameAs(config);
         }
 
         @Test
@@ -161,19 +246,12 @@ class KitBrowserGuiTest {
         @Test
         @DisplayName("can construct with different page number")
         void differentPage() throws Exception {
-            KitBrowserGui gui2 = new KitBrowserGui(player, plugin, kitService, 3);
+            KitBrowserGui gui2 = new KitBrowserGui(player, plugin, kitService, config, 3);
             Field pageField = KitBrowserGui.class.getDeclaredField("page");
             pageField.setAccessible(true); // NOPMD
             assertThat(pageField.getInt(gui2)).isEqualTo(3);
         }
 
-        @Test
-        @DisplayName("CLICK_COOLDOWN_MS is 200")
-        void clickCooldownMs() throws Exception {
-            Field cooldownField = KitBrowserGui.class.getDeclaredField("CLICK_COOLDOWN_MS");
-            cooldownField.setAccessible(true); // NOPMD
-            assertThat(cooldownField.getLong(null)).isEqualTo(200L);
-        }
     }
 
     // -----------------------------------------------------------------------
@@ -894,27 +972,6 @@ class KitBrowserGuiTest {
     @DisplayName("OnOpen Tests")
     class OnOpenTests {
 
-        /**
-         * Inject a mock inventory into the Gui's 'inventory' field so that addItem()
-         * can call this.inventory.getSize() without NPE.
-         */
-        private void injectGuiInventory(Gui guiInstance) throws Exception {
-            org.bukkit.inventory.Inventory mockInv = mock(org.bukkit.inventory.Inventory.class);
-            lenient().when(mockInv.getSize()).thenReturn(54); // 6 rows
-
-            Class<?> clazz = guiInstance.getClass();
-            while (clazz != null) {
-                try {
-                    Field invField = clazz.getDeclaredField("inventory");
-                    invField.setAccessible(true); // NOPMD
-                    invField.set(guiInstance, mockInv);
-                    break;
-                } catch (NoSuchFieldException e) {
-                    clazz = clazz.getSuperclass();
-                }
-            }
-        }
-
         @Test
         @DisplayName("onOpen populates separator row and page indicator for empty kit list")
         void onOpenEmptyKits() throws Exception {
@@ -1005,7 +1062,7 @@ class KitBrowserGuiTest {
         @DisplayName("onOpen page 1 shows prev button")
         void prevButtonOnPageOne() throws Exception {
             setEconomyAvailable(false);
-            KitBrowserGui page1Gui = new KitBrowserGui(player, plugin, kitService, 1);
+            KitBrowserGui page1Gui = new KitBrowserGui(player, plugin, kitService, config, 1);
             injectGuiInventory(page1Gui);
 
             List<KitDefinition> kits = new ArrayList<>();
@@ -1045,7 +1102,7 @@ class KitBrowserGuiTest {
         @DisplayName("onOpen last page does not show next button")
         void lastPageNoNextButton() throws Exception {
             setEconomyAvailable(false);
-            KitBrowserGui lastPageGui = new KitBrowserGui(player, plugin, kitService, 1);
+            KitBrowserGui lastPageGui = new KitBrowserGui(player, plugin, kitService, config, 1);
             injectGuiInventory(lastPageGui);
 
             List<KitDefinition> kits = new ArrayList<>();
@@ -1079,6 +1136,139 @@ class KitBrowserGuiTest {
                     mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
 
             gui.onOpen(event);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Configured page size (UltiKits/UltiKits#13)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("Configured Page Size Tests")
+    class ConfiguredPageSizeTests {
+
+        @Test
+        @DisplayName("declared default 28 fills 28 kit slots and reports 2 pages for 30 kits")
+        void declaredDefaultPageSize() throws Exception {
+            setEconomyAvailable(false);
+            when(kitService.getAvailableKits(player)).thenReturn(freeKits(30));
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(gui);
+
+            gui.onOpen(mock(org.bukkit.event.inventory.InventoryOpenEvent.class));
+
+            assertThat(kitSlotsOf(gui)).isEqualTo(slotRange(0, 28));
+            assertThat(pageIndicatorTextOf(gui)).contains("1/2");
+        }
+
+        @Test
+        @DisplayName("non-default 10 fills 10 kit slots and reports 3 pages for the same 30 kits")
+        void nonDefaultPageSize() throws Exception {
+            setEconomyAvailable(false);
+            config.setKitsPerPage(10);
+            when(kitService.getAvailableKits(player)).thenReturn(freeKits(30));
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(gui);
+
+            gui.onOpen(mock(org.bukkit.event.inventory.InventoryOpenEvent.class));
+
+            assertThat(kitSlotsOf(gui)).isEqualTo(slotRange(0, 10));
+            assertThat(pageIndicatorTextOf(gui)).contains("1/3");
+        }
+
+        @Test
+        @DisplayName("page 1 of a non-default 10-per-page listing starts at the 11th kit")
+        void nonDefaultPageSizeOffsetsLaterPages() throws Exception {
+            setEconomyAvailable(false);
+            config.setKitsPerPage(10);
+            KitBrowserGui page1Gui = new KitBrowserGui(player, plugin, kitService, config, 1);
+            when(kitService.getAvailableKits(player)).thenReturn(freeKits(30));
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(page1Gui);
+
+            page1Gui.onOpen(mock(org.bukkit.event.inventory.InventoryOpenEvent.class));
+
+            assertThat(kitSlotsOf(page1Gui)).isEqualTo(slotRange(0, 10));
+            assertThat(pageIndicatorTextOf(page1Gui)).contains("2/3");
+            // The 11th kit (index 10) is the first icon on page 1 -- proves the start offset moved
+            // with the configured size rather than staying on the hardcoded 28.
+            ItemMeta firstIconMeta = page1Gui.getItems().get(0).getItem().getItemMeta();
+            assertThat(firstIconMeta).isNotNull();
+            assertThat(firstIconMeta.getDisplayName()).contains("Kit10");
+        }
+
+        @Test
+        @DisplayName("a page-size change applied after construction is read at open, not cached")
+        void pageSizeIsReadAtOpen() throws Exception {
+            setEconomyAvailable(false);
+            when(kitService.getAvailableKits(player)).thenReturn(freeKits(30));
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(gui);
+
+            // Mirrors what ConfigManager#reloadConfigs does on /ul reload: it re-reads the file into
+            // the SAME KitsConfig instance the module already holds, it does not hand out a new one.
+            config.setKitsPerPage(7);
+
+            gui.onOpen(mock(org.bukkit.event.inventory.InventoryOpenEvent.class));
+
+            assertThat(kitSlotsOf(gui)).isEqualTo(slotRange(0, 7));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Configured click debounce (UltiKits/UltiKits#13)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("Configured Click Debounce Tests")
+    class ConfiguredClickDebounceTests {
+
+        @Test
+        @DisplayName("declared default 200 drops a click 100ms after the previous one")
+        void declaredDefaultBlocksInsideWindow() throws Exception {
+            KitDefinition kit = createKit("test", "&fTest", "CHEST", 0, 0);
+            setLastClickTime(gui, System.currentTimeMillis() - 100L);
+
+            gui.handleKitClick(kit);
+
+            verify(kitService, never()).claimKit(any(Player.class), anyString());
+        }
+
+        @Test
+        @DisplayName("declared default 200 accepts a click 250ms after the previous one")
+        void declaredDefaultAllowsOutsideWindow() throws Exception {
+            KitDefinition kit = createKit("test", "&fTest", "CHEST", 0, 0);
+            when(kitService.claimKit(player, "test")).thenReturn(KitService.ClaimResult.SUCCESS);
+            setLastClickTime(gui, System.currentTimeMillis() - 250L);
+
+            gui.handleKitClick(kit);
+
+            verify(kitService).claimKit(player, "test");
+        }
+
+        @Test
+        @DisplayName("non-default 50 accepts the same click 100ms after the previous one")
+        void nonDefaultShortensTheWindow() throws Exception {
+            KitDefinition kit = createKit("test", "&fTest", "CHEST", 0, 0);
+            when(kitService.claimKit(player, "test")).thenReturn(KitService.ClaimResult.SUCCESS);
+            config.setClickCooldownMs(50);
+            setLastClickTime(gui, System.currentTimeMillis() - 100L);
+
+            gui.handleKitClick(kit);
+
+            verify(kitService).claimKit(player, "test");
+        }
+
+        @Test
+        @DisplayName("non-default 5000 drops a click 250ms after the previous one")
+        void nonDefaultLengthensTheWindow() throws Exception {
+            KitDefinition kit = createKit("test", "&fTest", "CHEST", 0, 0);
+            config.setClickCooldownMs(5000);
+            setLastClickTime(gui, System.currentTimeMillis() - 250L);
+
+            gui.handleKitClick(kit);
+
+            verify(kitService, never()).claimKit(any(Player.class), anyString());
         }
     }
 }
