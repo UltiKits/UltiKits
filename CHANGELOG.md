@@ -24,9 +24,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `reload` — now replies `The kit system is currently disabled on this server` and does nothing
   else. The default is still `true`, so a server that never edited the key sees no change. The
   switch is read when a command runs, not when the module loads, so `/ul reload UltiTools-Kits`
-  applies a change without a server restart. A kit browser that was already open when the switch
-  was flipped is not force-closed, but clicking a kit in it now gets the same refusal instead of a
-  claim, so no kit can be taken while the switch is off (UltiKits/UltiKits#13).
+  applies a change without a server restart. `/kits help`, and any unrecognised `/kits` argument,
+  are refused too rather than printing a usage list for sub-commands that all refuse. A kit browser
+  that was already open when the switch was flipped is not force-closed, but clicking a kit in it
+  gets the same refusal instead of a claim and its page arrows refuse to open a further page, so
+  while the switch is off no kit can be taken and no new page of the catalogue is shown. Claiming
+  is refused inside the kit service itself rather than at each command, so the guarantee holds for
+  any future way of claiming as well (UltiKits/UltiKits#13).
 - `config/config.yml: kits_per_page` 现在真正决定礼包浏览界面一页显示多少个礼包。此前无论该键写什么，
   界面都按硬编码的 28 分页；现在按 `kits_per_page` 取值，其默认值仍为 28，因此从未修改过该键的服务器
   行为不变。界面 `Page x/y` 指示器的总页数同样依据该值（UltiKits/UltiKits#13）。
@@ -37,8 +41,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   都处于启用状态。设为 `false` 后，`/kits`（`/kit`）的每一条子命令——包括不带参数的浏览界面、`claim`、
   `list`、`edit`、`create`、`delete` 与 `reload`——都会回复“礼包系统当前已关闭”并不再执行任何操作。默认值
   仍为 `true`，因此从未修改过该键的服务器行为不变。该开关在命令执行时读取，而非模块加载时读取，因此
-  `/ul reload UltiTools-Kits` 即可生效，无需重启服务器。开关切换时玩家已经打开的浏览界面不会被强制关闭，
-  但在其中点击礼包现在会收到同样的拒绝提示而不是领取成功，因此开关关闭期间无法领取到任何礼包
+  `/ul reload UltiTools-Kits` 即可生效，无需重启服务器。`/kits help` 以及任何无法识别的 `/kits` 参数同样会被
+  拒绝，而不是列出一串全部会被拒绝的子命令。开关切换时玩家已经打开的浏览界面不会被强制关闭，但在其中点击礼包
+  会收到同样的拒绝提示而不是领取成功，翻页按钮也会拒绝打开新页面，因此开关关闭期间既领取不到礼包，也看不到
+  新的礼包列表页。领取的拦截放在礼包服务内部而非各个命令中，因此将来新增的领取入口同样受该开关约束
   （UltiKits/UltiKits#13）。
 - A paid kit whose price could not actually be withdrawn is no longer delivered. Previously, when
   the balance check passed but the withdrawal itself did not go through — the balance was spent

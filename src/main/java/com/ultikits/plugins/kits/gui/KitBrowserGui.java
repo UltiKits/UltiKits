@@ -31,8 +31,9 @@ public class KitBrowserGui extends Gui {
      * The module's live configuration object, not a snapshot of its values. {@code ConfigManager}
      * re-reads the file into this same instance on {@code /ul reload}, so every read below happens
      * at the moment the value is used - at open for the page size, at click for the debounce
-     * window and for the master switch - and a reload therefore takes effect without reopening the
-     * browser or restarting.
+     * window, at a page turn for the master switch - and a reload therefore takes effect without
+     * reopening the browser or restarting. The switch is not read on the claim path here; {@link
+     * com.ultikits.plugins.kits.service.KitService#claimKit} owns that.
      * <p>
      * 模块的实时配置对象（而非取值快照）。{@code /ul reload} 会把文件重新读入同一个实例，
      * 因此下面每一处都在用到的那一刻才读取，重载无需重启即可生效。
@@ -97,12 +98,7 @@ public class KitBrowserGui extends Gui {
             Icon prevIcon = new Icon(prevItem);
             prevIcon.onClick(e -> {
                 e.setCancelled(true);
-                player.closeInventory();
-                org.bukkit.plugin.Plugin ultiTools = Bukkit.getPluginManager().getPlugin("UltiTools");
-                if (ultiTools != null) {
-                    Bukkit.getScheduler().runTask(ultiTools, () ->
-                            new KitBrowserGui(player, plugin, kitService, config, page - 1).open());
-                }
+                openPage(page - 1);
             });
             addItem(45, prevIcon);
         }
@@ -129,14 +125,40 @@ public class KitBrowserGui extends Gui {
             Icon nextIcon = new Icon(nextItem);
             nextIcon.onClick(e -> {
                 e.setCancelled(true);
-                player.closeInventory();
-                org.bukkit.plugin.Plugin ultiTools = Bukkit.getPluginManager().getPlugin("UltiTools");
-                if (ultiTools != null) {
-                    Bukkit.getScheduler().runTask(ultiTools, () ->
-                            new KitBrowserGui(player, plugin, kitService, config, page + 1).open());
-                }
+                openPage(page + 1);
             });
             addItem(53, nextIcon);
+        }
+    }
+
+    /**
+     * Opens another page of this browser, and the only place in this class that does.
+     * <p>
+     * Both page arrows route through here so the master switch is consulted once rather than once
+     * per control: a new browser opened while {@code config.yml: enabled} is off would serve a
+     * fresh page of the catalogue at the same moment every {@code /kits} sub-command is answering
+     * that the system is disabled. A control added to this GUI later that needs to change page must
+     * call this method rather than constructing a {@link KitBrowserGui} itself, which is what keeps
+     * the switch from being one enumeration short again (UltiKits/UltiKits#13).
+     * <p>
+     * A refused page turn leaves the current page open: the player keeps what they were already
+     * looking at, and nothing new is rendered. Claiming from that still-open page is refused
+     * separately, by {@link com.ultikits.plugins.kits.service.KitService#claimKit}.
+     * <p>
+     * 翻页只经由此方法，总开关因此只检查一处。被拒绝时保留当前页面，不渲染新页面。
+     *
+     * @param targetPage the zero-based page to open / 目标页码（从 0 开始）
+     */
+    private void openPage(int targetPage) {
+        if (!config.isEnabled()) {
+            player.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
+            return;
+        }
+        player.closeInventory();
+        org.bukkit.plugin.Plugin ultiTools = Bukkit.getPluginManager().getPlugin("UltiTools");
+        if (ultiTools != null) {
+            Bukkit.getScheduler().runTask(ultiTools, () ->
+                    new KitBrowserGui(player, plugin, kitService, config, targetPage).open());
         }
     }
 
@@ -198,24 +220,27 @@ public class KitBrowserGui extends Gui {
     }
 
     /**
-     * Handles a click on a kit icon: debounce, then the master switch, then the claim.
+     * Handles a click on a kit icon: debounce, then claim, then render the outcome.
      * <p>
-     * The switch is checked here and not only at the command that opened this browser, because the
-     * browser outlives the command. {@code /kits} refuses to open one while
-     * {@code config.yml: enabled} is off, so the only way a click can reach a disabled kit system is
-     * a browser that was already open when an operator flipped the switch and reloaded - and a path
-     * that keeps handing out kits contradicts the refusal every command is emitting at the same
-     * moment. Refusing the click is the whole fix: an inventory already on screen is deliberately
-     * NOT force-closed, because closing a window out from under a player to enforce a setting is a
-     * larger and more surprising action than declining what they clicked.
+     * The master switch is NOT re-checked here. A browser outlives the command that opened it, so a
+     * click can certainly reach a disabled kit system - but the refusal comes from {@link
+     * com.ultikits.plugins.kits.service.KitService#claimKit} returning {@link
+     * KitService.ClaimResult#SYSTEM_DISABLED}, which the switch below renders, so this handler is
+     * one more caller of the single guarded gateway rather than a second copy of the guard. An
+     * inventory already on screen is deliberately NOT force-closed: closing a window out from under
+     * a player to enforce a setting is a larger and more surprising action than declining what they
+     * clicked.
      * <p>
-     * The debounce deliberately runs BEFORE the switch check. Reversing them would leave a disabled
-     * module answering every click immediately, turning it into a message-spam surface; as written,
-     * a player holding down the mouse gets at most one refusal per
-     * {@code config.yml: click_cooldown_ms}.
+     * The debounce runs first, which has two consequences worth stating together. It stops a
+     * disabled module answering every click and becoming a message-spam surface - the reverse
+     * ordering really would do that. It also means the REFUSAL is rate-limited by
+     * {@code config.yml: click_cooldown_ms}, a key whose documented purpose is claim debouncing: at
+     * the legal maximum of 5000 a player who clicks twice four seconds apart gets one message and
+     * then silence, which reads as a broken GUI rather than a disabled system. The trade is
+     * accepted because the alternative is worse, not because the second half does not exist.
      * <p>
-     * 点击处理顺序：防抖 -> 总开关 -> 领取。开关在此再查一次，是因为界面的生命周期长于打开它的命令：
-     * 开关被关闭时已经打开的界面，若仍能领取，就与命令侧同时给出的拒绝自相矛盾。已打开的界面不会被强制关闭。
+     * 点击处理顺序：防抖 -> 领取 -> 渲染结果。开关不在此重复检查，拒绝来自 claimKit 返回的
+     * SYSTEM_DISABLED。防抖在前，既避免刷屏，也意味着拒绝提示同样受 click_cooldown_ms 限流。
      *
      * @param kit the kit whose icon was clicked / 被点击的礼包
      */
@@ -225,11 +250,6 @@ public class KitBrowserGui extends Gui {
             return;
         }
         lastClickTime = now;
-
-        if (!config.isEnabled()) {
-            player.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
-            return;
-        }
 
         KitService.ClaimResult result = kitService.claimKit(player, kit.getName());
 
@@ -268,6 +288,9 @@ public class KitBrowserGui extends Gui {
                 break;
             case EMPTY_KIT:
                 player.sendMessage(ChatColor.RED + plugin.i18n("礼包内容为空"));
+                break;
+            case SYSTEM_DISABLED:
+                player.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
                 break;
             default:
                 player.sendMessage(ChatColor.RED + plugin.i18n("领取礼包时发生错误"));

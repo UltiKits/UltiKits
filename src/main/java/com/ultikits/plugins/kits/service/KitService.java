@@ -26,7 +26,16 @@ public interface KitService {
          * transaction they could afford would be a false statement (UltiKits/UltiKits#20).
          * 扣款失败：余额检查通过后扣款仍未成功。
          */
-        PAYMENT_FAILED, ERROR
+        PAYMENT_FAILED,
+        /**
+         * The kit system's master switch ({@code config.yml: enabled}) is off, so no kit may be
+         * handed out. Returned by {@link #claimKit(Player, String)} itself rather than checked by
+         * each caller: {@code claimKit} is the only gateway to a kit, so a guard there holds for
+         * every caller that exists now and every one added later, while a guard repeated at the
+         * callers holds only for the callers someone remembered (UltiKits/UltiKits#13).
+         * 礼包系统总开关已关闭。该结果由 claimKit 自身返回，而不是由每个调用方各自检查。
+         */
+        SYSTEM_DISABLED, ERROR
     }
 
     enum CreateResult {

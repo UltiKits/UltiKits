@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.service;
 
+import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.entity.KitClaimData;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
@@ -31,6 +32,14 @@ import java.util.stream.Collectors;
 public class KitServiceImpl implements KitService {
 
     private final UltiToolsPlugin plugin;
+    /**
+     * The module's live configuration object, not a snapshot of its values. {@code ConfigManager}
+     * re-reads the file into this same instance on {@code /ul reload}, so {@link #claimKit} reads
+     * {@code enabled} at the moment a claim is attempted and a flip applies to the very next one.
+     * <p>
+     * 模块的实时配置对象（而非取值快照）；{@code /ul reload} 会把文件重新读入同一个实例。
+     */
+    private final KitsConfig config;
     private final PluginLogger logger;
     private final Map<String, KitDefinition> kits = new LinkedHashMap<>();
     /**
@@ -47,8 +56,9 @@ public class KitServiceImpl implements KitService {
     private final Set<String> refusalWarnedKits = Collections.synchronizedSet(new LinkedHashSet<>());
     private DataOperator<KitClaimData> claimOperator;
 
-    public KitServiceImpl(UltiToolsPlugin plugin) {
+    public KitServiceImpl(UltiToolsPlugin plugin, KitsConfig config) {
         this.plugin = plugin;
+        this.config = config;
         this.logger = plugin.getLogger();
         this.claimOperator = plugin.getDataOperator(KitClaimData.class);
         loadKits();
@@ -191,8 +201,33 @@ public class KitServiceImpl implements KitService {
         return saveKitToFile(kit.getName(), kit);
     }
 
+    /**
+     * Claims a kit for a player. This method is the module's only gateway to a kit: {@code
+     * deliverKit} is private with this as its single caller, and the item, command and claim-row
+     * effects are reachable only from there.
+     * <p>
+     * The master switch ({@code config.yml: enabled}) is therefore enforced HERE and nowhere else
+     * on the claim path. The two entry points that reach this method - {@code KitCommands} and the
+     * browser's click handler - do not repeat the check; they render the {@link
+     * ClaimResult#SYSTEM_DISABLED} this returns. That placement is deliberate and was chosen over
+     * checking at each caller, because a guard repeated at N callers is only as good as whoever
+     * remembers to add the N+1st: this module's own history has that enumeration coming up short
+     * twice. Placed at the gateway, a caller added later cannot bypass the switch even by accident
+     * (UltiKits/UltiKits#13).
+     * <p>
+     * 总开关只在这里执行一次。调用方不再各自检查，而是渲染本方法返回的 {@code SYSTEM_DISABLED}，
+     * 这样将来新增的调用方无法绕过开关。
+     *
+     * @param player  the claiming player / 领取的玩家
+     * @param kitName the kit's name / 礼包名
+     * @return the outcome, never null / 领取结果，不为 null
+     */
     @Override
     public ClaimResult claimKit(Player player, String kitName) {
+        if (!config.isEnabled()) {
+            return ClaimResult.SYSTEM_DISABLED;
+        }
+
         KitDefinition kit = getKit(kitName);
         if (kit == null) {
             return ClaimResult.NOT_FOUND;
