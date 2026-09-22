@@ -1271,4 +1271,67 @@ class KitBrowserGuiTest {
             verify(kitService, never()).claimKit(any(Player.class), anyString());
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Master switch on an already-open browser (UltiKits/UltiKits#13)
+    // -----------------------------------------------------------------------
+
+    /**
+     * The browser is opened by {@code /kits}, which refuses while the master switch is off, so the
+     * only way a click can reach a disabled kit system is a browser that was ALREADY OPEN when the
+     * switch was flipped. Every test here therefore builds the browser with the switch on -- the
+     * shared {@code setUp} does exactly that, since `enabled` defaults to true -- and flips it
+     * afterwards. A test that set the switch before construction would not exercise this path at all.
+     */
+    @Nested
+    @DisplayName("Master Switch On An Open Browser Tests")
+    class MasterSwitchOnOpenBrowserTests {
+
+        @Test
+        @DisplayName("switch on: a click on an open browser still claims")
+        void switchOnStillClaims() throws Exception {
+            KitDefinition kit = createKit("test", "&fTest", "CHEST", 0, 0);
+            when(kitService.claimKit(player, "test")).thenReturn(KitService.ClaimResult.SUCCESS);
+
+            gui.handleKitClick(kit);
+
+            verify(kitService).claimKit(player, "test");
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue()).contains("成功领取礼包");
+        }
+
+        @Test
+        @DisplayName("switch flipped off AFTER the browser was opened: the same click is refused")
+        void switchFlippedOffAfterOpenRefusesTheClick() throws Exception {
+            KitDefinition kit = createKit("test", "&fTest", "CHEST", 0, 0);
+
+            // The browser already exists at this point, built while the switch was on. This is what
+            // ConfigManager#reloadConfigs does on /ul reload: it re-reads the file into the same
+            // KitsConfig instance this browser holds.
+            config.setEnabled(false);
+
+            gui.handleKitClick(kit);
+
+            verifyNoInteractions(kitService);
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue()).contains("礼包系统当前已关闭");
+        }
+
+        @Test
+        @DisplayName("the debounce still runs first, so a refused click cannot be spammed")
+        void refusalIsThrottledByTheDebounce() throws Exception {
+            KitDefinition kit = createKit("test", "&fTest", "CHEST", 0, 0);
+            config.setEnabled(false);
+
+            gui.handleKitClick(kit);
+            gui.handleKitClick(kit);
+
+            verifyNoInteractions(kitService);
+            // One refusal, not two: the second click is inside the 200ms debounce window and is
+            // dropped before the switch is consulted.
+            verify(player, times(1)).sendMessage(anyString());
+        }
+    }
 }
