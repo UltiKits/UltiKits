@@ -24,8 +24,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `reload` — now replies `The kit system is currently disabled on this server` and does nothing
   else. The default is still `true`, so a server that never edited the key sees no change. The
   switch is read when a command runs, not when the module loads, so `/ul reload UltiTools-Kits`
-  applies a change without a server restart; a browser a player already had open when the switch
-  was flipped is not force-closed (UltiKits/UltiKits#13).
+  applies a change without a server restart. A kit browser that was already open when the switch
+  was flipped is not force-closed, but clicking a kit in it now gets the same refusal instead of a
+  claim, so no kit can be taken while the switch is off (UltiKits/UltiKits#13).
 - `config/config.yml: kits_per_page` 现在真正决定礼包浏览界面一页显示多少个礼包。此前无论该键写什么，
   界面都按硬编码的 28 分页；现在按 `kits_per_page` 取值，其默认值仍为 28，因此从未修改过该键的服务器
   行为不变。界面 `Page x/y` 指示器的总页数同样依据该值（UltiKits/UltiKits#13）。
@@ -36,7 +37,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   都处于启用状态。设为 `false` 后，`/kits`（`/kit`）的每一条子命令——包括不带参数的浏览界面、`claim`、
   `list`、`edit`、`create`、`delete` 与 `reload`——都会回复“礼包系统当前已关闭”并不再执行任何操作。默认值
   仍为 `true`，因此从未修改过该键的服务器行为不变。该开关在命令执行时读取，而非模块加载时读取，因此
-  `/ul reload UltiTools-Kits` 即可生效，无需重启服务器；开关切换时玩家已经打开的浏览界面不会被强制关闭
+  `/ul reload UltiTools-Kits` 即可生效，无需重启服务器。开关切换时玩家已经打开的浏览界面不会被强制关闭，
+  但在其中点击礼包现在会收到同样的拒绝提示而不是领取成功，因此开关关闭期间无法领取到任何礼包
   （UltiKits/UltiKits#13）。
 - A paid kit whose price could not actually be withdrawn is no longer delivered. Previously, when
   the balance check passed but the withdrawal itself did not go through — the balance was spent

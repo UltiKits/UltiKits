@@ -31,7 +31,8 @@ public class KitBrowserGui extends Gui {
      * The module's live configuration object, not a snapshot of its values. {@code ConfigManager}
      * re-reads the file into this same instance on {@code /ul reload}, so every read below happens
      * at the moment the value is used - at open for the page size, at click for the debounce
-     * window - and a reload therefore takes effect without reopening the browser or restarting.
+     * window and for the master switch - and a reload therefore takes effect without reopening the
+     * browser or restarting.
      * <p>
      * 模块的实时配置对象（而非取值快照）。{@code /ul reload} 会把文件重新读入同一个实例，
      * 因此下面每一处都在用到的那一刻才读取，重载无需重启即可生效。
@@ -196,12 +197,39 @@ public class KitBrowserGui extends Gui {
         return icon;
     }
 
+    /**
+     * Handles a click on a kit icon: debounce, then the master switch, then the claim.
+     * <p>
+     * The switch is checked here and not only at the command that opened this browser, because the
+     * browser outlives the command. {@code /kits} refuses to open one while
+     * {@code config.yml: enabled} is off, so the only way a click can reach a disabled kit system is
+     * a browser that was already open when an operator flipped the switch and reloaded - and a path
+     * that keeps handing out kits contradicts the refusal every command is emitting at the same
+     * moment. Refusing the click is the whole fix: an inventory already on screen is deliberately
+     * NOT force-closed, because closing a window out from under a player to enforce a setting is a
+     * larger and more surprising action than declining what they clicked.
+     * <p>
+     * The debounce deliberately runs BEFORE the switch check. Reversing them would leave a disabled
+     * module answering every click immediately, turning it into a message-spam surface; as written,
+     * a player holding down the mouse gets at most one refusal per
+     * {@code config.yml: click_cooldown_ms}.
+     * <p>
+     * 点击处理顺序：防抖 -> 总开关 -> 领取。开关在此再查一次，是因为界面的生命周期长于打开它的命令：
+     * 开关被关闭时已经打开的界面，若仍能领取，就与命令侧同时给出的拒绝自相矛盾。已打开的界面不会被强制关闭。
+     *
+     * @param kit the kit whose icon was clicked / 被点击的礼包
+     */
     void handleKitClick(KitDefinition kit) {
         long now = System.currentTimeMillis();
         if (now - lastClickTime < config.getClickCooldownMs()) {
             return;
         }
         lastClickTime = now;
+
+        if (!config.isEnabled()) {
+            player.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
+            return;
+        }
 
         KitService.ClaimResult result = kitService.claimKit(player, kit.getName());
 

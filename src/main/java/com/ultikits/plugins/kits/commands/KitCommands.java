@@ -55,8 +55,10 @@ public class KitCommands extends BaseCommandExecutor {
      * ({@code @ConditionalOnConfig}) is also evaluated once at component scan, so a change would
      * need a full server restart in either direction; read here, the switch follows
      * {@code /ul reload}. The kit browser is reachable only through {@code /kits}, so gating the
-     * commands also gates the GUI - a browser a player already had open when the switch was
-     * flipped is not force-closed, and its clicks keep working until it is closed.
+     * commands also stops a new browser being opened; a browser that was ALREADY open when the
+     * switch was flipped is refused at its own click handler instead, by the same check and the
+     * same message - see {@link com.ultikits.plugins.kits.gui.KitBrowserGui#handleKitClick}. No
+     * open inventory is force-closed.
      * <p>
      * 总开关（{@code config.yml: enabled}）关闭时拒绝命令并给出提示，而不是静默无响应。
      *
