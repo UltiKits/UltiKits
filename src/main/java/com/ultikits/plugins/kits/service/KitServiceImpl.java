@@ -180,11 +180,30 @@ public class KitServiceImpl implements KitService {
         return true;
     }
 
+    /**
+     * Writes a kit's item contents, and the only place in this module that does - the kit editor's
+     * Save button is its single caller.
+     * <p>
+     * The master switch is enforced here for the same reason it is enforced in {@link #claimKit}:
+     * the editor GUI outlives the {@code /kits edit} command that opened it, so a check at that
+     * command has already passed by the time Save is pressed and cannot stop a write while the
+     * system is off. Guarding the gateway covers the editor and any writer added later.
+     * <p>
+     * 保存入口处执行总开关：编辑界面的生命周期长于打开它的命令，命令处的检查拦不住之后的保存。
+     *
+     * @param kitName the kit to write / 目标礼包名
+     * @param items   its new contents / 新的物品内容
+     * @return the outcome, never null / 结果，不为 null
+     */
     @Override
-    public boolean saveKitItems(String kitName, ItemStack[] items) {
+    public SaveResult saveKitItems(String kitName, ItemStack[] items) {
+        if (!config.isEnabled()) {
+            return SaveResult.SYSTEM_DISABLED;
+        }
+
         KitDefinition kit = getKit(kitName);
         if (kit == null) {
-            return false;
+            return SaveResult.FAILED;
         }
 
         // Filter out null/air items
@@ -194,11 +213,11 @@ public class KitServiceImpl implements KitService {
 
         String serialized = serializeItems(validItems);
         if (serialized == null) {
-            return false;
+            return SaveResult.FAILED;
         }
 
         kit.setItems(serialized);
-        return saveKitToFile(kit.getName(), kit);
+        return saveKitToFile(kit.getName(), kit) ? SaveResult.SUCCESS : SaveResult.FAILED;
     }
 
     /**

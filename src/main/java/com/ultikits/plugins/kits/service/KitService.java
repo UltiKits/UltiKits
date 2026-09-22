@@ -42,6 +42,23 @@ public interface KitService {
         SUCCESS, ALREADY_EXISTS, INVALID_NAME, EMPTY_INVENTORY, ERROR
     }
 
+    /**
+     * Outcome of writing a kit's item contents.
+     * <p>
+     * Typed rather than a boolean for the same reason {@link ClaimResult#SYSTEM_DISABLED} exists:
+     * {@link #saveKitItems(String, ItemStack[])} is the only way kit contents are written, so the
+     * master switch is enforced there and not at its caller - and a caller cannot tell a refused
+     * save from a failed one, nor answer the player correctly, unless the result says which it was.
+     * 保存礼包内容的结果。总开关在保存入口处执行，因此调用方需要知道是被拒绝还是真的失败了。
+     */
+    enum SaveResult {
+        SUCCESS,
+        /** The kit does not exist, its items could not be serialized, or the file write failed. */
+        FAILED,
+        /** The kit system's master switch ({@code config.yml: enabled}) is off. */
+        SYSTEM_DISABLED
+    }
+
     void loadKits();
 
     void reload();
@@ -59,7 +76,7 @@ public interface KitService {
 
     boolean deleteKit(String name);
 
-    boolean saveKitItems(String kitName, ItemStack[] items);
+    SaveResult saveKitItems(String kitName, ItemStack[] items);
 
     ClaimResult claimKit(Player player, String kitName);
 

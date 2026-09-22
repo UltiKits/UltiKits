@@ -9,6 +9,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Saving a kit from the kit editor is now refused while the kit system is switched off. An admin
+  who had `/kits edit` open when an operator set `enabled: false` could still press Save and change
+  the kit's contents; the Save button now answers `The kit system is currently disabled on this
+  server` and writes nothing (UltiKits/UltiKits#13).
+- 礼包系统关闭期间，礼包编辑界面的保存操作现在会被拒绝。此前管理员若在运维把 `enabled` 改为 `false`
+  之前就打开了 `/kits edit`，仍可点击保存并修改礼包内容；现在保存按钮会回复“礼包系统当前已关闭”，
+  且不写入任何内容（UltiKits/UltiKits#13）。
 - The kit browser no longer shows an empty page titled with a page number that cannot exist. If the
   kit list shrinks while a browser is open — `/kits reload` removing kits, or `kits_per_page` being
   raised so there are fewer pages — the page the browser was on can stop existing; it now shows the
