@@ -31,6 +31,7 @@ import java.util.Set;
 import java.util.TreeSet;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -1340,38 +1341,58 @@ class KitBrowserGuiTest {
             verify(player, times(1)).sendMessage(anyString());
         }
 
-        /** Opens page 0 of a 30-kit catalogue and hands back its next-page arrow at slot 53. */
+        /**
+         * Opens page 0 of a 30-kit catalogue and hands back its next-page arrow at slot 53. A mock
+         * plugin named {@code UltiTools} is registered first, because {@code openPage} schedules the
+         * reopen against it: without one the deferred task is never created and a test would "pass"
+         * by never reaching the code under test.
+         */
         private Icon nextPageArrow() throws Exception {
             setEconomyAvailable(false);
+            MockBukkit.createMockPlugin("UltiTools");
             when(kitService.getAvailableKits(player)).thenReturn(freeKits(30));
             when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
             injectGuiInventory(gui);
             gui.onOpen(mock(org.bukkit.event.inventory.InventoryOpenEvent.class));
-            return (Icon) gui.getItems().get(53);
+            Icon arrow = (Icon) gui.getItems().get(53);
+            assertThat(arrow).as("page 0 of 30 kits at 28 per page must carry a next arrow").isNotNull();
+            return arrow;
+        }
+
+        /** Runs the tick the page turn was deferred to, which is where the switch is now read. */
+        private void runTheDeferredTask() {
+            MockBukkit.getMock().getScheduler().performOneTick();
         }
 
         @Test
-        @DisplayName("switch on: the next-page arrow closes the current page to open the next one")
+        @DisplayName("switch on: the deferred page turn closes the current page and opens the next")
         void switchOnLetsThePageTurn() throws Exception {
             Icon arrow = nextPageArrow();
 
             arrow.getClickAction().accept(mock(org.bukkit.event.inventory.InventoryClickEvent.class));
 
-            // closeInventory is the observable first step of a page turn; the reopen itself is
-            // scheduled against the UltiTools plugin, which is absent in this harness.
+            // The task's last statement constructs the replacement browser and calls open(), which
+            // needs obliviate's InventoryAPI singleton. This harness does not stand that singleton
+            // up, and standing it up would outlive the per-test server teardown. Reaching that error
+            // is itself the assertion that matters here: it can only be reached AFTER the switch
+            // check passed and closeInventory() ran, which is what separates this case from the two
+            // refusal cases below, where the task returns before either.
+            assertThatThrownBy(this::runTheDeferredTask)
+                    .hasMessageContaining("Inventory API is not initialized");
+
             verify(player).closeInventory();
             verify(player, never()).sendMessage(anyString());
         }
 
         @Test
-        @DisplayName("switch flipped off after the open: the page arrow refuses and keeps the page")
-        void switchFlippedOffAfterOpenRefusesThePageTurn() throws Exception {
+        @DisplayName("switch flipped off before the click: the page turn refuses and keeps the page")
+        void switchFlippedOffBeforeTheClickRefusesThePageTurn() throws Exception {
             Icon arrow = nextPageArrow();
 
-            // The browser already exists and is showing page 0 at this point.
             config.setEnabled(false);
 
             arrow.getClickAction().accept(mock(org.bukkit.event.inventory.InventoryClickEvent.class));
+            runTheDeferredTask();
 
             ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
             verify(player).sendMessage(captor.capture());
@@ -1379,6 +1400,97 @@ class KitBrowserGuiTest {
             // The page the player was already looking at is left alone: refusing the turn is the
             // whole action, and no fresh page of the catalogue is rendered.
             verify(player, never()).closeInventory();
+        }
+
+        @Test
+        @DisplayName("switch flipped off BETWEEN the click and the deferred open: still refused")
+        void switchFlippedOffBetweenClickAndDeferredOpenIsStillRefused() throws Exception {
+            Icon arrow = nextPageArrow();
+
+            // The click is accepted while the switch is still on; the reopen it schedules runs a
+            // tick later. An operator's `/ul reload UltiTools-Kits` lands in that window. A check
+            // taken at click time would already have passed, so the switch has to be read by the
+            // deferred task itself.
+            arrow.getClickAction().accept(mock(org.bukkit.event.inventory.InventoryClickEvent.class));
+            config.setEnabled(false);
+            runTheDeferredTask();
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue()).contains("礼包系统当前已关闭");
+            verify(player, never()).closeInventory();
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // A page index that no longer exists (UltiKits/UltiKits#13, Codex P2)
+    // -----------------------------------------------------------------------
+
+    /**
+     * The page size and the catalogue are both live: `/ul reload UltiTools-Kits` can change
+     * `kits_per_page` and `/kits reload` can shrink the kit list, either of which can leave a
+     * browser holding a page index that no longer exists. `onOpen` is where every browser is
+     * rendered, whoever constructed it, so the index is clamped there rather than at each caller.
+     */
+    @Nested
+    @DisplayName("Stale Page Index Tests")
+    class StalePageIndexTests {
+
+        @Test
+        @DisplayName("a page index past the end renders the last page, not an empty one")
+        void pastTheEndRendersTheLastPage() throws Exception {
+            setEconomyAvailable(false);
+            // Rendered at 7 per page, 30 kits => 5 pages, so page index 4 was legal. The operator
+            // then raises the size to 28, leaving 2 pages and this browser pointing past the end.
+            KitBrowserGui stale = new KitBrowserGui(player, plugin, kitService, config, 4);
+            when(kitService.getAvailableKits(player)).thenReturn(freeKits(30));
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(stale);
+
+            stale.onOpen(mock(org.bukkit.event.inventory.InventoryOpenEvent.class));
+
+            // Page index 1 of 2: the 29th and 30th kits, not an empty inventory.
+            assertThat(kitSlotsOf(stale)).isEqualTo(slotRange(0, 2));
+            assertThat(pageIndicatorTextOf(stale)).contains("2/2").doesNotContain("5/2");
+            // Last page, so no next arrow; not the first, so a prev arrow back into range.
+            assertThat(stale.getItems()).doesNotContainKey(53);
+            assertThat(stale.getItems()).containsKey(45);
+        }
+
+        @Test
+        @DisplayName("a shrunken catalogue is clamped the same way")
+        void shrunkenCatalogueIsClampedTheSameWay() throws Exception {
+            setEconomyAvailable(false);
+            // Page 1 was legal with 30 kits at 28 per page. `/kits reload` then leaves 5 kits.
+            KitBrowserGui stale = new KitBrowserGui(player, plugin, kitService, config, 1);
+            when(kitService.getAvailableKits(player)).thenReturn(freeKits(5));
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(stale);
+
+            stale.onOpen(mock(org.bukkit.event.inventory.InventoryOpenEvent.class));
+
+            assertThat(kitSlotsOf(stale)).isEqualTo(slotRange(0, 5));
+            assertThat(pageIndicatorTextOf(stale)).contains("1/1");
+            assertThat(stale.getItems()).doesNotContainKey(45);
+            assertThat(stale.getItems()).doesNotContainKey(53);
+        }
+
+        @Test
+        @DisplayName("an in-range page is left exactly where it is")
+        void inRangePageIsUntouched() throws Exception {
+            setEconomyAvailable(false);
+            config.setKitsPerPage(10);
+            KitBrowserGui page1 = new KitBrowserGui(player, plugin, kitService, config, 1);
+            when(kitService.getAvailableKits(player)).thenReturn(freeKits(30));
+            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(page1);
+
+            page1.onOpen(mock(org.bukkit.event.inventory.InventoryOpenEvent.class));
+
+            assertThat(pageIndicatorTextOf(page1)).contains("2/3");
+            ItemMeta firstIcon = page1.getItems().get(0).getItem().getItemMeta();
+            assertThat(firstIcon).isNotNull();
+            assertThat(firstIcon.getDisplayName()).contains("Kit10");
         }
     }
 }
