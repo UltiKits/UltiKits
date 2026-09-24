@@ -189,7 +189,7 @@ class KitEditorGuiTest {
                 when(topInventory.getItem(i)).thenReturn(null);
             }
 
-            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(true);
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.SUCCESS);
 
             gui.handleSave();
 
@@ -214,7 +214,7 @@ class KitEditorGuiTest {
                 when(topInventory.getItem(i)).thenReturn(null);
             }
 
-            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(true);
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.SUCCESS);
 
             gui.handleSave();
 
@@ -231,7 +231,7 @@ class KitEditorGuiTest {
                 when(topInventory.getItem(i)).thenReturn(null);
             }
 
-            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(true);
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.SUCCESS);
 
             gui.handleSave();
 
@@ -259,7 +259,7 @@ class KitEditorGuiTest {
             }
             when(topInventory.getItem(44)).thenReturn(gold);
 
-            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(true);
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.SUCCESS);
 
             gui.handleSave();
 
@@ -276,7 +276,7 @@ class KitEditorGuiTest {
             for (int i = 0; i < 45; i++) {
                 when(topInventory.getItem(i)).thenReturn(null);
             }
-            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(true);
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.SUCCESS);
 
             gui.handleSave();
 
@@ -298,7 +298,7 @@ class KitEditorGuiTest {
             for (int i = 0; i < 45; i++) {
                 when(topInventory.getItem(i)).thenReturn(null);
             }
-            when(kitService.saveKitItems(eq("vipkit"), any(ItemStack[].class))).thenReturn(true);
+            when(kitService.saveKitItems(eq("vipkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.SUCCESS);
 
             otherGui.handleSave();
 
@@ -313,7 +313,7 @@ class KitEditorGuiTest {
             for (int i = 0; i < 45; i++) {
                 when(topInventory.getItem(i)).thenReturn(null);
             }
-            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(false);
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.FAILED);
 
             gui.handleSave();
 
@@ -324,12 +324,34 @@ class KitEditorGuiTest {
         }
 
         @Test
+        @DisplayName("SYSTEM_DISABLED renders the switch refusal, not the generic error")
+        void systemDisabledRendersTheRefusal() {
+            // The editor outlives the /kits edit command that opened it, so an operator can switch
+            // the kit system off while it is on screen. The save gateway refuses; this asserts the
+            // editor says why, rather than reporting it as an ordinary failure.
+            for (int i = 0; i < 45; i++) {
+                when(topInventory.getItem(i)).thenReturn(null);
+            }
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class)))
+                    .thenReturn(KitService.SaveResult.SYSTEM_DISABLED);
+
+            gui.handleSave();
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .contains("礼包系统当前已关闭")
+                    .doesNotContain("领取礼包时发生错误")
+                    .doesNotContain("已保存礼包");
+        }
+
+        @Test
         @DisplayName("always closes inventory regardless of result")
         void alwaysCloses() {
             for (int i = 0; i < 45; i++) {
                 when(topInventory.getItem(i)).thenReturn(null);
             }
-            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(false);
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.FAILED);
 
             gui.handleSave();
 
@@ -342,7 +364,7 @@ class KitEditorGuiTest {
             for (int i = 0; i < 45; i++) {
                 when(topInventory.getItem(i)).thenReturn(null);
             }
-            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(true);
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.SUCCESS);
 
             gui.handleSave();
 
@@ -359,7 +381,7 @@ class KitEditorGuiTest {
                 when(topInventory.getItem(i)).thenReturn(item);
             }
 
-            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(true);
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.SUCCESS);
 
             gui.handleSave();
 
@@ -374,7 +396,7 @@ class KitEditorGuiTest {
             for (int i = 0; i < 45; i++) {
                 when(topInventory.getItem(i)).thenReturn(null);
             }
-            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(true);
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.SUCCESS);
 
             gui.handleSave();
 
@@ -387,7 +409,7 @@ class KitEditorGuiTest {
             for (int i = 0; i < 45; i++) {
                 when(topInventory.getItem(i)).thenReturn(null);
             }
-            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(false);
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.FAILED);
 
             gui.handleSave();
 
@@ -400,7 +422,7 @@ class KitEditorGuiTest {
             for (int i = 0; i < 45; i++) {
                 when(topInventory.getItem(i)).thenReturn(null);
             }
-            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(true);
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.SUCCESS);
 
             gui.handleSave();
 
@@ -413,7 +435,7 @@ class KitEditorGuiTest {
             for (int i = 0; i < 45; i++) {
                 when(topInventory.getItem(i)).thenReturn(null);
             }
-            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(false);
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(KitService.SaveResult.FAILED);
 
             gui.handleSave();
 

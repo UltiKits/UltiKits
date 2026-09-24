@@ -23,8 +23,11 @@ for UAT execution and issue reconciliation — the public description of these f
   document states below, not omissions. It also has no `placeholder` rows (`plugin.yml` declares
   `softdepend: [PlaceholderAPI, Vault]`, but PlaceholderAPI is never referenced anywhere in
   `src/main/java` — only `EconomyUtils` for Vault) and no `gate` rows (`@ConditionalOnConfig`
-  count is 0, and the one config key that reads as a gate, `enabled`, is never actually checked —
-  see `## Configuration` below).
+  count is 0). The `enabled` key reads like a gate and, since `UltiKits/UltiKits#13` was fixed,
+  really is one — but it is enforced by a runtime check at each command entry point
+  (`KitCommands#refusedAsDisabled`), not by conditional bean registration, so it stays a `config`
+  row and the `gate` count stays 0. The reason that choice was made rather than
+  `@ConditionalOnConfig` is recorded in `## Configuration` below.
 - **Tier**, exactly three: `player`, `admin`, `internal`. Judged from what the feature is for.
   This module's five non-`list`/`help` commands split cleanly: `open`/`claim` act on the sender's
   own access to kits (`player`), while `edit`/`create`/`delete`/`reload` change the shared kit
@@ -46,8 +49,9 @@ for UAT execution and issue reconciliation — the public description of these f
   check inside the method body — a second, finer-grained node the framework's own permission
   system does not enforce structurally, named in each affected row's Feature text.
 - **Source:** `ClassName#member` — the class and member that actually reads or applies the
-  feature — for every Kind, `config` included: all 3 `config` rows below cite the class that
-  WOULD read the key if anything did (none currently does — see `## Configuration`).
+  feature — for every Kind, `config` included: all 3 `config` rows below cite the member that
+  reads the key and the member that applies it, both of which exist since `UltiKits/UltiKits#13`
+  was fixed (see `## Configuration`).
 - **Row order:** by section, then by ID ascending within the section.
 - **No manual prose:** no troubleshooting column, no explanatory paragraphs, no draft page text.
   A hazard noticed while reading becomes a negative checklist row, not a note here.
@@ -55,14 +59,14 @@ for UAT execution and issue reconciliation — the public description of these f
 ### This module's own i18n usage is a real, working exception to a pattern seen elsewhere in this fan-out
 
 Unlike UltiSocial (see that repository's own `FEATURES.md`), this module's `i18n()` keys ARE the
-literal Simplified Chinese text (e.g. `plugin.i18n(<Chinese sentence meaning "no kits available">)`, `KitCommands.java:73`), not an English-named key like
+literal Simplified Chinese text (e.g. `plugin.i18n(<Chinese sentence meaning "no kits available">)`, `KitCommands.java:123`), not an English-named key like
 `no_kits_available`), and `lang/en.json` genuinely maps every one of them to a real English
 sentence — confirmed by reading both `lang/en.json` and `lang/zh.json` in full and cross-checking
 every `i18n(...)` call site in `src/main/java` against a key present in both files. `language: en`
 therefore DOES change what every command/GUI row below displays, for the substantial majority of
 this module's text. Two hardcoded (non-i18n) English string literals exist regardless of
 `language`: `KitEditorGui.java:69`'s lore line `"Click to save kit contents"`, and
-`KitCommands.java:181-184`'s FOUR help lines for `edit`/`create`/`delete`/`reload` (`"Edit kit"`,
+`KitCommands.java:261-264`'s FOUR help lines for `edit`/`create`/`delete`/`reload` (`"Edit kit"`,
 `"Create kit"`, `"Delete kit"`, `"Reload kits"` — the other three help lines in the same block
 (the bare `/kits`, `claim`, and `list` descriptions) DO route through `i18n()`, so this help
 command's own text is itself a partial mix, named in that row below).
@@ -94,9 +98,20 @@ find <repo-root>/src/main/java -path '*/gui/*' -name '*.java' -not -path '*/targ
 **Positive control:** the line-start form returns `@CmdExecutor` = 1, `@CmdMapping` = 7,
 `@EventListener` = 0, `@EventHandler` = 0, `@Scheduled` = 0, `@ConditionalOnConfig` = 0,
 `@ConfigEntity` = 1, `@ConfigEntry` = 3, `@Table` = 1 — confirmed by reading `KitCommands.java`
-directly (7 `@CmdMapping` sites at lines 39, 48, 60, 91, 113, 144, 163: ``, `claim <name>`,
+directly (7 `@CmdMapping` sites at lines 80, 92, 107, 141, 166, 200, 222: ``, `claim <name>`,
 `list`, `edit <name>`, `create <name>`, `delete <name>`, `reload`) and `KitsConfig.java` (3
-`@ConfigEntry` sites at lines 15, 18, 22). The `find`-based GUI-class count above returns 2,
+`@ConfigEntry` sites at lines 15, 18, 22).
+
+**Every line number in this document is measured against the commit that last changed the file it
+cites, and a later commit in the same branch can move it — that has already happened once here.** If
+a cited line does not hold what this document says it holds, the citation is stale and the claim is
+not: re-derive it with the grep the claim implies (`grep -nE '^[[:space:]]*@CmdMapping'`,
+`grep -n 'config.getClickCooldownMs()'`, `grep -n 'config.getKitsPerPage()'`) before concluding
+anything about the behaviour. The `@CmdMapping` count must be taken with the **line-start** form: a
+javadoc sentence in `KitCommands#handleHelp` mentions the annotation's name, so a bare substring
+grep returns 9 where the annotation sites are 7.
+
+The `find`-based GUI-class count above returns 2,
 matching Phase 9's own independently-derived GUI-exclusion register for this module
 (`KitBrowserGui`, `KitEditorGui` — see `.planning/phases/09-module-ecosystem-readiness-and-test-coverage/gui-exclusions/UltiKits.md`;
 note that same register file also names two pre-6.3.0 base-class types removed outright in
@@ -116,16 +131,34 @@ data loads synchronously in `KitServiceImpl`'s constructor (`loadKits()`) and ag
 **This document's command-row count (8) exceeds the `@CmdMapping` annotation-site count (7) by
 one, for the same reason the framework's own `FEATURES.md` documents for `/upm help`/`/ulticloud
 help`:** `KitCommands` overrides `handleHelp(CommandSender)` but has no `@CmdMapping(format =
-"help")` site of its own — `BaseCommandExecutor#onCommand` short-circuits a literal `help`
-argument (and, separately, `matchMethod` returning null for an unrecognized format) straight to
-`#handleHelp` before format-matching ever runs. The row below cites `#handleHelp`, the method
-that actually executes.
+"help")` site of its own — `BaseCommandExecutor#onCommand` hands a literal `help` argument to
+`#handleHelp` before format-matching ever runs, and hands an unrecognized format (`matchMethod`
+returning null) to `#handleHelp` only after format matching has failed and after the framework has
+sent its own red `Unknown command, please enter /kits help for help` line. The row below cites
+`#handleHelp`, the method that actually executes.
 
 ## Kit Commands
 
 `KitCommands` — class-level `@CmdExecutor(permission = "ultikits.kits.use", description =
 <Simplified Chinese "kit management commands">, alias = {"kits", "kit"})`. No class-level
 `@CmdTarget` (see Conventions' own note on this).
+
+**Every row in this section is gated on the `enabled` master switch — all eight, including
+`ultikits.kits.help`.** While `config/config.yml: enabled` is `false`, each of the seven
+`@CmdMapping` methods returns immediately with `The kit system is currently disabled on this
+server` — before its own `ultikits.kits.admin` check where it has one, and before the browser is
+constructed for the bare `/kits`. The eighth row has no `@CmdMapping` site of its own, so it needed
+its own call to the same guard: `BaseCommandExecutor#onCommand` hands a literal `help` argument
+to `#handleHelp` before format matching runs, **and any argument vector matching no mapping** to
+`#handleHelp` after format matching fails, so `/kits help` and `/kits <anything unrecognised>` would
+otherwise have printed a seven-line usage list for sub-commands that all refuse.
+`KitCommands#handleHelp` now calls the same `refusedAsDisabled` the mapped methods use, so both
+answer with the refusal instead. The unrecognised vector is not answered by the refusal alone:
+before it reaches `#handleHelp`, the framework sends its own red `Unknown command, please enter
+/kits help for help` line, which this module's switch does not suppress, so `/kits nosuchsub`
+prints that line and then the refusal.
+The switch is `true` by default; see `## Configuration` for where it is read and why it is a runtime
+check rather than a registration-time gate.
 
 | ID | Feature | Kind | How to reach | Permission | Target | Tier | Manual | Source |
 |---|---|---|---|---|---|---|---|---|
@@ -149,8 +182,8 @@ register for this module.
 
 | ID | Feature | Kind | How to reach | Permission | Target | Tier | Manual | Source |
 |---|---|---|---|---|---|---|---|---|
-| ultikits.gui.kit-browser | Paginated (up to `kits_per_page` per page — nominally, see `## Configuration`'s own note that this key is never actually read; the real, hardcoded page size is 28) chest GUI listing every kit available to the viewer, each showing display name, description lore, price-or-free, level requirement (if any), and a live status line (available / on cooldown with remaining time / already claimed / insufficient level / insufficient funds); clicking a kit attempts to claim it immediately (no confirmation step) via the same logic as `ultikits.kits.claim`; on success for a paid kit it additionally says the price was deducted, which is now emitted only when the withdrawal actually succeeded, and a refused withdrawal instead says `Payment failed - the kit was not claimed` and leaves the browser open. A 200ms hand-rolled click-debounce (`KitBrowserGui#handleKitClick`'s own `lastClickTime` field, a SEPARATE mechanism from the dead `click_cooldown_ms` config key — see `## Configuration`) guards against rapid double-clicks producing a double-claim | gui | `ultikits.kits.open` | n/a | n/a | player | detailed | KitBrowserGui#onOpen, KitBrowserGui#buildKitIcon, KitBrowserGui#handleKitClick |
-| ultikits.gui.kit-editor | Chest GUI for editing a kit's item contents directly by moving real items into/out of a 45-slot grid (slots 0-44), pre-filled with the kit's existing items on open; a Save button (slot 45) collects whatever is currently in those 45 slots and overwrites the kit's stored item data; a Cancel button (slot 53, hardcoded English lore text regardless of `language`) discards changes by simply closing the inventory — items placed into the grid before cancelling are NOT returned to the editor's own inventory automatically, they remain wherever Bukkit's own inventory-close handling puts them | gui | `ultikits.kits.edit` | n/a | n/a | admin | detailed | KitEditorGui#onOpen, KitEditorGui#handleSave |
+| ultikits.gui.kit-browser | Paginated chest GUI listing every kit available to the viewer, showing up to `config/config.yml: kits_per_page` kits per page (default 28) and a `Page x/y` indicator whose page count is derived from that same value; the page size is read from the configuration on every open, so a reloaded value applies to the next open without a restart, each showing display name, description lore, price-or-free, level requirement (if any), and a live status line (available / on cooldown with remaining time / already claimed / insufficient level / insufficient funds); clicking a kit attempts to claim it immediately (no confirmation step) via the same logic as `ultikits.kits.claim`; on success for a paid kit it additionally says the price was deducted, which is now emitted only when the withdrawal actually succeeded, and a refused withdrawal instead says `Payment failed - the kit was not claimed` and leaves the browser open. A hand-rolled click-debounce (`KitBrowserGui#handleKitClick` compares its own `lastClickTime` field against `config/config.yml: click_cooldown_ms`, default 200ms) guards against rapid double-clicks producing a double-claim; the window is read at click time, so a reloaded value applies to the next click. A page index that has stopped existing is clamped to the last real page when the page is rendered, so raising `kits_per_page` under an already-open browser, or shrinking the catalogue with `/kits reload`, shows the last page rather than an empty inventory titled with an impossible page number. A browser left open across a flip of `config/config.yml: enabled` still refuses everything it can do: a kit click is answered `The kit system is currently disabled on this server` because the claim gateway returns `SYSTEM_DISABLED`, and the page arrows answer with the same line and leave the current page on screen instead of rendering a new one | gui | `ultikits.kits.open` | n/a | n/a | player | detailed | KitBrowserGui#onOpen, KitBrowserGui#buildKitIcon, KitBrowserGui#handleKitClick |
+| ultikits.gui.kit-editor | Chest GUI for editing a kit's item contents directly by moving real items into/out of a 45-slot grid (slots 0-44), pre-filled with the kit's existing items on open. **The grid half is not delivered today:** `KitEditorGui` overrides neither `onClick` nor `onDrag`, so the GUI library cancels every click on slots 0-44 and no item can be moved into, out of or within the grid (`UltiKits/UltiKits#16`, open), which leaves Save re-saving the items the editor opened with; a Save button (slot 45) collects whatever is currently in those 45 slots and overwrites the kit's stored item data — unless `config/config.yml: enabled` is `false`, in which case the write is refused at the save gateway (`KitServiceImpl#saveKitItems`) and the button answers `The kit system is currently disabled on this server`, which matters because this editor outlives the `/kits edit` command that opened it; a Cancel button (slot 53, hardcoded English lore text regardless of `language`) discards changes by simply closing the inventory — items placed into the grid before cancelling are NOT returned to the editor's own inventory automatically, they remain wherever Bukkit's own inventory-close handling puts them | gui | `ultikits.kits.edit` | n/a | n/a | admin | detailed | KitEditorGui#onOpen, KitEditorGui#handleSave |
 
 ## Data Persistence
 
@@ -169,15 +202,48 @@ matching the reconciliation table's own `@ConfigEntry` count of 3 exactly). This
 real `config/config.yml` resource under `src/main/resources` with all three keys at the same
 defaults `KitsConfig` itself declares.
 
-**All three keys are declared but have zero effect anywhere in production code** —
-`UltiKits/UltiKits#13`, filed while reading this source, not fixed here per this phase's
-zero-new-code rule. This is the smallest command/config surface in the ecosystem, which is
-precisely why all three rows below are written explicitly with their own dead-key note rather
-than a single blanket sentence — a reader scanning only the ID column would otherwise have no way
-to tell these three apart from a working config section.
+**All three keys were declared but read nowhere until `UltiKits/UltiKits#13` was fixed.** All
+three are now wired, and each declared default was deliberately left at the value the hardcoded
+constant it replaced already had (28, 200, `true`), so wiring them changed nothing on a server
+that never edited the file: the defect was that the key was dead, not that its value was wrong.
+
+**Where the `enabled` master switch short-circuits, and why there.** It is checked at each
+`@CmdMapping` entry point of `KitCommands` (`KitCommands#refusedAsDisabled`, called as the first
+statement of all seven), not by withholding the command registration. Two reasons, both
+observable: an unregistered command answers with Bukkit's own `Unknown command`, which reads to a
+player as a typo rather than as a deliberate setting; and `@ConditionalOnConfig` is evaluated once
+at component scan, so a flip either way would need a full server restart, while a read at command
+time follows `/ul reload UltiTools-Kits`.
+
+**`/kits` is not the only way a browser appears, and the browser outlives the command that opened
+it.** Its own page arrows open a further browser, and a click in an already-open one can still try
+to claim. Those two are handled by two different mechanisms on purpose, because they are two
+different surfaces:
+
+- **Claiming** is refused at `KitServiceImpl#claimKit`, which returns a `SYSTEM_DISABLED` outcome
+  that each caller renders. That method is the module's only gateway to a kit — `deliverKit` is
+  private with `claimKit` as its single caller, and the item, command and claim-row effects are
+  reachable only from there — so one guard there covers every caller, **including callers that do
+  not exist yet**. The alternative, repeating the check at each caller, is only as good as whoever
+  remembers the next one: this module's own enumeration came up short twice while this key was
+  being wired. Issue `UltiKits/UltiKits#13` named this chokepoint as the minimum in its own
+  suggested fix.
+- **Turning a page** never reaches the service, so it is refused by `KitBrowserGui`'s single
+  page-turn method, which both arrows route through. A refused turn leaves the current page on
+  screen and renders no new one.
+
+An open inventory is deliberately NOT force-closed in either case: closing a window out from under
+a player to enforce a setting is a larger and more surprising action than declining what they did.
+Inside the click handler the debounce runs before the claim, which has two consequences and both
+are real. It stops a disabled module answering every click and becoming a message-spam surface —
+the reverse ordering would do exactly that. It also means the *refusal* is rate-limited by
+`click_cooldown_ms`, a key whose stated purpose is claim debouncing: at its legal maximum of 5000 a
+player clicking four seconds apart gets one message and then silence, which reads as a broken GUI
+rather than a disabled system. The trade is accepted because the alternative is worse, not because
+the second half does not exist.
 
 | ID | Feature | Kind | How to reach | Permission | Target | Tier | Manual | Source |
 |---|---|---|---|---|---|---|---|---|
-| ultikits.config.config.click_cooldown_ms | Declared as the kit browser GUI's click-debounce window, in milliseconds; never read — `KitBrowserGui.java:32` declares its own separate hardcoded `CLICK_COOLDOWN_MS = 200` constant instead, numerically identical to this key's shipped default today but structurally unconnected to it | config | `config/config.yml: click_cooldown_ms (default: 200, has no effect, see UltiKits/UltiKits#13)` | n/a | n/a | admin | brief | KitsConfig#clickCooldownMs (declared, never read outside this class) |
-| ultikits.config.config.enabled | Declared as a switch for the kit system as a whole; never read — no `@ConditionalOnConfig`, and no runtime check anywhere in `KitCommands`/`KitServiceImpl`/either GUI class. The kit system is unconditionally active regardless of this key's value | config | `config/config.yml: enabled (default: true, has no effect, see UltiKits/UltiKits#13)` | n/a | n/a | admin | brief | KitsConfig#enabled (declared, never read outside this class) |
-| ultikits.config.config.kits_per_page | Declared as the kit browser GUI's page size; never read — `KitBrowserGui.java:42` sets `this.kitsPerPage = 28` directly in its constructor, numerically identical to this key's shipped default today but structurally unconnected to it | config | `config/config.yml: kits_per_page (default: 28, has no effect, see UltiKits/UltiKits#13)` | n/a | n/a | admin | brief | KitsConfig#kitsPerPage (declared, never read outside this class) |
+| ultikits.config.config.click_cooldown_ms | The kit browser GUI's click-debounce window, in milliseconds: a click on a kit icon less than this long after the previous one is dropped without a message and without a claim attempt. Read at click time (`KitBrowserGui.java:267`), so `/ul reload UltiTools-Kits` applies a change to the next click without reopening the browser or restarting. `@Range(min = 50, max = 5000)` | config | `config/config.yml: click_cooldown_ms (default: 200)` | n/a | n/a | admin | brief | KitsConfig#clickCooldownMs, KitBrowserGui#handleKitClick |
+| ultikits.config.config.enabled | Master switch for the kit system. While `false`, every `/kits` (`/kit`) sub-command replies `The kit system is currently disabled on this server` (red) and does nothing else — the seven mapped ones plus `help` and any unrecognised argument vector, except that an unrecognised vector is first answered by the framework's own red `Unknown command, please enter /kits help for help` line (sent by `BaseCommandExecutor#onCommand` before it hands over to `KitCommands#handleHelp`; the switch does not suppress it), then by the refusal; the bare `/kits` browser therefore never opening, and the four admin sub-commands refused before their own `ultikits.kits.admin` check runs. A GUI that was already open when the switch was flipped is not force-closed, but everything it can do is refused: claiming is refused at the claim gateway, saving a kit from the editor at the save gateway, and turning a page by the browser itself. Those are the only two mutating service entry points reachable from something that outlives a command — `createKit`, `deleteKit` and `reload` are reachable only from a gated command, so they carry no guard of their own. Read per command, per page turn and per claim, so `/ul reload UltiTools-Kits` applies a flip in either direction without a restart. **The breadth is deliberate and worth an operator's attention:** `/kits list` and `/kits reload` are refused too, so while the switch is off an admin cannot list the configured kits or pick up an edited `kits/*.yml` until it is switched back on. There is no lock-out — `enabled` lives in this file and the framework's own `/ul reload UltiTools-Kits` is never gated. See this section's own note on why this is not a `@ConditionalOnConfig` gate | config | `config/config.yml: enabled (default: true)` | n/a | n/a | admin | brief | KitsConfig#enabled, KitServiceImpl#claimKit, KitCommands#refusedAsDisabled |
+| ultikits.config.config.kits_per_page | The kit browser GUI's page size: how many kit icons one page shows, which also determines the start index of every later page and the `y` in the browser's `Page x/y` indicator. Read once per open (`KitBrowserGui.java:61`), so `/ul reload UltiTools-Kits` applies a change to the next open without a restart. `@Range(min = 7, max = 28)`, so the configured size can never exceed the 36 slots the browser reserves for kit icons | config | `config/config.yml: kits_per_page (default: 28)` | n/a | n/a | admin | brief | KitsConfig#kitsPerPage, KitBrowserGui#onOpen |

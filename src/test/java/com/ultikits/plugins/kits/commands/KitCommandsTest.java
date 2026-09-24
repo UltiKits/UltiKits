@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.commands;
 
+import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
@@ -35,12 +36,26 @@ class KitCommandsTest {
     @Mock
     private CommandSender consoleSender;
 
+    private KitsConfig config;
+
     private KitCommands kitCommands;
 
     @BeforeEach
     void setUp() {
         lenient().when(plugin.i18n(anyString())).thenAnswer(inv -> inv.getArgument(0));
-        kitCommands = new KitCommands(plugin, kitService);
+        config = new KitsConfig("config/config.yml");
+        kitCommands = new KitCommands(plugin, kitService, config);
+    }
+
+    /**
+     * Asserts the sender was told, in a message of its own, that the kit system is switched off.
+     * The catalogue key is the literal the module passes to {@code i18n}, which the stub above
+     * echoes back unchanged.
+     */
+    private void assertRefusedAsDisabled(CommandSender sender) {
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        verify(sender).sendMessage(captor.capture());
+        assertThat(captor.getValue()).contains("礼包系统当前已关闭");
     }
 
     private KitDefinition createKit(String name, String displayName, double price, int level) {
@@ -589,6 +604,184 @@ class KitCommandsTest {
             ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
             verify(consoleSender, atLeast(7)).sendMessage(captor.capture());
             assertThat(captor.getAllValues()).isNotEmpty();
+        }
+    }
+
+    @Nested
+    @DisplayName("Master Switch Tests")
+    class MasterSwitchTests {
+
+        @Test
+        @DisplayName("declared default true lets a claim reach the service")
+        void declaredDefaultAllowsClaim() {
+            when(kitService.claimKit(player, "starter")).thenReturn(KitService.ClaimResult.SUCCESS);
+
+            kitCommands.onClaim(player, "starter");
+
+            verify(kitService).claimKit(player, "starter");
+        }
+
+        @Test
+        @DisplayName("declared default true lets a list reach the service")
+        void declaredDefaultAllowsList() {
+            when(kitService.getAvailableKits(player)).thenReturn(Collections.emptyList());
+
+            kitCommands.onList(player);
+
+            verify(kitService).getAvailableKits(player);
+        }
+
+        @Test
+        @DisplayName("disabled refuses the bare /kits browser without opening it")
+        void disabledRefusesOpenGui() {
+            config.setEnabled(false);
+
+            kitCommands.onOpenGui(player);
+
+            verifyNoInteractions(kitService);
+            assertRefusedAsDisabled(player);
+        }
+
+        @Test
+        @DisplayName("disabled refuses a claim without touching the service")
+        void disabledRefusesClaim() {
+            config.setEnabled(false);
+
+            kitCommands.onClaim(player, "starter");
+
+            verifyNoInteractions(kitService);
+            assertRefusedAsDisabled(player);
+        }
+
+        @Test
+        @DisplayName("disabled refuses a list without touching the service")
+        void disabledRefusesList() {
+            config.setEnabled(false);
+
+            kitCommands.onList(player);
+
+            verifyNoInteractions(kitService);
+            assertRefusedAsDisabled(player);
+        }
+
+        @Test
+        @DisplayName("disabled refuses an edit before the admin-permission check")
+        void disabledRefusesEdit() {
+            config.setEnabled(false);
+
+            kitCommands.onEdit(player, "starter");
+
+            verifyNoInteractions(kitService);
+            verify(player, never()).hasPermission(anyString());
+            assertRefusedAsDisabled(player);
+        }
+
+        @Test
+        @DisplayName("disabled refuses a create before the admin-permission check")
+        void disabledRefusesCreate() {
+            config.setEnabled(false);
+
+            kitCommands.onCreate(player, "newkit");
+
+            verifyNoInteractions(kitService);
+            verify(player, never()).hasPermission(anyString());
+            assertRefusedAsDisabled(player);
+        }
+
+        @Test
+        @DisplayName("disabled refuses a delete from the console before the admin-permission check")
+        void disabledRefusesDelete() {
+            config.setEnabled(false);
+
+            kitCommands.onDelete(consoleSender, "starter");
+
+            verifyNoInteractions(kitService);
+            verify(consoleSender, never()).hasPermission(anyString());
+            assertRefusedAsDisabled(consoleSender);
+        }
+
+        @Test
+        @DisplayName("disabled refuses a reload from the console before the admin-permission check")
+        void disabledRefusesReload() {
+            config.setEnabled(false);
+
+            kitCommands.onReload(consoleSender);
+
+            verifyNoInteractions(kitService);
+            verify(consoleSender, never()).hasPermission(anyString());
+            assertRefusedAsDisabled(consoleSender);
+        }
+
+        @Test
+        @DisplayName("a switch flip after construction takes effect on the very next command")
+        void flipTakesEffectWithoutReconstruction() {
+            when(kitService.claimKit(player, "starter")).thenReturn(KitService.ClaimResult.SUCCESS);
+
+            kitCommands.onClaim(player, "starter");
+            verify(kitService, times(1)).claimKit(player, "starter");
+
+            // Mirrors what ConfigManager#reloadConfigs does on /ul reload: it re-reads the file into
+            // the SAME KitsConfig instance this command object already holds. Nothing is rebuilt, so
+            // a command that cached the value at construction would keep serving the old one.
+            config.setEnabled(false);
+            kitCommands.onClaim(player, "starter");
+
+            verify(kitService, times(1)).claimKit(player, "starter");
+        }
+
+        @Test
+        @DisplayName("disabled refuses /kits help, which the framework short-circuits past every mapping")
+        void disabledRefusesHelp() {
+            config.setEnabled(false);
+
+            kitCommands.handleHelp(consoleSender);
+
+            verifyNoInteractions(kitService);
+            assertRefusedAsDisabled(consoleSender);
+        }
+
+        @Test
+        @DisplayName("declared default true still prints the usage summary")
+        void declaredDefaultStillPrintsHelp() {
+            kitCommands.handleHelp(consoleSender);
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(consoleSender, atLeast(2)).sendMessage(captor.capture());
+            assertThat(captor.getAllValues()).anyMatch(line -> line.contains("/kits claim <name>"));
+            assertThat(captor.getAllValues()).noneMatch(line -> line.contains("礼包系统当前已关闭"));
+        }
+
+        @Test
+        @DisplayName("SYSTEM_DISABLED from the gateway renders the refusal, not a generic error")
+        void systemDisabledFromTheGatewayIsRendered() {
+            // The command gate is left ON deliberately: this is the shape of a future caller that
+            // reaches the service without pre-checking, which is the case the gateway guard exists
+            // for. The renderer must name the switch rather than fall into "Error claiming kit".
+            when(kitService.claimKit(player, "starter"))
+                    .thenReturn(KitService.ClaimResult.SYSTEM_DISABLED);
+
+            kitCommands.onClaim(player, "starter");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .contains("礼包系统当前已关闭")
+                    .doesNotContain("领取礼包时发生错误");
+        }
+
+        @Test
+        @DisplayName("a switch flip back to true re-enables the command in the same way")
+        void flipBackReEnables() {
+            when(kitService.claimKit(player, "starter")).thenReturn(KitService.ClaimResult.SUCCESS);
+            config.setEnabled(false);
+
+            kitCommands.onClaim(player, "starter");
+            verifyNoInteractions(kitService);
+
+            config.setEnabled(true);
+            kitCommands.onClaim(player, "starter");
+
+            verify(kitService, times(1)).claimKit(player, "starter");
         }
     }
 }

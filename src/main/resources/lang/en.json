@@ -44,5 +44,6 @@
   "此命令只能由玩家执行": "This command can only be used by players",
   "你没有权限执行此命令": "You don't have permission to execute this command",
   "余额不足": "Insufficient balance",
-  "等级不足": "Level too low"
+  "等级不足": "Level too low",
+  "礼包系统当前已关闭": "The kit system is currently disabled on this server"
 }

@@ -134,12 +134,22 @@ public class KitEditorGui extends Gui {
         }
 
         ItemStack[] itemsArray = collectedItems.toArray(new ItemStack[0]);
-        boolean success = kitService.saveKitItems(kit.getName(), itemsArray);
+        KitService.SaveResult result = kitService.saveKitItems(kit.getName(), itemsArray);
 
-        if (success) {
-            player.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("已保存礼包: %s"), kit.getName()));
-        } else {
-            player.sendMessage(ChatColor.RED + plugin.i18n("领取礼包时发生错误"));
+        switch (result) {
+            case SUCCESS:
+                player.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("已保存礼包: %s"), kit.getName()));
+                break;
+            case SYSTEM_DISABLED:
+                // This editor outlives the /kits edit command that opened it, so an operator can
+                // switch the kit system off while it is on screen. The refusal comes from the save
+                // gateway, which is where the switch is enforced; this only renders it, and it says
+                // the same sentence every other surface says.
+                player.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
+                break;
+            default:
+                player.sendMessage(ChatColor.RED + plugin.i18n("领取礼包时发生错误"));
+                break;
         }
 
         player.closeInventory();

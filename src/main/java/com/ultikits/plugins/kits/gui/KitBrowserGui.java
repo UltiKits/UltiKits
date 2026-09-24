@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.gui;
 
+import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
@@ -26,27 +27,48 @@ public class KitBrowserGui extends Gui {
     private final Player player;
     private final UltiToolsPlugin plugin;
     private final KitService kitService;
+    /**
+     * The module's live configuration object, not a snapshot of its values. {@code ConfigManager}
+     * re-reads the file into this same instance on {@code /ul reload}, so every read below happens
+     * at the moment the value is used - at open for the page size, at click for the debounce
+     * window, at a page turn for the master switch - and a reload therefore takes effect without
+     * reopening the browser or restarting. The switch is not read on the claim path here; {@link
+     * com.ultikits.plugins.kits.service.KitService#claimKit} owns that.
+     * <p>
+     * 模块的实时配置对象（而非取值快照）。{@code /ul reload} 会把文件重新读入同一个实例，
+     * 因此下面每一处都在用到的那一刻才读取，重载无需重启即可生效。
+     */
+    private final KitsConfig config;
     private final int page;
-    private final int kitsPerPage;
     private long lastClickTime = 0;
-    private static final long CLICK_COOLDOWN_MS = 200;
 
-    public KitBrowserGui(Player player, UltiToolsPlugin plugin, KitService kitService, int page) {
+    public KitBrowserGui(Player player, UltiToolsPlugin plugin, KitService kitService,
+                         KitsConfig config, int page) {
         super(player, "kit_browser_" + page,
                 ChatColor.translateAlternateColorCodes('&', "&6&l" + plugin.i18n("礼包列表")),
                 6);
         this.player = player;
         this.plugin = plugin;
         this.kitService = kitService;
+        this.config = config;
         this.page = page;
-        this.kitsPerPage = 28;
     }
 
     @Override
     public void onOpen(InventoryOpenEvent event) {
+        // Read once per frame so the page count, the start index and the end index below cannot
+        // disagree with each other, and re-read on every open so a reloaded value applies at once.
+        int kitsPerPage = config.getKitsPerPage();
         List<KitDefinition> availableKits = kitService.getAvailableKits(player);
         int totalPages = Math.max(1, (int) Math.ceil((double) availableKits.size() / kitsPerPage));
-        int startIndex = page * kitsPerPage;
+        // The page index this browser was built with can have stopped existing since: `kits_per_page`
+        // is live, so raising it collapses the page count, and `/kits reload` can shrink the
+        // catalogue. Rendering such an index unclamped produces an empty inventory titled with an
+        // impossible `Page 5/2`. Clamping HERE rather than at the callers covers every way a browser
+        // is built, now and later, because obliviate calls onOpen on every open whoever constructed
+        // it. Only the rendered page is clamped; the `page` field keeps what it was built with.
+        int currentPage = Math.min(Math.max(page, 0), totalPages - 1);
+        int startIndex = currentPage * kitsPerPage;
         int endIndex = Math.min(startIndex + kitsPerPage, availableKits.size());
 
         // Fill separator row (row 5, slots 36-44)
@@ -62,7 +84,7 @@ public class KitBrowserGui extends Gui {
             addItem(i, separator);
         }
 
-        // Add kit items (slots 0-35, up to 28 per page based on kitsPerPage)
+        // Add kit items (slots 0-35, up to config.kits_per_page per page)
         for (int i = startIndex; i < endIndex; i++) {
             int slot = i - startIndex;
             if (slot >= 36) break;
@@ -73,7 +95,7 @@ public class KitBrowserGui extends Gui {
         }
 
         // Navigation - Previous page (slot 45)
-        if (page > 0) {
+        if (currentPage > 0) {
             ItemStack prevItem = new ItemStack(Material.ARROW);
             ItemMeta prevMeta = prevItem.getItemMeta();
             if (prevMeta != null) {
@@ -83,12 +105,7 @@ public class KitBrowserGui extends Gui {
             Icon prevIcon = new Icon(prevItem);
             prevIcon.onClick(e -> {
                 e.setCancelled(true);
-                player.closeInventory();
-                org.bukkit.plugin.Plugin ultiTools = Bukkit.getPluginManager().getPlugin("UltiTools");
-                if (ultiTools != null) {
-                    Bukkit.getScheduler().runTask(ultiTools, () ->
-                            new KitBrowserGui(player, plugin, kitService, page - 1).open());
-                }
+                openPage(currentPage - 1);
             });
             addItem(45, prevIcon);
         }
@@ -97,7 +114,7 @@ public class KitBrowserGui extends Gui {
         ItemStack pageItem = new ItemStack(Material.PAPER);
         ItemMeta pageMeta = pageItem.getItemMeta();
         if (pageMeta != null) {
-            pageMeta.setDisplayName(ChatColor.WHITE + String.format(plugin.i18n("第 %d/%d 页"), page + 1, totalPages));
+            pageMeta.setDisplayName(ChatColor.WHITE + String.format(plugin.i18n("第 %d/%d 页"), currentPage + 1, totalPages));
             pageItem.setItemMeta(pageMeta);
         }
         Icon pageIcon = new Icon(pageItem);
@@ -105,7 +122,7 @@ public class KitBrowserGui extends Gui {
         addItem(49, pageIcon);
 
         // Navigation - Next page (slot 53)
-        if (page < totalPages - 1) {
+        if (currentPage < totalPages - 1) {
             ItemStack nextItem = new ItemStack(Material.ARROW);
             ItemMeta nextMeta = nextItem.getItemMeta();
             if (nextMeta != null) {
@@ -115,15 +132,52 @@ public class KitBrowserGui extends Gui {
             Icon nextIcon = new Icon(nextItem);
             nextIcon.onClick(e -> {
                 e.setCancelled(true);
-                player.closeInventory();
-                org.bukkit.plugin.Plugin ultiTools = Bukkit.getPluginManager().getPlugin("UltiTools");
-                if (ultiTools != null) {
-                    Bukkit.getScheduler().runTask(ultiTools, () ->
-                            new KitBrowserGui(player, plugin, kitService, page + 1).open());
-                }
+                openPage(currentPage + 1);
             });
             addItem(53, nextIcon);
         }
+    }
+
+    /**
+     * Opens another page of this browser, and the only place in this class that does.
+     * <p>
+     * Both page arrows route through here so the master switch is consulted once rather than once
+     * per control: a new browser opened while {@code config.yml: enabled} is off would serve a
+     * fresh page of the catalogue at the same moment every {@code /kits} sub-command is answering
+     * that the system is disabled. A control added to this GUI later that needs to change page must
+     * call this method rather than constructing a {@link KitBrowserGui} itself, which is what keeps
+     * the switch from being one enumeration short again (UltiKits/UltiKits#13).
+     * <p>
+     * A refused page turn leaves the current page open: the player keeps what they were already
+     * looking at, and nothing new is rendered. Claiming from that still-open page is refused
+     * separately, by {@link com.ultikits.plugins.kits.service.KitService#claimKit}.
+     * <p>
+     * The switch is read inside the scheduled task, not before scheduling it. The reopen happens a
+     * tick after the click, and an operator's {@code /ul reload UltiTools-Kits} can land in that
+     * window: a check taken at click time would already have passed, and the callback would then
+     * open a fresh catalogue page for a system that is now off. Reading it in the task is one check
+     * at the moment the browser would actually be built, rather than one check plus a race.
+     * {@code closeInventory()} moved in with it for the same reason - the current page is closed
+     * only once the replacement is certain, so a refusal costs the player nothing.
+     * <p>
+     * 翻页只经由此方法。开关在延迟任务内部读取（而非调度之前），因为重开发生在下一 tick，
+     * 运维的 `/ul reload` 可能正落在这个窗口里。被拒绝时保留当前页面，不渲染新页面。
+     *
+     * @param targetPage the zero-based page to open / 目标页码（从 0 开始）
+     */
+    private void openPage(int targetPage) {
+        org.bukkit.plugin.Plugin ultiTools = Bukkit.getPluginManager().getPlugin("UltiTools");
+        if (ultiTools == null) {
+            return;
+        }
+        Bukkit.getScheduler().runTask(ultiTools, () -> {
+            if (!config.isEnabled()) {
+                player.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
+                return;
+            }
+            player.closeInventory();
+            new KitBrowserGui(player, plugin, kitService, config, targetPage).open();
+        });
     }
 
     Icon buildKitIcon(KitDefinition kit) {
@@ -183,9 +237,34 @@ public class KitBrowserGui extends Gui {
         return icon;
     }
 
+    /**
+     * Handles a click on a kit icon: debounce, then claim, then render the outcome.
+     * <p>
+     * The master switch is NOT re-checked here. A browser outlives the command that opened it, so a
+     * click can certainly reach a disabled kit system - but the refusal comes from {@link
+     * com.ultikits.plugins.kits.service.KitService#claimKit} returning {@link
+     * KitService.ClaimResult#SYSTEM_DISABLED}, which the switch below renders, so this handler is
+     * one more caller of the single guarded gateway rather than a second copy of the guard. An
+     * inventory already on screen is deliberately NOT force-closed: closing a window out from under
+     * a player to enforce a setting is a larger and more surprising action than declining what they
+     * clicked.
+     * <p>
+     * The debounce runs first, which has two consequences worth stating together. It stops a
+     * disabled module answering every click and becoming a message-spam surface - the reverse
+     * ordering really would do that. It also means the REFUSAL is rate-limited by
+     * {@code config.yml: click_cooldown_ms}, a key whose documented purpose is claim debouncing: at
+     * the legal maximum of 5000 a player who clicks twice four seconds apart gets one message and
+     * then silence, which reads as a broken GUI rather than a disabled system. The trade is
+     * accepted because the alternative is worse, not because the second half does not exist.
+     * <p>
+     * 点击处理顺序：防抖 -> 领取 -> 渲染结果。开关不在此重复检查，拒绝来自 claimKit 返回的
+     * SYSTEM_DISABLED。防抖在前，既避免刷屏，也意味着拒绝提示同样受 click_cooldown_ms 限流。
+     *
+     * @param kit the kit whose icon was clicked / 被点击的礼包
+     */
     void handleKitClick(KitDefinition kit) {
         long now = System.currentTimeMillis();
-        if (now - lastClickTime < CLICK_COOLDOWN_MS) {
+        if (now - lastClickTime < config.getClickCooldownMs()) {
             return;
         }
         lastClickTime = now;
@@ -227,6 +306,9 @@ public class KitBrowserGui extends Gui {
                 break;
             case EMPTY_KIT:
                 player.sendMessage(ChatColor.RED + plugin.i18n("礼包内容为空"));
+                break;
+            case SYSTEM_DISABLED:
+                player.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
                 break;
             default:
                 player.sendMessage(ChatColor.RED + plugin.i18n("领取礼包时发生错误"));

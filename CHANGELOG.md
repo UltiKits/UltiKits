@@ -9,6 +9,57 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Saving a kit from the kit editor is now refused while the kit system is switched off. An admin
+  who had `/kits edit` open when an operator set `enabled: false` could still press Save and change
+  the kit's contents; the Save button now answers `The kit system is currently disabled on this
+  server` and writes nothing (UltiKits/UltiKits#13).
+- 礼包系统关闭期间，礼包编辑界面的保存操作现在会被拒绝。此前管理员若在运维把 `enabled` 改为 `false`
+  之前就打开了 `/kits edit`，仍可点击保存并修改礼包内容；现在保存按钮会回复“礼包系统当前已关闭”，
+  且不写入任何内容（UltiKits/UltiKits#13）。
+- The kit browser no longer shows an empty page titled with a page number that cannot exist. If the
+  kit list shrinks while a browser is open — `/kits reload` removing kits, or `kits_per_page` being
+  raised so there are fewer pages — the page the browser was on can stop existing; it now shows the
+  last real page instead, with working navigation arrows (UltiKits/UltiKits#13).
+- 礼包浏览界面不会再出现「页码超出总页数的空白页面」。当界面打开期间礼包列表变短时——`/kits reload`
+  删除了礼包，或 `kits_per_page` 被调大导致总页数减少——原先所在的页可能已不存在；现在会改为显示最后
+  一个真实存在的页面，翻页按钮同样正常（UltiKits/UltiKits#13）。
+- `config/config.yml: kits_per_page` now decides how many kits one page of the kit browser shows.
+  Previously the browser paged on a hardcoded 28 regardless of what the key said; it now follows
+  `kits_per_page`, whose default is still 28, so a server that never edited the key sees no change.
+  The page count in the browser's `Page x/y` indicator follows the same value
+  (UltiKits/UltiKits#13).
+- `config/config.yml: click_cooldown_ms` now decides the kit browser's click-debounce window.
+  Previously the browser used a hardcoded 200 milliseconds regardless of what the key said; it now
+  follows `click_cooldown_ms`, whose default is still 200, so a server that never edited the key
+  sees no change (UltiKits/UltiKits#13).
+- `config/config.yml: enabled` now really switches the kit system off. Previously nothing read it
+  and the kit system was active whatever it said. With `enabled: false`, every `/kits` (`/kit`)
+  sub-command — including the bare `/kits` browser, `claim`, `list`, `edit`, `create`, `delete` and
+  `reload` — now replies `The kit system is currently disabled on this server` and does nothing
+  else. The default is still `true`, so a server that never edited the key sees no change. The
+  switch is read when a command runs, not when the module loads, so `/ul reload UltiTools-Kits`
+  applies a change without a server restart. `/kits help`, and any unrecognised `/kits` argument,
+  are refused too rather than printing a usage list for sub-commands that all refuse. A kit browser
+  that was already open when the switch was flipped is not force-closed, but clicking a kit in it
+  gets the same refusal instead of a claim and its page arrows refuse to open a further page, so
+  while the switch is off no kit can be taken and no new page of the catalogue is shown. Claiming
+  is refused inside the kit service itself rather than at each command, so the guarantee holds for
+  any future way of claiming as well (UltiKits/UltiKits#13).
+- `config/config.yml: kits_per_page` 现在真正决定礼包浏览界面一页显示多少个礼包。此前无论该键写什么，
+  界面都按硬编码的 28 分页；现在按 `kits_per_page` 取值，其默认值仍为 28，因此从未修改过该键的服务器
+  行为不变。界面 `Page x/y` 指示器的总页数同样依据该值（UltiKits/UltiKits#13）。
+- `config/config.yml: click_cooldown_ms` 现在真正决定礼包浏览界面的点击防抖窗口。此前无论该键写什么，
+  界面都使用硬编码的 200 毫秒；现在按 `click_cooldown_ms` 取值，其默认值仍为 200，因此从未修改过该键的
+  服务器行为不变（UltiKits/UltiKits#13）。
+- `config/config.yml: enabled` 现在真正可以关闭礼包系统。此前没有任何代码读取它，无论其取值如何礼包系统
+  都处于启用状态。设为 `false` 后，`/kits`（`/kit`）的每一条子命令——包括不带参数的浏览界面、`claim`、
+  `list`、`edit`、`create`、`delete` 与 `reload`——都会回复“礼包系统当前已关闭”并不再执行任何操作。默认值
+  仍为 `true`，因此从未修改过该键的服务器行为不变。该开关在命令执行时读取，而非模块加载时读取，因此
+  `/ul reload UltiTools-Kits` 即可生效，无需重启服务器。`/kits help` 以及任何无法识别的 `/kits` 参数同样会被
+  拒绝，而不是列出一串全部会被拒绝的子命令。开关切换时玩家已经打开的浏览界面不会被强制关闭，但在其中点击礼包
+  会收到同样的拒绝提示而不是领取成功，翻页按钮也会拒绝打开新页面，因此开关关闭期间既领取不到礼包，也看不到
+  新的礼包列表页。领取的拦截放在礼包服务内部而非各个命令中，因此将来新增的领取入口同样受该开关约束
+  （UltiKits/UltiKits#13）。
 - A paid kit whose price could not actually be withdrawn is no longer delivered. Previously, when
   the balance check passed but the withdrawal itself did not go through — the balance was spent
   elsewhere in between, or the economy plugin rejected the transaction — `/kits claim <name>` and
