@@ -96,7 +96,7 @@ final class I18nSourceScanner {
         /**
          * True when the literal is part of the value of a {@code @ConfigEntry} annotation's
          * {@code comment} element -- and of nothing else. Guard 2 skips these; the reason is written
-         * next to the skip in {@code UltiKitsCjkLiteralScopeTest#violations}.
+         * next to the skip in {@code UltiKitsCjkLiteralScopeTest#reportable}.
          */
         boolean configComment;
 
