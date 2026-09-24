@@ -5,6 +5,8 @@ import com.ultikits.plugins.kits.i18n.I18nSourceScanner.KeySite;
 import com.ultikits.plugins.kits.i18n.I18nSourceScanner.SiteKind;
 import com.ultikits.plugins.kits.i18n.I18nSourceScanner.SourceFile;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
+import com.ultikits.ultitools.annotations.command.CmdParam;
+import com.ultikits.ultitools.annotations.command.CmdSuggest;
 import com.ultikits.ultitools.entities.Language;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -78,11 +80,14 @@ class UltiKitsLanguageCatalogueTest {
     ));
 
     private static List<SourceFile> sources;
+    private static I18nSourceScanner.SuggestScan suggestScan;
     private static List<Catalogue> catalogues;
 
     @BeforeAll
     static void scan() throws Exception {
-        sources = I18nSourceScanner.scanMainSources(I18nSourceScanner.moduleRoot());
+        sources = new ArrayList<>(I18nSourceScanner.scanMainSources(I18nSourceScanner.moduleRoot()));
+        suggestScan = I18nSourceScanner.scanCompiledSuggestValues(I18nSourceScanner.moduleRoot());
+        sources.addAll(suggestScan.hints);
         catalogues = loadModuleCatalogues();
     }
 
@@ -102,6 +107,16 @@ class UltiKitsLanguageCatalogueTest {
         for (Catalogue c : catalogues) {
             assertThat(c.entries).as(c.fileName + " entries").isNotEmpty();
         }
+    }
+
+    @Test
+    @DisplayName("control: the compiled scan saw every @CmdParam(suggest = ...) the source declares")
+    void suggestScanSawEverySuggestValue() {
+        int declared = 0;
+        for (SourceFile f : sources) {
+            declared += f.suggestAttributes;
+        }
+        assertThat(suggestScan.seen).as("suggest values on the compiled classes").hasSize(declared);
     }
 
     @Test
@@ -290,7 +305,8 @@ class UltiKitsLanguageCatalogueTest {
     /**
      * The placeholders of {@code text}: the order-sensitive ones (ordinary {@code String.format}
      * specifiers and the bare {@code {}} marker) in the order written, then {@code "|"}, then the
-     * ones that may move ({@code %2$s}, {@code {NAME}}, {@code {0}}) sorted.
+     * ones that may move ({@code %2$s}, {@code %<s}, {@code {NAME}}, {@code {0}}, {@code %NAME%})
+     * sorted. {@code %%} and {@code %n} take no argument and are left out.
      */
     static List<String> placeholders(String text) {
         List<String> inOrder = new ArrayList<>();
@@ -298,13 +314,15 @@ class UltiKitsLanguageCatalogueTest {
         Matcher m = PLACEHOLDER.matcher(text == null ? "" : text);
         while (m.find()) {
             String token = m.group();
-            if (token.equals("%%")) {
+            if (token.equals("%%") || token.equals("%n")) {
                 continue;
             }
             // String.format fills an ordinary specifier, and SLF4J / PluginLogger fill {}, strictly in
             // order, so their order must match between languages (a swapped %s/%d throws at run time).
-            // An indexed specifier (%2$s) or a named token ({PLAYER}, {0}) may move.
-            if (token.equals("{}") || (token.startsWith("%") && !token.contains("$"))) {
+            // An indexed specifier (%2$s), a relative one (%<s) or a named token ({PLAYER}, {0},
+            // %player_name%) may move.
+            boolean named = token.startsWith("{") ? !token.equals("{}") : token.endsWith("%");
+            if (!named && !token.contains("$") && !token.contains("<")) {
                 inOrder.add(token);
             } else {
                 anyOrder.add(token);
@@ -319,14 +337,21 @@ class UltiKitsLanguageCatalogueTest {
 
     /**
      * {@code {NAME}}/{@code {0}} tokens, the bare {@code {}} argument marker SLF4J and the framework's
-     * {@code PluginLogger} fill in order, {@code %%}, and {@code String.format} specifiers with a
-     * {@code s}, {@code d}, {@code f} or {@code x} conversion. A letter right after the conversion does
-     * not end it early: {@code java.util.Formatter} reads {@code "%dh"} as {@code %d} then {@code h}, so
-     * the pattern does too. Prose such as "100% of" or "50%off" is still not a specifier -- a space is
-     * not one of the flags matched here, and {@code o} is not one of the conversions.
+     * {@code PluginLogger} fill in order, {@code %NAME%} tokens a caller replaces by name
+     * ({@code %player_name%}), {@code %%}, {@code %n}, and every {@code java.util.Formatter} specifier
+     * that takes an argument: {@code %[index$][flags][width][.precision]conversion} with any general,
+     * character, integral or floating-point conversion, or the {@code t}/{@code T} date/time prefix
+     * and its suffix letter. A {@code %NAME%} token is tried first, so {@code %online%} is one named
+     * token and not {@code %o} followed by prose. A letter right after the conversion does not end it
+     * early: {@code Formatter} reads {@code "%dh"} as {@code %d} then {@code h}, so the pattern does too.
+     * <p>
+     * One deliberate limit: the space flag is not matched, so prose such as "100% of" is not read as
+     * the specifier {@code "% o"}. A translation that drops a space-flagged specifier such as
+     * {@code "% d"} is therefore not reported. No module catalogue uses one (measured 2026-09-24:
+     * 0 of 3,064 entries across the fifteen module repositories).
      */
-    private static final Pattern PLACEHOLDER =
-            Pattern.compile("\\{[A-Za-z0-9_]*}|%%|%(\\d+\\$)?[-#+0,(]*\\d*(\\.\\d+)?[sdfx]");
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\{[A-Za-z0-9_]*}|%[A-Za-z_][A-Za-z0-9_]+%|%%|%n"
+            + "|%(\\d+\\$)?[-#+0,(<]*\\d*(\\.\\d+)?([tT][a-zA-Z]|[bBhHsScCdoxXeEfgGaA])");
 
     static List<String> placeholderMismatches(List<Catalogue> cats) {
         List<String> problems = new ArrayList<>();
@@ -564,6 +589,59 @@ class UltiKitsLanguageCatalogueTest {
         }
     }
 
+    /** Compiled executors for the {@code @CmdParam(suggest = ...)} tests; the framework's lookup runs on these. */
+    static final class SuggestFixtures {
+        static final String HINT = "backup.hint." + "constant";
+
+        private SuggestFixtures() {
+        }
+
+        abstract static class Base {
+            public List<String> inherited() {
+                return Collections.emptyList();
+            }
+        }
+
+        static final class Provider {
+            public static List<String> fromSuggestClass() {
+                return Collections.emptyList();
+            }
+        }
+
+        static final class Unrelated {
+            public List<String> elsewhere() {
+                return Collections.emptyList();
+            }
+        }
+
+        @CmdSuggest(Provider.class)
+        static class Executor extends Base {
+            public void run(@CmdParam(value = "a", suggest = "backup.hint.literal") String a,
+                            @CmdParam(value = "b", suggest = HINT) String b,
+                            @CmdParam(value = "c", suggest = "own") String c,
+                            @CmdParam(value = "d", suggest = "inherited()") String d,
+                            @CmdParam(value = "e", suggest = "fromSuggestClass") String e,
+                            @CmdParam(value = "f", suggest = "elsewhere") String f,
+                            @CmdParam("g") String g) {
+            }
+
+            public List<String> own() {
+                return Collections.emptyList();
+            }
+        }
+
+        static class Exploding {
+            static final Object STATE = explode();
+
+            static Object explode() {
+                throw new IllegalStateException("static initialiser failed");
+            }
+
+            public void run(@CmdParam(value = "p", suggest = "anything") String p) {
+            }
+        }
+    }
+
     @Nested
     @DisplayName("key sites")
     class Sites {
@@ -650,12 +728,42 @@ class UltiKitsLanguageCatalogueTest {
         }
 
         @Test
-        @DisplayName("@CmdParam(suggest = ...) naming no method is a key the framework shows as a hint (finding 3)")
-        void suggestNamingNoMethodIsAKey() {
-            SourceFile f = source("void run(@CmdParam(value = \"p\", suggest = \"backup.hint.player\") String p,\n"
-                    + "        @CmdParam(value = \"q\", suggest = \"suggestThings\") String q) { }\n"
-                    + "java.util.List<String> suggestThings() { return null; }");
-            assertThat(f.sites).extracting(s -> s.literalKey).containsExactly("backup.hint.player");
+        @DisplayName("@CmdParam(suggest = ...) is resolved on the compiled executor by the framework's own lookup (Codex, UltiBackup#22)")
+        void suggestResolvedByTheFrameworkLookup() {
+            I18nSourceScanner.SuggestScan scan = I18nSourceScanner.suggestHintSites(Arrays.<Class<?>>asList(
+                    SuggestFixtures.Executor.class, SuggestFixtures.Base.class, SuggestFixtures.Provider.class,
+                    SuggestFixtures.Unrelated.class));
+            List<String> keys = new ArrayList<>();
+            for (SourceFile f : scan.hints) {
+                for (KeySite s : f.sites) {
+                    assertThat(s.kind).isEqualTo(SiteKind.SUGGEST_HINT);
+                    keys.add(s.literalKey);
+                }
+            }
+            // A literal, a compile-time constant, and a name only an unrelated class declares are all shown
+            // as hints; a method on the executor, on its superclass or on its @CmdSuggest class is not.
+            assertThat(keys).containsExactlyInAnyOrder("backup.hint.literal", "backup.hint.constant", "elsewhere");
+            assertThat(scan.seen).hasSize(6);
+        }
+
+        @Test
+        @DisplayName("an executor the framework's lookup cannot run on fails the scan instead of passing it")
+        void unresolvableExecutorFailsClosed() {
+            I18nSourceScanner.SuggestScan scan = I18nSourceScanner.suggestHintSites(
+                    Collections.<Class<?>>singletonList(SuggestFixtures.Exploding.class));
+            assertThat(scan.hints).singleElement().satisfies(f -> assertThat(f.sites).singleElement().satisfies(s -> {
+                assertThat(s.literalKey).isNull();
+                assertThat(s.expression).contains("anything").contains("cannot resolve");
+            }));
+        }
+
+        @Test
+        @DisplayName("the parser counts each @CmdParam(suggest = ...) that is not \"\", literal or constant")
+        void suggestAttributesAreCounted() {
+            SourceFile f = source("void run(@CmdParam(value = \"p\", suggest = \"x\") String p,\n"
+                    + "        @CmdParam(value = \"q\", suggest = K) String q, @CmdParam(value = \"r\", suggest = \"\") String r) { }");
+            assertThat(f.suggestAttributes).isEqualTo(2);
+            assertThat(f.sites).as("the parser no longer decides what a suggest value is").isEmpty();
         }
 
         @Test
@@ -795,6 +903,25 @@ class UltiKitsLanguageCatalogueTest {
             assertThat(placeholderMismatches(Arrays.asList(
                     yaml("en", "h: \"%dh\"\n"), yaml("zh", "h: \"\u5c0f\u65f6\"\n"))))
                     .as("a translation that dropped the %d before a letter").singleElement().asString().startsWith("\"h\"");
+        }
+
+        @Test
+        @DisplayName("every java.util.Formatter specifier that takes an argument is a placeholder (Codex, UltiBackup#22)")
+        void everyFormatterConversionIsAPlaceholder() throws IOException {
+            for (String spec : new String[]{"%b", "%c", "%o", "%e", "%g", "%S", "%X", "%h", "%a", "%tY", "%1$tY", "%<s"}) {
+                assertThat(placeholderMismatches(Arrays.asList(
+                        yaml("en", "k: \"at " + spec + " here\"\n"), yaml("zh", "k: \"\u5728\u6b64\"\n"))))
+                        .as("a translation that dropped " + spec).singleElement().asString().startsWith("\"k\"");
+            }
+        }
+
+        @Test
+        @DisplayName("a %NAME% token is a placeholder, read whole rather than as a specifier (Codex, UltiBackup#22)")
+        void percentNameTokenIsAPlaceholder() throws IOException {
+            assertThat(placeholders("&e%online%&7/&e%max%")).containsExactly("|", "%max%", "%online%");
+            assertThat(placeholderMismatches(Arrays.asList(
+                    yaml("en", "k: \"Welcome %player_name%\"\n"), yaml("zh", "k: \"\u6b22\u8fce %name%\"\n"))))
+                    .singleElement().asString().startsWith("\"k\"");
         }
 
         @Test
