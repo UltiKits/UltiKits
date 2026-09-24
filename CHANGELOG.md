@@ -7,6 +7,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Language keys were renamed from Chinese sentences to ASCII keys (for example `kits.claim.success`).
+  An operator who edited this module's `lang/en.json` or `lang/zh.json` must re-apply those edits to
+  the new keys; until then the renamed messages show the new built-in text. A server whose language
+  files were never edited needs no action.
+- 语言键已从中文句子改为 ASCII 键（例如 `kits.claim.success`）。改过本模块 `lang/en.json` 或
+  `lang/zh.json` 的运维需要把改动重新套到新键上；在此之前，这些消息显示新的内置文本。从未改过语言文件的服务器无需任何操作。
+
+### Removed
+
+- Four language entries that no code ever displayed were removed from both language files (a
+  "Kit System" title, a per-kit "Kit loaded:" line, an "Economy system is not available" message and a
+  players-only command message). Nothing an operator or player sees changes.
+- 从两份语言文件中删除了四条从未被任何代码显示过的条目（「礼包系统」标题、逐个礼包的「已加载礼包:」日志、
+  「经济系统不可用」消息和仅限玩家执行的命令提示）。运维和玩家看到的内容没有任何变化。
+
 ### Fixed
 
 - Saving a kit from the kit editor is now refused while the kit system is switched off. An admin

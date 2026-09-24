@@ -45,7 +45,7 @@ public class KitBrowserGui extends Gui {
     public KitBrowserGui(Player player, UltiToolsPlugin plugin, KitService kitService,
                          KitsConfig config, int page) {
         super(player, "kit_browser_" + page,
-                ChatColor.translateAlternateColorCodes('&', "&6&l" + plugin.i18n("礼包列表")),
+                ChatColor.translateAlternateColorCodes('&', "&6&l" + plugin.i18n("kits.list.title")),
                 6);
         this.player = player;
         this.plugin = plugin;
@@ -99,7 +99,7 @@ public class KitBrowserGui extends Gui {
             ItemStack prevItem = new ItemStack(Material.ARROW);
             ItemMeta prevMeta = prevItem.getItemMeta();
             if (prevMeta != null) {
-                prevMeta.setDisplayName(ChatColor.YELLOW + plugin.i18n("上一页"));
+                prevMeta.setDisplayName(ChatColor.YELLOW + plugin.i18n("kits.gui.previous_page"));
                 prevItem.setItemMeta(prevMeta);
             }
             Icon prevIcon = new Icon(prevItem);
@@ -114,7 +114,7 @@ public class KitBrowserGui extends Gui {
         ItemStack pageItem = new ItemStack(Material.PAPER);
         ItemMeta pageMeta = pageItem.getItemMeta();
         if (pageMeta != null) {
-            pageMeta.setDisplayName(ChatColor.WHITE + String.format(plugin.i18n("第 %d/%d 页"), currentPage + 1, totalPages));
+            pageMeta.setDisplayName(ChatColor.WHITE + String.format(plugin.i18n("kits.gui.page"), currentPage + 1, totalPages));
             pageItem.setItemMeta(pageMeta);
         }
         Icon pageIcon = new Icon(pageItem);
@@ -126,7 +126,7 @@ public class KitBrowserGui extends Gui {
             ItemStack nextItem = new ItemStack(Material.ARROW);
             ItemMeta nextMeta = nextItem.getItemMeta();
             if (nextMeta != null) {
-                nextMeta.setDisplayName(ChatColor.YELLOW + plugin.i18n("下一页"));
+                nextMeta.setDisplayName(ChatColor.YELLOW + plugin.i18n("kits.gui.next_page"));
                 nextItem.setItemMeta(nextMeta);
             }
             Icon nextIcon = new Icon(nextItem);
@@ -172,7 +172,7 @@ public class KitBrowserGui extends Gui {
         }
         Bukkit.getScheduler().runTask(ultiTools, () -> {
             if (!config.isEnabled()) {
-                player.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.disabled"));
                 return;
             }
             player.closeInventory();
@@ -209,20 +209,20 @@ public class KitBrowserGui extends Gui {
 
             // Price
             if (kit.isFree()) {
-                lore.add(ChatColor.GRAY + plugin.i18n("价格") + ": " + ChatColor.GREEN + plugin.i18n("免费"));
+                lore.add(ChatColor.GRAY + plugin.i18n("kits.gui.price") + ": " + ChatColor.GREEN + plugin.i18n("kits.gui.price_free"));
             } else {
                 String priceStr = EconomyUtils.isAvailable() ? EconomyUtils.format(kit.getPrice()) : String.valueOf(kit.getPrice());
-                lore.add(ChatColor.GRAY + plugin.i18n("价格") + ": " + ChatColor.GOLD + priceStr);
+                lore.add(ChatColor.GRAY + plugin.i18n("kits.gui.price") + ": " + ChatColor.GOLD + priceStr);
             }
 
             // Level requirement
             if (kit.hasLevelRequirement()) {
-                lore.add(ChatColor.GRAY + plugin.i18n("等级要求") + ": " + ChatColor.YELLOW + kit.getLevelRequired());
+                lore.add(ChatColor.GRAY + plugin.i18n("kits.gui.level_required") + ": " + ChatColor.YELLOW + kit.getLevelRequired());
             }
 
             // Status
             lore.add("");
-            lore.add(ChatColor.GRAY + plugin.i18n("状态") + ": " + getStatusText(kit));
+            lore.add(ChatColor.GRAY + plugin.i18n("kits.gui.status") + ": " + getStatusText(kit));
 
             meta.setLore(lore);
             item.setItemMeta(meta);
@@ -273,45 +273,45 @@ public class KitBrowserGui extends Gui {
 
         switch (result) {
             case SUCCESS:
-                player.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("成功领取礼包: %s"), kit.getDisplayName()));
+                player.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("kits.claim.success"), kit.getDisplayName()));
                 if (!kit.isFree() && EconomyUtils.isAvailable()) {
-                    player.sendMessage(ChatColor.YELLOW + String.format(plugin.i18n("已扣除 %s"), EconomyUtils.format(kit.getPrice())));
+                    player.sendMessage(ChatColor.YELLOW + String.format(plugin.i18n("kits.claim.charged"), EconomyUtils.format(kit.getPrice())));
                 }
                 player.closeInventory();
                 break;
             case NOT_FOUND:
-                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("礼包 '%s' 不存在"), kit.getName()));
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.kit.not_found"), kit.getName()));
                 break;
             case NO_PERMISSION:
-                player.sendMessage(ChatColor.RED + plugin.i18n("你没有权限使用此礼包"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.no_permission"));
                 break;
             case INSUFFICIENT_LEVEL:
-                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("等级不足，需要 %d 级"), kit.getLevelRequired()));
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.level_too_low"), kit.getLevelRequired()));
                 break;
             case INSUFFICIENT_FUNDS:
-                player.sendMessage(ChatColor.RED + plugin.i18n("余额不足"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.insufficient_funds"));
                 break;
             case PAYMENT_FAILED:
-                player.sendMessage(ChatColor.RED + plugin.i18n("扣款失败，礼包未领取"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.payment_failed"));
                 break;
             case ALREADY_CLAIMED:
-                player.sendMessage(ChatColor.RED + plugin.i18n("你已经领取过此礼包"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.already_claimed"));
                 break;
             case ON_COOLDOWN:
                 long remaining = kitService.getRemainingCooldown(player, kit);
-                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("礼包冷却中，剩余: %s"), kitService.formatCooldown(remaining)));
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.on_cooldown"), kitService.formatCooldown(remaining)));
                 break;
             case INVENTORY_FULL:
-                player.sendMessage(ChatColor.RED + plugin.i18n("背包空间不足"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.inventory_full"));
                 break;
             case EMPTY_KIT:
-                player.sendMessage(ChatColor.RED + plugin.i18n("礼包内容为空"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.empty_kit"));
                 break;
             case SYSTEM_DISABLED:
-                player.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.disabled"));
                 break;
             default:
-                player.sendMessage(ChatColor.RED + plugin.i18n("领取礼包时发生错误"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.error"));
                 break;
         }
     }
@@ -319,25 +319,25 @@ public class KitBrowserGui extends Gui {
     String getStatusText(KitDefinition kit) {
         // Check level
         if (kit.hasLevelRequirement() && player.getLevel() < kit.getLevelRequired()) {
-            return ChatColor.RED + plugin.i18n("等级不足");
+            return ChatColor.RED + plugin.i18n("kits.status.level_too_low");
         }
 
         // Check economy
         if (!kit.isFree()) {
             if (!EconomyUtils.isAvailable() || !EconomyUtils.has(player, kit.getPrice())) {
-                return ChatColor.RED + plugin.i18n("余额不足");
+                return ChatColor.RED + plugin.i18n("kits.claim.insufficient_funds");
             }
         }
 
         // Check cooldown / one-time
         long remaining = kitService.getRemainingCooldown(player, kit);
         if (remaining < 0) {
-            return ChatColor.RED + plugin.i18n("已领取");
+            return ChatColor.RED + plugin.i18n("kits.status.claimed");
         }
         if (remaining > 0) {
-            return ChatColor.YELLOW + plugin.i18n("冷却中") + ": " + kitService.formatCooldown(remaining);
+            return ChatColor.YELLOW + plugin.i18n("kits.status.cooldown") + ": " + kitService.formatCooldown(remaining);
         }
 
-        return ChatColor.GREEN + plugin.i18n("可领取");
+        return ChatColor.GREEN + plugin.i18n("kits.status.available");
     }
 }

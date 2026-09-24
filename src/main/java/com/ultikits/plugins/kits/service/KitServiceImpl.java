@@ -77,7 +77,7 @@ public class KitServiceImpl implements KitService {
 
         File[] files = kitsFolder.listFiles((dir, name) -> name.endsWith(".yml"));
         if (files == null || files.length == 0) {
-            logger.warn(plugin.i18n("没有找到礼包配置文件"));
+            logger.warn(plugin.i18n("kits.log.no_kit_files"));
             return;
         }
 
@@ -92,7 +92,7 @@ public class KitServiceImpl implements KitService {
             }
         }
 
-        logger.info(String.format(plugin.i18n("共加载 %d 个礼包"), loadedCount));
+        logger.info(String.format(plugin.i18n("kits.log.loaded_count"), loadedCount));
     }
 
     @Override
@@ -411,7 +411,7 @@ public class KitServiceImpl implements KitService {
     @Override
     public String formatCooldown(long millis) {
         if (millis <= 0) {
-            return plugin.i18n("可领取");
+            return plugin.i18n("kits.status.available");
         }
 
         long hours = TimeUnit.MILLISECONDS.toHours(millis);
@@ -420,13 +420,13 @@ public class KitServiceImpl implements KitService {
 
         StringBuilder sb = new StringBuilder();
         if (hours > 0) {
-            sb.append(String.format(plugin.i18n("%d小时"), hours)).append(" ");
+            sb.append(String.format(plugin.i18n("kits.cooldown.hours"), hours)).append(" ");
         }
         if (minutes > 0) {
-            sb.append(String.format(plugin.i18n("%d分钟"), minutes)).append(" ");
+            sb.append(String.format(plugin.i18n("kits.cooldown.minutes"), minutes)).append(" ");
         }
         if (seconds > 0 || sb.length() == 0) {
-            sb.append(String.format(plugin.i18n("%d秒"), seconds));
+            sb.append(String.format(plugin.i18n("kits.cooldown.seconds"), seconds));
         }
 
         return sb.toString().trim();
@@ -536,13 +536,13 @@ public class KitServiceImpl implements KitService {
                 Material.valueOf(iconStr.toUpperCase());
                 kit.setIcon(iconStr.toUpperCase());
             } catch (IllegalArgumentException e) {
-                logger.warn(plugin.i18n("加载礼包失败: ") + file.getName() + " - invalid icon: " + iconStr);
+                logger.warn(plugin.i18n("kits.log.load_failed") + file.getName() + " - invalid icon: " + iconStr);
                 kit.setIcon("CHEST");
             }
 
             return kit;
         } catch (Exception e) {
-            logger.warn(plugin.i18n("加载礼包失败: ") + file.getName() + " - " + e.getMessage());
+            logger.warn(plugin.i18n("kits.log.load_failed") + file.getName() + " - " + e.getMessage());
             return null;
         }
     }
