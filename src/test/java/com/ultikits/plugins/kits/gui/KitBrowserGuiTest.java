@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.gui;
 
+import com.ultikits.plugins.kits.i18n.CatalogueText;
 import com.ultikits.plugins.kits.MockBukkitSupport;
 import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.model.KitDefinition;
@@ -60,7 +61,7 @@ class KitBrowserGuiTest {
     @BeforeEach
     void setUp() {
         MockBukkitSupport.bootstrap();
-        lenient().when(plugin.i18n(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("zh"));
         config = new KitsConfig("config/config.yml");
         gui = new KitBrowserGui(player, plugin, kitService, config, 0);
 

@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.service;
 
+import com.ultikits.plugins.kits.i18n.CatalogueText;
 import com.ultikits.plugins.kits.MockBukkitSupport;
 import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.entity.KitClaimData;
@@ -62,7 +63,7 @@ class KitServiceImplTest {
 
         when(plugin.getLogger()).thenReturn(mockLogger);
         when(plugin.getResourceFolderPath()).thenReturn(tempDir.getAbsolutePath());
-        when(plugin.i18n(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("zh"));
         when(plugin.getDataOperator(KitClaimData.class)).thenReturn(mockClaimOperator);
         when(mockClaimOperator.query()).thenReturn(mockQuery);
         when(mockQuery.where(anyString())).thenReturn(mockQuery);
@@ -308,7 +309,7 @@ class KitServiceImplTest {
             KitDefinition kit = service.getKit("badicon");
             assertThat(kit).isNotNull();
             assertThat(kit.getIcon()).isEqualTo("CHEST");
-            verify(mockLogger).warn(contains("invalid icon"));
+            verify(mockLogger).warn(contains("图标无效: NOT_A_MATERIAL"));
         }
 
         @Test
@@ -1435,6 +1436,8 @@ class KitServiceImplTest {
 
         @BeforeEach
         void setUp() {
+            // These tests read the refusal line in English: answer from the real en catalogue.
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
             new File(tempDir, "kits").mkdirs();
             service = createService();
             player = createMockPlayer();
@@ -2046,7 +2049,7 @@ class KitServiceImplTest {
         @DisplayName("deserializeItems returns null for invalid base64 and logs error")
         void deserializeInvalidDataReturnsNull() {
             assertThat(service.deserializeItems("AAAA")).isNull();
-            verify(mockLogger).error(contains("Failed to deserialize"));
+            verify(mockLogger).error(contains("反序列化礼包物品失败"));
         }
 
         @Test
@@ -2153,7 +2156,7 @@ class KitServiceImplTest {
 
             boolean result = service.saveKitToFile("fail", kit);
             assertThat(result).isFalse();
-            verify(mockLogger).error(contains("Failed to save kit file"));
+            verify(mockLogger).error(contains("保存礼包文件失败"));
         }
 
         @Test
@@ -2548,7 +2551,7 @@ class KitServiceImplTest {
 
             service.updateClaimData(UUID.fromString("00000000-0000-0000-0000-000000000001"), "starter");
 
-            verify(mockLogger).error(contains("Failed to update kit claim data"));
+            verify(mockLogger).error(contains("更新礼包领取记录失败"));
         }
 
         @Test
