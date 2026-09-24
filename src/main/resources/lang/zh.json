@@ -59,5 +59,7 @@
   "kits.help.reload": "重新加载礼包",
   "kits.status.insufficient_funds": "余额不足",
   "kits.kit.default_display_name": "礼包",
-  "kits.command.description": "礼包管理命令"
+  "kits.command.description": "礼包管理命令",
+  "kits.help.open": "礼包列表",
+  "kits.help.list": "礼包列表"
 }

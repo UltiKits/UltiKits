@@ -255,9 +255,9 @@ public class KitCommands extends BaseCommandExecutor {
             return;
         }
         sender.sendMessage(ChatColor.GOLD + "=== UltiKits ===");
-        sender.sendMessage(ChatColor.YELLOW + "/kits" + ChatColor.GRAY + " - " + plugin.i18n("kits.list.title"));
+        sender.sendMessage(ChatColor.YELLOW + "/kits" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.open"));
         sender.sendMessage(ChatColor.YELLOW + "/kits claim <name>" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.claim"));
-        sender.sendMessage(ChatColor.YELLOW + "/kits list" + ChatColor.GRAY + " - " + plugin.i18n("kits.list.title"));
+        sender.sendMessage(ChatColor.YELLOW + "/kits list" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.list"));
         sender.sendMessage(ChatColor.YELLOW + "/kits edit <name>" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.edit"));
         sender.sendMessage(ChatColor.YELLOW + "/kits create <name>" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.create"));
         sender.sendMessage(ChatColor.YELLOW + "/kits delete <name>" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.delete"));

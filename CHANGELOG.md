@@ -20,9 +20,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Four language entries that no code ever displayed were removed from both language files (a
   "Kit System" title, a per-kit "Kit loaded:" line, an "Economy system is not available" message and a
-  players-only command message). Nothing an operator or player sees changes.
+  players-only command message). Nothing an operator or player sees changes. The economy message
+  describes a state the module reports today as an insufficient balance; showing it is tracked in
+  UltiKits/UltiKits#32.
 - 从两份语言文件中删除了四条从未被任何代码显示过的条目（「礼包系统」标题、逐个礼包的「已加载礼包:」日志、
-  「经济系统不可用」消息和仅限玩家执行的命令提示）。运维和玩家看到的内容没有任何变化。
+  「经济系统不可用」消息和仅限玩家执行的命令提示）。运维和玩家看到的内容没有任何变化。其中经济系统消息描述的状态，
+  模块目前报告为余额不足；显示该消息由 UltiKits/UltiKits#32 跟踪。
 
 ### Fixed
 
@@ -36,14 +39,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Kit management command` under `language: en`. English wording is unchanged except where it was wrong:
   the `/kits help` line for `claim` said `Available` (the GUI status label) and now says `Claim a kit`;
   a failed `/kits create` and a failed save in the kit editor said `Error claiming kit` and now say
-  `Error creating kit` and `Error saving kit`.
+  `Error creating kit` and `Error saving kit` (UltiKits/UltiKits#31).
 - `language: zh` 现在对原先写死为英文的文本生效：礼包编辑器保存按钮的说明（`Click to save kit contents`）、
   `/kits help` 中 `edit`、`create`、`delete`、`reload` 四行，以及八条控制台日志（礼包扣款被拒、礼包文件加载失败或图标无效、
   保存礼包文件、复制示例礼包、序列化或反序列化礼包物品、更新领取记录失败）。没有 `displayName` 的礼包文件的后备显示名
   现在按语言为 `Kit` / `礼包`，不再总是 `Kit`。`/kits` 命令描述此前在两份语言文件中都缺失、在任何语言下都显示中文句子，
   现在 `language: en` 下为 `Kit management command`。英文措辞不变，错误之处除外：`/kits help` 中 `claim` 一行原为 `Available`
   （界面状态标签），现为 `Claim a kit`；`/kits create` 失败和礼包编辑器保存失败原先都显示 `Error claiming kit`，现分别为
-  `Error creating kit` 和 `Error saving kit`。
+  `Error creating kit` 和 `Error saving kit`（UltiKits/UltiKits#31）。
 
 - Saving a kit from the kit editor is now refused while the kit system is switched off. An admin
   who had `/kits edit` open when an operator set `enabled: false` could still press Save and change

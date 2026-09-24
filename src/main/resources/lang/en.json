@@ -59,5 +59,7 @@
   "kits.help.reload": "Reload kits",
   "kits.status.insufficient_funds": "Insufficient balance",
   "kits.kit.default_display_name": "Kit",
-  "kits.command.description": "Kit management command"
+  "kits.command.description": "Kit management command",
+  "kits.help.open": "Kit List",
+  "kits.help.list": "Kit List"
 }

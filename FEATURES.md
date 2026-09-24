@@ -63,9 +63,11 @@ catalogue: `lang/en.json` under `language: en`, `lang/zh.json` under `language: 
 (`kits.claim.success`, `kits.help.edit`); two JUnit guards (`UltiKitsLanguageCatalogueTest`,
 `UltiKitsCjkLiteralScopeTest`) fail the build when a key is missing from either catalogue or Chinese
 text appears outside one. The editor's save-button lore and the four `/kits help` lines for
-`edit`/`create`/`delete`/`reload`, formerly hard-coded English, are catalogued too. The only fixed
-text left is language-neutral: the `=== UltiKits ===` help header (the module's name) and the `($`
-price marker in `/kits list`.
+`edit`/`create`/`delete`/`reload`, formerly hard-coded English, are catalogued too. Fixed text left
+in `src/main/java`: the `=== UltiKits ===` help header (the module's name) and `/kits list`'s price
+suffix, whose hard-coded `$` is tracked in UltiKits/UltiKits#34. The shipped example kit file
+(`kits/starter.yml`, copied on first start) is kit data, not a catalogue, and its name and lore are
+Chinese; that is tracked in UltiKits/UltiKits#33.
 
 ### Reconciliation command family
 
