@@ -1,6 +1,6 @@
 {
   "kits.log.no_kit_files": "No kit configuration files found",
-  "kits.log.load_failed": "Failed to load kit: ",
+  "kits.log.load_failed": "Failed to load kit: %s - %s",
   "kits.log.loaded_count": "Loaded %d kits",
   "kits.reload.success": "Reloaded %d kits",
   "kits.kit.not_found": "Kit '%s' does not exist",
@@ -41,5 +41,23 @@
   "kits.command.no_permission": "You don't have permission to execute this command",
   "kits.claim.insufficient_funds": "Insufficient balance",
   "kits.status.level_too_low": "Level too low",
-  "kits.disabled": "The kit system is currently disabled on this server"
+  "kits.disabled": "The kit system is currently disabled on this server",
+  "kits.log.invalid_icon": "Failed to load kit: %s - invalid icon: %s",
+  "kits.log.payment_refused": "Kit '%s' was not delivered to %s: the economy refused to withdraw %s. Further refusals for this kit are not logged until the kits are reloaded.",
+  "kits.log.serialize_failed": "Failed to serialize kit items: %s",
+  "kits.log.deserialize_failed": "Failed to deserialize kit items: %s",
+  "kits.log.claim_update_failed": "Failed to update kit claim data: %s",
+  "kits.log.save_file_failed": "Failed to save kit file: %s - %s",
+  "kits.log.example_copy_failed": "Failed to copy example kit: %s",
+  "kits.editor.save_hint": "Click to save kit contents",
+  "kits.editor.save_error": "Error saving kit",
+  "kits.create.error": "Error creating kit",
+  "kits.help.claim": "Claim a kit",
+  "kits.help.edit": "Edit kit",
+  "kits.help.create": "Create kit",
+  "kits.help.delete": "Delete kit",
+  "kits.help.reload": "Reload kits",
+  "kits.status.insufficient_funds": "Insufficient balance",
+  "kits.kit.default_display_name": "Kit",
+  "kits.command.description": "Kit management command"
 }

@@ -66,7 +66,7 @@ public class KitEditorGui extends Gui {
         ItemMeta saveMeta = saveItem.getItemMeta();
         if (saveMeta != null) {
             saveMeta.setDisplayName(ChatColor.GREEN + plugin.i18n("kits.editor.save"));
-            saveMeta.setLore(Collections.singletonList(ChatColor.GRAY + "Click to save kit contents"));
+            saveMeta.setLore(Collections.singletonList(ChatColor.GRAY + plugin.i18n("kits.editor.save_hint")));
             saveItem.setItemMeta(saveMeta);
         }
         Icon saveIcon = new Icon(saveItem);
@@ -148,7 +148,7 @@ public class KitEditorGui extends Gui {
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.disabled"));
                 break;
             default:
-                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.error"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.editor.save_error"));
                 break;
         }
 

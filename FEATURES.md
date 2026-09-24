@@ -56,20 +56,16 @@ for UAT execution and issue reconciliation — the public description of these f
 - **No manual prose:** no troubleshooting column, no explanatory paragraphs, no draft page text.
   A hazard noticed while reading becomes a negative checklist row, not a note here.
 
-### This module's own i18n usage is a real, working exception to a pattern seen elsewhere in this fan-out
+### Language
 
-Unlike UltiSocial (see that repository's own `FEATURES.md`), this module's `i18n()` keys ARE the
-literal Simplified Chinese text (e.g. `plugin.i18n(<Chinese sentence meaning "no kits available">)`, `KitCommands.java:123`), not an English-named key like
-`no_kits_available`), and `lang/en.json` genuinely maps every one of them to a real English
-sentence — confirmed by reading both `lang/en.json` and `lang/zh.json` in full and cross-checking
-every `i18n(...)` call site in `src/main/java` against a key present in both files. `language: en`
-therefore DOES change what every command/GUI row below displays, for the substantial majority of
-this module's text. Two hardcoded (non-i18n) English string literals exist regardless of
-`language`: `KitEditorGui.java:69`'s lore line `"Click to save kit contents"`, and
-`KitCommands.java:261-264`'s FOUR help lines for `edit`/`create`/`delete`/`reload` (`"Edit kit"`,
-`"Create kit"`, `"Delete kit"`, `"Reload kits"` — the other three help lines in the same block
-(the bare `/kits`, `claim`, and `list` descriptions) DO route through `i18n()`, so this help
-command's own text is itself a partial mix, named in that row below).
+Every player-visible and console text this module writes goes through the framework's language
+catalogue: `lang/en.json` under `language: en`, `lang/zh.json` under `language: zh`. Keys are ASCII
+(`kits.claim.success`, `kits.help.edit`); two JUnit guards (`UltiKitsLanguageCatalogueTest`,
+`UltiKitsCjkLiteralScopeTest`) fail the build when a key is missing from either catalogue or Chinese
+text appears outside one. The editor's save-button lore and the four `/kits help` lines for
+`edit`/`create`/`delete`/`reload`, formerly hard-coded English, are catalogued too. The only fixed
+text left is language-neutral: the `=== UltiKits ===` help header (the module's name) and the `($`
+price marker in `/kits list`.
 
 ### Reconciliation command family
 
@@ -166,7 +162,7 @@ check rather than a registration-time gate.
 | ultikits.kits.create | Create a new kit definition from the sender's own current inventory contents (air slots filtered out), using the first item's material as the icon and a plain `&f<name>` display name; additionally requires the sender hold `ultikits.kits.admin` (a hand-coded body check, not a declared `@CmdMapping` permission) | command | `/kits create <name>` | ultikits.kits.use | player | admin | brief | KitCommands#onCreate, KitService#createKit |
 | ultikits.kits.delete | Delete a kit definition's on-disk YAML file and remove it from the in-memory catalogue; additionally requires the sender hold `ultikits.kits.admin` (hand-coded body check); reachable from console (no method-level `@CmdTarget`, stays at the class's `BOTH` default) | command | `/kits delete <name>` | ultikits.kits.use | both | admin | brief | KitCommands#onDelete, KitService#deleteKit |
 | ultikits.kits.edit | Open the kit editor GUI (`ultikits.gui.kit-editor`) for a named kit, pre-filled with its current items; additionally requires the sender hold `ultikits.kits.admin` (hand-coded body check) | command | `/kits edit <name>` | ultikits.kits.use | player | admin | brief | KitCommands#onEdit |
-| ultikits.kits.help | Print the `/kits` command usage summary; a partial mix of `i18n()`-routed and hardcoded-English lines — the `edit`/`create`/`delete`/`reload` lines' own description text (`"Edit kit"`, `"Create kit"`, `"Delete kit"`, `"Reload kits"`) is hardcoded English regardless of `language`, while the other THREE lines (bare `/kits`, `claim`, `list`) route through `i18n()` and DO respect it | command | `/kits help` (no `@CmdMapping` site of its own — see the reconciliation note above) | ultikits.kits.use | both | player | none | KitCommands#handleHelp |
+| ultikits.kits.help | Print the `/kits` command usage summary: a header and seven lines, every description in the server's language (the `claim` line reads "Claim a kit"; it used to reuse the GUI status label "Available") | command | `/kits help` (no `@CmdMapping` site of its own — see the reconciliation note above) | ultikits.kits.use | both | player | none | KitCommands#handleHelp |
 | ultikits.kits.list | List every kit the sender may see: for a player, only kits whose permission (if any) the player holds; for console, every kit unconditionally. Each line shows the kit's name, display name, and price (if not free); reachable from console (no method-level `@CmdTarget`, stays at the class's `BOTH` default) | command | `/kits list` | ultikits.kits.use | both | player | brief | KitCommands#onList, KitService#getAvailableKits |
 | ultikits.kits.open | Open the paginated kit browser GUI (`ultikits.gui.kit-browser`) showing every kit available to the sender; this is the module's default (bare-argument) command | command | `/kits` (bare, no arguments) | ultikits.kits.use | player | player | brief | KitCommands#onOpenGui |
 | ultikits.kits.reload | Reload every kit definition from disk (`kits/*.yml`), replacing the in-memory catalogue entirely; additionally requires the sender hold `ultikits.kits.admin` (hand-coded body check); reports the reloaded kit count; reachable from console (no method-level `@CmdTarget`, stays at the class's `BOTH` default) | command | `/kits reload` | ultikits.kits.use | both | admin | brief | KitCommands#onReload, KitService#reload |

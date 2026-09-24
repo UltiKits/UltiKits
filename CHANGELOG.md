@@ -26,6 +26,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `language: zh` now applies to the text that was fixed English: the kit editor's save-button lore
+  (`Click to save kit contents`), the `/kits help` lines for `edit`, `create`, `delete` and `reload`,
+  and eight console lines (a refused kit payment, a kit file that fails to load or has an invalid
+  icon, failures to save a kit file, copy the example kit, serialize or deserialize kit items, and
+  update a claim record). The fallback display name of a kit file with no `displayName` is now
+  `Kit` / `礼包` by language instead of always `Kit`. The `/kits` command description, which showed a
+  Chinese sentence in every language because it was missing from both language files, is now
+  `Kit management command` under `language: en`. English wording is unchanged except where it was wrong:
+  the `/kits help` line for `claim` said `Available` (the GUI status label) and now says `Claim a kit`;
+  a failed `/kits create` and a failed save in the kit editor said `Error claiming kit` and now say
+  `Error creating kit` and `Error saving kit`.
+- `language: zh` 现在对原先写死为英文的文本生效：礼包编辑器保存按钮的说明（`Click to save kit contents`）、
+  `/kits help` 中 `edit`、`create`、`delete`、`reload` 四行，以及八条控制台日志（礼包扣款被拒、礼包文件加载失败或图标无效、
+  保存礼包文件、复制示例礼包、序列化或反序列化礼包物品、更新领取记录失败）。没有 `displayName` 的礼包文件的后备显示名
+  现在按语言为 `Kit` / `礼包`，不再总是 `Kit`。`/kits` 命令描述此前在两份语言文件中都缺失、在任何语言下都显示中文句子，
+  现在 `language: en` 下为 `Kit management command`。英文措辞不变，错误之处除外：`/kits help` 中 `claim` 一行原为 `Available`
+  （界面状态标签），现为 `Claim a kit`；`/kits create` 失败和礼包编辑器保存失败原先都显示 `Error claiming kit`，现分别为
+  `Error creating kit` 和 `Error saving kit`。
+
 - Saving a kit from the kit editor is now refused while the kit system is switched off. An admin
   who had `/kits edit` open when an operator set `enabled: false` could still press Save and change
   the kit's contents; the Save button now answers `The kit system is currently disabled on this

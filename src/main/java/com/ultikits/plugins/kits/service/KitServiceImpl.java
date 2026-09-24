@@ -386,9 +386,8 @@ public class KitServiceImpl implements KitService {
         if (!refusalWarnedKits.add(kit.getName())) {
             return;
         }
-        logger.warn("Kit '" + kit.getName() + "' was not delivered to " + player.getName()
-                + ": the economy refused to withdraw " + kit.getPrice()
-                + ". Further refusals for this kit are not logged until the kits are reloaded.");
+        logger.warn(String.format(plugin.i18n("kits.log.payment_refused"), kit.getName(), player.getName(),
+                kit.getPrice()));
     }
 
     @Override
@@ -446,7 +445,7 @@ public class KitServiceImpl implements KitService {
             dataOutput.close();
             return Base64Coder.encodeLines(outputStream.toByteArray());
         } catch (IOException e) {
-            logger.error("Failed to serialize kit items: " + e.getMessage());
+            logger.error(String.format(plugin.i18n("kits.log.serialize_failed"), e.getMessage()));
             return null;
         }
     }
@@ -471,7 +470,7 @@ public class KitServiceImpl implements KitService {
             dataInput.close();
             return items;
         } catch (IOException | ClassNotFoundException e) {
-            logger.error("Failed to deserialize kit items: " + e.getMessage());
+            logger.error(String.format(plugin.i18n("kits.log.deserialize_failed"), e.getMessage()));
             return null;
         }
     }
@@ -499,7 +498,7 @@ public class KitServiceImpl implements KitService {
             try {
                 claimOperator.update(existing);
             } catch (IllegalAccessException e) {
-                logger.error("Failed to update kit claim data: " + e.getMessage());
+                logger.error(String.format(plugin.i18n("kits.log.claim_update_failed"), e.getMessage()));
             }
         } else {
             KitClaimData claim = KitClaimData.builder()
@@ -519,7 +518,7 @@ public class KitServiceImpl implements KitService {
             YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
 
             KitDefinition kit = new KitDefinition();
-            kit.setDisplayName(config.getString("displayName", "&7Kit"));
+            kit.setDisplayName(config.getString("displayName", "&7" + plugin.i18n("kits.kit.default_display_name")));
             kit.setDescription(config.getStringList("description"));
             kit.setPrice(config.getDouble("price", 0));
             kit.setLevelRequired(config.getInt("levelRequired", 0));
@@ -536,13 +535,13 @@ public class KitServiceImpl implements KitService {
                 Material.valueOf(iconStr.toUpperCase());
                 kit.setIcon(iconStr.toUpperCase());
             } catch (IllegalArgumentException e) {
-                logger.warn(plugin.i18n("kits.log.load_failed") + file.getName() + " - invalid icon: " + iconStr);
+                logger.warn(String.format(plugin.i18n("kits.log.invalid_icon"), file.getName(), iconStr));
                 kit.setIcon("CHEST");
             }
 
             return kit;
         } catch (Exception e) {
-            logger.warn(plugin.i18n("kits.log.load_failed") + file.getName() + " - " + e.getMessage());
+            logger.warn(String.format(plugin.i18n("kits.log.load_failed"), file.getName(), e.getMessage()));
             return null;
         }
     }
@@ -567,7 +566,7 @@ public class KitServiceImpl implements KitService {
             config.save(kitFile);
             return true;
         } catch (IOException e) {
-            logger.error("Failed to save kit file: " + name + " - " + e.getMessage());
+            logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
             return false;
         }
     }
@@ -579,7 +578,7 @@ public class KitServiceImpl implements KitService {
                 Files.copy(is, exampleFile.toPath());
             }
         } catch (IOException e) {
-            logger.warn("Failed to copy example kit: " + e.getMessage());
+            logger.warn(String.format(plugin.i18n("kits.log.example_copy_failed"), e.getMessage()));
         }
     }
 

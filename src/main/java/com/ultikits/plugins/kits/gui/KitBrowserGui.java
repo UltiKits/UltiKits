@@ -325,7 +325,7 @@ public class KitBrowserGui extends Gui {
         // Check economy
         if (!kit.isFree()) {
             if (!EconomyUtils.isAvailable() || !EconomyUtils.has(player, kit.getPrice())) {
-                return ChatColor.RED + plugin.i18n("kits.claim.insufficient_funds");
+                return ChatColor.RED + plugin.i18n("kits.status.insufficient_funds");
             }
         }
 

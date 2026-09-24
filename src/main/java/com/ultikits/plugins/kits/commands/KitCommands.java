@@ -189,7 +189,7 @@ public class KitCommands extends BaseCommandExecutor {
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.create.empty_inventory"));
                 break;
             default:
-                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.error"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.create.error"));
                 break;
         }
     }
@@ -256,12 +256,12 @@ public class KitCommands extends BaseCommandExecutor {
         }
         sender.sendMessage(ChatColor.GOLD + "=== UltiKits ===");
         sender.sendMessage(ChatColor.YELLOW + "/kits" + ChatColor.GRAY + " - " + plugin.i18n("kits.list.title"));
-        sender.sendMessage(ChatColor.YELLOW + "/kits claim <name>" + ChatColor.GRAY + " - " + plugin.i18n("kits.status.available"));
+        sender.sendMessage(ChatColor.YELLOW + "/kits claim <name>" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.claim"));
         sender.sendMessage(ChatColor.YELLOW + "/kits list" + ChatColor.GRAY + " - " + plugin.i18n("kits.list.title"));
-        sender.sendMessage(ChatColor.YELLOW + "/kits edit <name>" + ChatColor.GRAY + " - Edit kit");
-        sender.sendMessage(ChatColor.YELLOW + "/kits create <name>" + ChatColor.GRAY + " - Create kit");
-        sender.sendMessage(ChatColor.YELLOW + "/kits delete <name>" + ChatColor.GRAY + " - Delete kit");
-        sender.sendMessage(ChatColor.YELLOW + "/kits reload" + ChatColor.GRAY + " - Reload kits");
+        sender.sendMessage(ChatColor.YELLOW + "/kits edit <name>" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.edit"));
+        sender.sendMessage(ChatColor.YELLOW + "/kits create <name>" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.create"));
+        sender.sendMessage(ChatColor.YELLOW + "/kits delete <name>" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.delete"));
+        sender.sendMessage(ChatColor.YELLOW + "/kits reload" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.reload"));
     }
 
     private void handleClaimResult(Player player, String kitName, KitService.ClaimResult result) {

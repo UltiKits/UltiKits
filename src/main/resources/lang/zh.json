@@ -1,6 +1,6 @@
 {
   "kits.log.no_kit_files": "没有找到礼包配置文件",
-  "kits.log.load_failed": "加载礼包失败: ",
+  "kits.log.load_failed": "加载礼包失败: %s - %s",
   "kits.log.loaded_count": "共加载 %d 个礼包",
   "kits.reload.success": "已重新加载 %d 个礼包",
   "kits.kit.not_found": "礼包 '%s' 不存在",
@@ -41,5 +41,23 @@
   "kits.command.no_permission": "你没有权限执行此命令",
   "kits.claim.insufficient_funds": "余额不足",
   "kits.status.level_too_low": "等级不足",
-  "kits.disabled": "礼包系统当前已关闭"
+  "kits.disabled": "礼包系统当前已关闭",
+  "kits.log.invalid_icon": "加载礼包失败: %s - 图标无效: %s",
+  "kits.log.payment_refused": "礼包 '%s' 未发放给 %s：经济系统拒绝扣款 %s。在重新加载礼包之前，该礼包的后续拒绝不再记录。",
+  "kits.log.serialize_failed": "序列化礼包物品失败: %s",
+  "kits.log.deserialize_failed": "反序列化礼包物品失败: %s",
+  "kits.log.claim_update_failed": "更新礼包领取记录失败: %s",
+  "kits.log.save_file_failed": "保存礼包文件失败: %s - %s",
+  "kits.log.example_copy_failed": "复制示例礼包失败: %s",
+  "kits.editor.save_hint": "点击保存礼包内容",
+  "kits.editor.save_error": "保存礼包时发生错误",
+  "kits.create.error": "创建礼包时发生错误",
+  "kits.help.claim": "领取礼包",
+  "kits.help.edit": "编辑礼包",
+  "kits.help.create": "创建礼包",
+  "kits.help.delete": "删除礼包",
+  "kits.help.reload": "重新加载礼包",
+  "kits.status.insufficient_funds": "余额不足",
+  "kits.kit.default_display_name": "礼包",
+  "kits.command.description": "礼包管理命令"
 }
