@@ -21,6 +21,7 @@ import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.scheduler.BukkitScheduler;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.*;
@@ -2615,6 +2616,44 @@ class KitServiceImplTest {
             assertThat(result.getLevelRequired()).isEqualTo(0);
             assertThat(result.isReBuyable()).isFalse();
             assertThat(result.getCooldown()).isEqualTo(0);
+        }
+
+        @Test
+        @DisplayName("saving a kit whose file has no displayName leaves it out, so the name keeps following the language")
+        void fallbackDisplayNameIsNotSaved() throws IOException {
+            File kitsFolder = new File(tempDir, "kits");
+            kitsFolder.mkdirs();
+            File kitFile = new File(kitsFolder, "unnamed.yml");
+            FileWriter writer = new FileWriter(kitFile);
+            writer.write("icon: CHEST\n");
+            writer.close();
+
+            // An item-only save, as the kit editor's save button does.
+            KitDefinition kit = service.parseKitFile(kitFile);
+            kit.setItems("items-from-the-editor");
+            assertThat(service.saveKitToFile("unnamed", kit)).isTrue();
+
+            assertThat(YamlConfiguration.loadConfiguration(kitFile).contains("displayName")).isFalse();
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            assertThat(service.parseKitFile(kitFile).getDisplayName())
+                    .isEqualTo("&7" + CatalogueText.entries("en").get("kits.kit.default_display_name"));
+        }
+
+        @Test
+        @DisplayName("a display name set on a kit whose file had none is saved")
+        void displayNameSetLaterIsSaved() throws IOException {
+            File kitsFolder = new File(tempDir, "kits");
+            kitsFolder.mkdirs();
+            File kitFile = new File(kitsFolder, "renamed.yml");
+            FileWriter writer = new FileWriter(kitFile);
+            writer.write("icon: CHEST\n");
+            writer.close();
+
+            KitDefinition kit = service.parseKitFile(kitFile);
+            kit.setDisplayName("&aNamed");
+            assertThat(service.saveKitToFile("renamed", kit)).isTrue();
+
+            assertThat(YamlConfiguration.loadConfiguration(kitFile).getString("displayName")).isEqualTo("&aNamed");
         }
 
         @Test
