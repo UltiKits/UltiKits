@@ -1,5 +1,7 @@
 package com.ultikits.plugins.kits.i18n;
 
+import com.ultikits.ultitools.entities.Language;
+import com.ultikits.ultitools.annotations.command.CmdExecutor;
 import com.ultikits.plugins.kits.MockBukkitSupport;
 import com.ultikits.plugins.kits.commands.KitCommands;
 import com.ultikits.plugins.kits.config.KitsConfig;
@@ -83,13 +85,21 @@ class KitsLanguageTest {
         verify(sender, atLeastOnce()).sendMessage(captor.capture());
         assertThat(captor.getAllValues()).containsExactly(
                 ChatColor.GOLD + "=== UltiKits ===",
-                line("/kits", "kits.list.title"),
+                line("/kits", "kits.help.open"),
                 line("/kits claim <name>", "kits.help.claim"),
-                line("/kits list", "kits.list.title"),
+                line("/kits list", "kits.help.list"),
                 line("/kits edit <name>", "kits.help.edit"),
                 line("/kits create <name>", "kits.help.create"),
                 line("/kits delete <name>", "kits.help.delete"),
                 line("/kits reload", "kits.help.reload"));
+    }
+
+    @Test
+    @DisplayName("the /kits command description is in the server's language (its key was missing from both catalogues)")
+    void commandDescription() {
+        String key = KitCommands.class.getAnnotation(CmdExecutor.class).description();
+        assertThat(new Language(CatalogueText.entries("en")).getLocalizedText(key)).isEqualTo("Kit management command");
+        assertThat(new Language(CatalogueText.entries("zh")).getLocalizedText(key)).isEqualTo("\u793c\u5305\u7ba1\u7406\u547d\u4ee4");
     }
 
     @Test

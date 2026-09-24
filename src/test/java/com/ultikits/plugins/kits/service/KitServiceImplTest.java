@@ -1616,6 +1616,18 @@ class KitServiceImplTest {
          * message template itself and would let almost any warning satisfy the assertion.
          */
         @Test
+        @DisplayName("the refused-payment line is in the server's language (zh)")
+        void refusedPaymentLineFollowsTheLanguage() throws Exception {
+            statefulEconomy(false);
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("zh"));
+
+            KitServiceImpl spyService = paidKitService("vipcrate", true);
+            spyService.claimKit(player, "vipcrate");
+
+            verify(mockLogger).warn(String.format(zh("kits.log.payment_refused"), "vipcrate", player.getName(), PRICE));
+        }
+
+        @Test
         @DisplayName("a refused payment is reported to the console naming the kit, the player and the amount")
         void refusedPaymentIsLoggedWithKitPlayerAndAmount() throws Exception {
             statefulEconomy(false);
@@ -2050,6 +2062,19 @@ class KitServiceImplTest {
         void deserializeInvalidDataReturnsNull() {
             assertThat(service.deserializeItems("AAAA")).isNull();
             verify(mockLogger).error(contains("反序列化礼包物品失败"));
+        }
+
+        @Test
+        @DisplayName("serializeItems logs a failed write in the server's language (zh)")
+        void serializeFailureIsLoggedInTheServersLanguage() {
+            ItemStack unserializable = mock(ItemStack.class);
+            when(unserializable.serialize()).thenReturn(Collections.<String, Object>singletonMap("x", new Object()));
+
+            assertThat(service.serializeItems(new ItemStack[]{unserializable})).isNull();
+
+            ArgumentCaptor<String> line = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger).error(line.capture());
+            assertThat(line.getValue()).startsWith(String.format(zh("kits.log.serialize_failed"), ""));
         }
 
         @Test
@@ -2824,6 +2849,22 @@ class KitServiceImplTest {
         }
 
         @Test
+        @DisplayName("a failed copy of the example kit is logged in the server's language (zh)")
+        void copyFailureIsLoggedInTheServersLanguage() throws Exception {
+            service = createService();
+            File notAFolder = new File(tempDir, "not-a-folder");
+            assertThat(notAFolder.createNewFile()).isTrue();
+            java.lang.reflect.Method copy = KitServiceImpl.class.getDeclaredMethod("copyExampleKit", File.class);
+            copy.setAccessible(true); // NOPMD - private helper, reached to drive its failure branch
+
+            copy.invoke(service, notAFolder);
+
+            ArgumentCaptor<String> line = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(line.capture());
+            assertThat(line.getAllValues()).anyMatch(l -> l.startsWith(String.format(zh("kits.log.example_copy_failed"), "")));
+        }
+
+        @Test
         @DisplayName("copyExampleKit handles missing resource stream gracefully")
         void handlesMissingResource() {
             // loadKits -> kits folder doesn't exist -> mkdirs + copyExampleKit
@@ -3045,6 +3086,21 @@ class KitServiceImplTest {
         }
 
         @Test
+        @DisplayName("a kit file that fails to load is logged in the server's language (zh)")
+        void loadFailureIsLoggedInTheServersLanguage() throws IOException {
+            File kitFile = new File(new File(tempDir, "kits"), "broken.yml");
+            FileWriter writer = new FileWriter(kitFile);
+            writer.write("icon: CHEST\n");
+            writer.close();
+            // Any exception inside the parse lands in the same catch; this one is the cheapest to cause.
+            when(plugin.i18n("kits.kit.default_display_name")).thenThrow(new IllegalStateException("boom"));
+
+            assertThat(service.parseKitFile(kitFile)).isNull();
+
+            verify(mockLogger).warn(String.format(zh("kits.log.load_failed"), "broken.yml", "boom"));
+        }
+
+        @Test
         @DisplayName("parseKitFile returns kit with default permission when not specified")
         void defaultPermission() throws IOException {
             File kitsFolder = new File(tempDir, "kits");
@@ -3202,5 +3258,11 @@ class KitServiceImplTest {
                     KitService.CreateResult.ERROR
             );
         }
+    }
+
+    /** The zh text for {@code key}, or a marker naming the missing key so a failure shows the logged line. */
+    private static String zh(String key) {
+        String text = CatalogueText.entries("zh").get(key);
+        return text == null ? "<lang/zh.json has no " + key + ">" : text;
     }
 }
