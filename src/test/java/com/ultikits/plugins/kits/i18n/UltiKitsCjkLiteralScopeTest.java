@@ -402,10 +402,13 @@ class UltiKitsCjkLiteralScopeTest {
         }
     }
 
-    /** A compiled class carrying the framework's {@code @ConfigEntry}, for {@code skipNeedsTheFrameworkAnnotation}. */
+    /** The compiled class for {@code skipIsBoundToTheResolvedAnnotation}: only {@code a} carries the framework's annotation. */
     static final class ConfigCommentFixture {
-        @com.ultikits.ultitools.annotations.ConfigEntry(path = "a", comment = "\u4e2d\u6587")
+        @com.ultikits.ultitools.annotations.ConfigEntry(path = "a", comment = "\u4e2d\u6587\u8bf4\u660e")
         private String a;
+        private String b;
+        private String c;
+        private String d;
 
         private ConfigCommentFixture() {
         }
@@ -439,15 +442,20 @@ class UltiKitsCjkLiteralScopeTest {
         }
 
         @Test
-        @DisplayName("the skip holds only for text the framework's own @ConfigEntry carries (Codex, UltiBackup#22)")
-        void skipNeedsTheFrameworkAnnotation() {
+        @DisplayName("the skip is bound to the field and the annotation the compiler resolved, not to matching text (Codex, UltiBackup#22)")
+        void skipIsBoundToTheResolvedAnnotation() {
             SourceFile f = SourceFile.of("src/main/java/Sample.java", "class Sample {\n"
-                    + "@ConfigEntry(path = \"a\", comment = \"\u4e2d\u6587\") String a;\n"
-                    + "@other.ConfigEntry(comment = \"\u6ce8\u91ca\") String b;\n}\n");
-            I18nSourceScanner.confirmConfigComments(f,
-                    I18nSourceScanner.frameworkConfigComments(ConfigCommentFixture.class));
+                    + "@ConfigEntry(path = \"a\", comment = \"\u4e2d\u6587\u8bf4\u660e\") String a;\n"
+                    + "@other.ConfigEntry(comment = \"\u4e2d\u6587\") String b;\n"
+                    + "@ConfigEntry(path = \"c\", comment = \"\u6ce8\u91ca\") String c;\n"
+                    + "@com.ultikits.ultitools.annotations.ConfigEntry(path = \"d\", comment = \"\u8bf4\u660e\") String d;\n}\n");
+            I18nSourceScanner.confirmConfigComments(Collections.singletonList(f),
+                    name -> "Sample".equals(name) ? ConfigCommentFixture.class : null);
+            // a: the compiled field carries the framework's annotation. b: another type, although its text
+            // is part of a's comment. c and d: the compiled fields carry no framework annotation.
             assertThat(violations(Collections.singletonList(f), parseExemptions(Collections.<String>emptyList())))
-                    .singleElement().asString().contains("\"\u6ce8\u91ca\"");
+                    .hasSize(3).anyMatch(v -> v.contains(":3 ")).anyMatch(v -> v.contains(":4 "))
+                    .anyMatch(v -> v.contains(":5 "));
         }
 
         @Test
