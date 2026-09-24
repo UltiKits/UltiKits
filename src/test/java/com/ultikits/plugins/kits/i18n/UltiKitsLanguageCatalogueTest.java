@@ -287,16 +287,33 @@ class UltiKitsLanguageCatalogueTest {
         return problems;
     }
 
-    /** {@code {NAME}} / {@code {0}} tokens and {@code String.format} specifiers, sorted. */
+    /**
+     * The placeholders of {@code text}: the order-sensitive ones (ordinary {@code String.format}
+     * specifiers and the bare {@code {}} marker) in the order written, then {@code "|"}, then the
+     * ones that may move ({@code %2$s}, {@code {NAME}}, {@code {0}}) sorted.
+     */
     static List<String> placeholders(String text) {
-        List<String> found = new ArrayList<>();
+        List<String> inOrder = new ArrayList<>();
+        List<String> anyOrder = new ArrayList<>();
         Matcher m = PLACEHOLDER.matcher(text == null ? "" : text);
         while (m.find()) {
-            if (!m.group().equals("%%")) {
-                found.add(m.group());
+            String token = m.group();
+            if (token.equals("%%")) {
+                continue;
+            }
+            // String.format fills an ordinary specifier, and SLF4J / PluginLogger fill {}, strictly in
+            // order, so their order must match between languages (a swapped %s/%d throws at run time).
+            // An indexed specifier (%2$s) or a named token ({PLAYER}, {0}) may move.
+            if (token.equals("{}") || (token.startsWith("%") && !token.contains("$"))) {
+                inOrder.add(token);
+            } else {
+                anyOrder.add(token);
             }
         }
-        Collections.sort(found);
+        Collections.sort(anyOrder);
+        List<String> found = new ArrayList<>(inOrder);
+        found.add("|");
+        found.addAll(anyOrder);
         return found;
     }
 
@@ -743,9 +760,22 @@ class UltiKitsLanguageCatalogueTest {
             List<String> problems = placeholderMismatches(Arrays.asList(
                     yaml("en", "a: \"{PLAYER} has %d of %s, 100%%\"\nb: \"{X}\"\nc: \"{0}\"\n"),
                     yaml("zh", "a: \"%s %d {PLAYER} 100%%\"\nb: \"{Y}\"\nc: \"none\"\n")));
-            assertThat(problems).hasSize(2);
-            assertThat(problems.get(0)).startsWith("\"b\"");
-            assertThat(problems.get(1)).startsWith("\"c\"");
+            // "a" too: String.format fills %d and %s in order, so zh's "%s %d" would throw at run time.
+            assertThat(problems).hasSize(3);
+            assertThat(problems.get(0)).startsWith("\"a\"");
+            assertThat(problems.get(1)).startsWith("\"b\"");
+            assertThat(problems.get(2)).startsWith("\"c\"");
+        }
+
+        @Test
+        @DisplayName("ordinary specifiers and {} must keep their order; indexed specifiers and named tokens may move")
+        void placeholderOrder() throws IOException {
+            List<String> problems = placeholderMismatches(Arrays.asList(
+                    yaml("en", "swap: \"%s has %d\"\nindexed: \"Took %2$s from %1$s\"\n"
+                            + "named: \"{PLAYER} in {WORLD}\"\nlog: \"{} of {}\"\n"),
+                    yaml("zh", "swap: \"%d \u4e2a %s\"\nindexed: \"\u6263\u9664 %1$s %2$s\"\n"
+                            + "named: \"{WORLD} \u91cc\u7684 {PLAYER}\"\nlog: \"{} / {}\"\n")));
+            assertThat(problems).singleElement().asString().startsWith("\"swap\"");
         }
 
         @Test
