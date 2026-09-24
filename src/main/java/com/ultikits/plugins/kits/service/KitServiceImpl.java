@@ -518,7 +518,12 @@ public class KitServiceImpl implements KitService {
             YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
 
             KitDefinition kit = new KitDefinition();
-            kit.setDisplayName(config.getString("displayName", "&7" + plugin.i18n("kits.kit.default_display_name")));
+            String displayName = config.getString("displayName");
+            if (displayName == null) {
+                kit.useCatalogueDisplayName("&7" + plugin.i18n("kits.kit.default_display_name"));
+            } else {
+                kit.setDisplayName(displayName);
+            }
             kit.setDescription(config.getStringList("description"));
             kit.setPrice(config.getDouble("price", 0));
             kit.setLevelRequired(config.getInt("levelRequired", 0));
@@ -551,7 +556,8 @@ public class KitServiceImpl implements KitService {
             File kitFile = new File(plugin.getResourceFolderPath(), "kits/" + name + ".yml");
             YamlConfiguration config = new YamlConfiguration();
 
-            config.set("displayName", kit.getDisplayName());
+            // A fallback name is left out, so it keeps following the language (null writes nothing).
+            config.set("displayName", kit.isDisplayNameFromCatalogue() ? null : kit.getDisplayName());
             config.set("description", kit.getDescription());
             config.set("icon", kit.getIcon());
             config.set("price", kit.getPrice());
