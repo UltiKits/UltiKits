@@ -301,14 +301,15 @@ class UltiKitsLanguageCatalogueTest {
     }
 
     /**
-     * {@code {NAME}}/{@code {0}} tokens, {@code %%}, and {@code String.format} specifiers with a
+     * {@code {NAME}}/{@code {0}} tokens, the bare {@code {}} argument marker SLF4J and the framework's
+     * {@code PluginLogger} fill in order, {@code %%}, and {@code String.format} specifiers with a
      * {@code s}, {@code d}, {@code f} or {@code x} conversion. A letter right after the conversion does
      * not end it early: {@code java.util.Formatter} reads {@code "%dh"} as {@code %d} then {@code h}, so
      * the pattern does too. Prose such as "100% of" or "50%off" is still not a specifier -- a space is
      * not one of the flags matched here, and {@code o} is not one of the conversions.
      */
     private static final Pattern PLACEHOLDER =
-            Pattern.compile("\\{[A-Za-z0-9_]+}|%%|%(\\d+\\$)?[-#+0,(]*\\d*(\\.\\d+)?[sdfx]");
+            Pattern.compile("\\{[A-Za-z0-9_]*}|%%|%(\\d+\\$)?[-#+0,(]*\\d*(\\.\\d+)?[sdfx]");
 
     static List<String> placeholderMismatches(List<Catalogue> cats) {
         List<String> problems = new ArrayList<>();
@@ -764,6 +765,15 @@ class UltiKitsLanguageCatalogueTest {
             assertThat(placeholderMismatches(Arrays.asList(
                     yaml("en", "h: \"%dh\"\n"), yaml("zh", "h: \"\u5c0f\u65f6\"\n"))))
                     .as("a translation that dropped the %d before a letter").singleElement().asString().startsWith("\"h\"");
+        }
+
+        @Test
+        @DisplayName("a logger argument marker {} that a translation drops is reported")
+        void loggerMarkerDroppedIsReported() throws IOException {
+            assertThat(placeholderMismatches(Arrays.asList(
+                    yaml("en", "a: \"Loaded {} locks in {}s\"\nb: \"{} of {}\"\n"),
+                    yaml("zh", "a: \"\u5df2\u52a0\u8f7d {} \u4e2a\u9501\"\nb: \"{} / {}\"\n"))))
+                    .singleElement().asString().startsWith("\"a\"");
         }
 
         @Test
