@@ -2583,7 +2583,8 @@ class KitServiceImplTest {
 
             KitDefinition result = service.parseKitFile(kitFile);
             assertThat(result).isNotNull();
-            assertThat(result.getDisplayName()).isEqualTo("&7Kit");
+            // The fallback name is the catalogue's, in the server's language (zh here).
+            assertThat(result.getDisplayName()).isEqualTo("&7礼包");
             assertThat(result.getIcon()).isEqualTo("CHEST");
             assertThat(result.getPrice()).isEqualTo(0.0);
             assertThat(result.getLevelRequired()).isEqualTo(0);
