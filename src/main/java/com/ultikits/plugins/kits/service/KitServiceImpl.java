@@ -209,7 +209,7 @@ public class KitServiceImpl implements KitService {
         kit.setItems(serializedItems);
 
         // Save to YAML
-        if (!saveKitToFile(normalizedName, kit)) {
+        if (!saveKitToFile(normalizedName, kit, true)) {
             // The writer also refuses a second file that appeared after the check above.
             return conflictingFiles(normalizedName).isEmpty() ? CreateResult.ERROR : CreateResult.FILE_CONFLICT;
         }
@@ -1497,6 +1497,14 @@ public class KitServiceImpl implements KitService {
     }
 
     boolean saveKitToFile(String name, KitDefinition kit) {
+        return saveKitToFile(name, kit, false);
+    }
+
+    /**
+     * Writes a kit's file; with {@code createOnly}, only ever creates it ({@code CREATE_NEW}), so a file
+     * that appeared since the caller's check is never rewritten and the write fails instead.
+     */
+    boolean saveKitToFile(String name, KitDefinition kit, boolean createOnly) {
         try {
             // Write the file the kit loads from, so a save lands where the next reload reads it; a new
             // kit gets "<name>.yml". A folder that cannot be listed gives no way to know which file
@@ -1512,7 +1520,11 @@ public class KitServiceImpl implements KitService {
                 // Never write one of several files a kit loads from (see conflictingFiles).
                 return false;
             }
-            boolean create = targets.isEmpty();
+            boolean create = targets.isEmpty() || createOnly;
+            if (createOnly && !targets.isEmpty()) {
+                // A file appeared since the create's own check: never rewritten by a create.
+                return false;
+            }
             if (create) {
                 targets = Collections.singletonList(new File(plugin.getResourceFolderPath(), "kits/" + name + ".yml"));
             }
