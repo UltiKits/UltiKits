@@ -46,10 +46,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `/kits delete` no longer reports a kit as deleted when its file could not be removed. The kit now
   stays loaded, the sender is told it was not deleted, and the console names the file, so a kit an
-  admin was told is gone can no longer come back on the next `/kits reload` or restart
+  admin was told is gone can no longer come back on the next `/kits reload` or restart. Deleting and
+  saving a kit now use the file the kit was loaded from, so a hand-placed kit file whose name has
+  capital letters (`VIP.yml`) is deleted, and saved from the editor, like any other
   (UltiKits/UltiKits#23).
 - 修复：礼包文件删除失败时，`/kits delete` 不再报告删除成功。礼包会保持加载，执行者会被告知未删除，控制台会记录该文件的路径，
-  因此被告知已删除的礼包不会在下次 `/kits reload` 或重启后重新出现（UltiKits/UltiKits#23）。
+  因此被告知已删除的礼包不会在下次 `/kits reload` 或重启后重新出现。删除和保存礼包现在使用礼包加载时的那个文件，因此文件名含大写字母的手放礼包文件（如 `VIP.yml`）
+  也能像其他礼包一样被删除，并能从编辑界面保存（UltiKits/UltiKits#23）。
 
 - `language: zh` now applies to the text that was fixed English: the kit editor's save-button lore
   (`Click to save kit contents`), the `/kits help` lines for `edit`, `create`, `delete` and `reload`,

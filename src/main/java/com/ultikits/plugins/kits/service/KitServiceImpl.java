@@ -87,7 +87,7 @@ public class KitServiceImpl implements KitService {
         for (File file : files) {
             KitDefinition kit = parseKitFile(file);
             if (kit != null) {
-                String kitName = file.getName().replace(".yml", "").toLowerCase();
+                String kitName = kitNameOf(file);
                 kit.setName(kitName);
                 kits.put(kitName, kit);
                 loadedCount++;
@@ -190,16 +190,48 @@ public class KitServiceImpl implements KitService {
             return DeleteResult.NOT_FOUND;
         }
 
-        File kitFile = new File(plugin.getResourceFolderPath(), "kits/" + normalizedName + ".yml");
-        // Re-checked after a refused delete: a file another process removed in between is gone,
-        // which is what the admin asked for.
-        if (kitFile.exists() && !deleteKitFile(kitFile) && kitFile.exists()) {
-            logger.warn(String.format(plugin.i18n("kits.log.delete_file_failed"), kitFile.getAbsolutePath()));
+        // Every file that loads as this kit, found the way loadKits maps files to names - not a
+        // rebuilt "<name>.yml", which misses a hand-placed "VIP.yml" on a case-sensitive file system.
+        boolean survived = false;
+        for (File kitFile : kitFilesOf(normalizedName)) {
+            // Re-checked after a refused delete: a file another process removed in between is gone,
+            // which is what the admin asked for.
+            if (!deleteKitFile(kitFile) && kitFile.exists()) {
+                logger.warn(String.format(plugin.i18n("kits.log.delete_file_failed"), kitFile.getAbsolutePath()));
+                survived = true;
+            }
+        }
+        if (survived) {
             return DeleteResult.FILE_NOT_DELETED;
         }
 
         kits.remove(normalizedName);
         return DeleteResult.DELETED;
+    }
+
+    /**
+     * The kit name a file in the kits folder loads as. The one mapping {@link #loadKits()},
+     * {@link #deleteKit} and {@link #saveKitToFile} share, so "the kit's file" is decided in one place:
+     * rebuilding a path from the kit's name missed a file whose name has capitals (gate-1 CR-01).
+     * <p>
+     * 文件对应的礼包名；加载、删除和保存共用这一映射。
+     */
+    static String kitNameOf(File file) {
+        return file.getName().replace(".yml", "").toLowerCase();
+    }
+
+    /** Every {@code .yml} file in the kits folder that loads as {@code kitName}; empty when none does. */
+    private List<File> kitFilesOf(String kitName) {
+        File[] files = new File(plugin.getResourceFolderPath(), "kits").listFiles((dir, name) -> name.endsWith(".yml"));
+        List<File> matches = new ArrayList<>();
+        if (files != null) {
+            for (File file : files) {
+                if (kitNameOf(file).equals(kitName)) {
+                    matches.add(file);
+                }
+            }
+        }
+        return matches;
     }
 
     /**
@@ -698,7 +730,12 @@ public class KitServiceImpl implements KitService {
 
     boolean saveKitToFile(String name, KitDefinition kit) {
         try {
-            File kitFile = new File(plugin.getResourceFolderPath(), "kits/" + name + ".yml");
+            // Write every file the kit loads from (normally exactly one), so a save lands where the next
+            // reload reads it; a new kit gets "<name>.yml" (gate-1 CR-01).
+            List<File> targets = kitFilesOf(name);
+            if (targets.isEmpty()) {
+                targets = Collections.singletonList(new File(plugin.getResourceFolderPath(), "kits/" + name + ".yml"));
+            }
             YamlConfiguration config = new YamlConfiguration();
 
             // A fallback name is left out, so it keeps following the language (null writes nothing).
@@ -714,7 +751,9 @@ public class KitServiceImpl implements KitService {
             config.set("consoleCommands", kit.getConsoleCommands());
             config.set("items", kit.getItems());
 
-            config.save(kitFile);
+            for (File kitFile : targets) {
+                config.save(kitFile);
+            }
             return true;
         } catch (IOException e) {
             logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
