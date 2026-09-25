@@ -5079,6 +5079,94 @@ class KitServiceImplTest {
             assertThat(journals(image)).containsExactly("solo.yml.journal");
         }
 
+        /**
+         * {@code /kits create} refuses a name that any kit file on disk already loads as, even one that is
+         * not in the catalogue (its write is pending, or it was placed by hand without a reload), so it
+         * never rewrites a file it did not load.
+         */
+        @Test
+        @DisplayName("creating a kit whose file is on disk but not loaded is refused and the file kept")
+        void createRefusedForAFileNotInTheCatalogue() throws Exception {
+            java.nio.file.Path image = savedWithCrashAt("mid-write");
+            when(plugin.getResourceFolderPath()).thenReturn(image.toString());
+            int[] calls = {0};
+            KitServiceImpl restarted = spy(new KitServiceImpl(plugin, config) {
+                @Override
+                void writeInPlace(java.nio.channels.FileChannel channel, byte[] content) throws IOException {
+                    if (calls[0]++ == 0) {
+                        throw new IOException("disk full");
+                    }
+                    super.writeInPlace(channel, content);
+                }
+            });
+            assertThat(restarted.getKit("solo")).isNull();
+            byte[] before = java.nio.file.Files.readAllBytes(image.resolve("kits").resolve("solo.yml"));
+            doReturn("admin-items").when(restarted).serializeItems(any(ItemStack[].class));
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[]{stone});
+
+            assertThat(restarted.createKit(player, "solo")).isEqualTo(KitService.CreateResult.ALREADY_EXISTS);
+
+            assertThat(java.nio.file.Files.readAllBytes(image.resolve("kits").resolve("solo.yml"))).isEqualTo(before);
+        }
+
+        /**
+         * A journal folder that is a symbolic link is never written or replayed from, but its journal
+         * names are read, so a kit file with a pending write there is still not loaded.
+         */
+        @Test
+        @DisplayName("a kit with a pending write in a linked journal folder is not loaded")
+        void pendingKitInALinkedJournalFolderIsNotLoaded() throws Exception {
+            java.nio.file.Path image = savedWithCrashAt("mid-write");
+            // A part-written file cut at a line end still parses, with defaults for the missing keys.
+            java.nio.file.Path kitFile = image.resolve("kits").resolve("solo.yml");
+            byte[] part = java.nio.file.Files.readAllBytes(kitFile);
+            int cut = new String(part, java.nio.charset.StandardCharsets.UTF_8).lastIndexOf('\n') + 1;
+            java.nio.file.Files.write(kitFile, Arrays.copyOf(part, cut));
+            assertThat(itemsIn(image, "solo.yml")).isNotEqualTo("new-items");
+            java.nio.file.Path elsewhere = crashImages.resolve("moved-journal");
+            java.nio.file.Files.move(image.resolve("kit-journal"), elsewhere);
+            java.nio.file.Files.createSymbolicLink(image.resolve("kit-journal"), elsewhere);
+
+            KitServiceImpl restarted = startOn(image);
+
+            assertThat(restarted.getKit("solo")).isNull();
+            assertThat(elsewhere.resolve("solo.yml.journal")).exists();
+        }
+
+        @Test
+        @DisplayName("deleting a kit whose journal was kept because the file changed withdraws that journal")
+        void deleteWithdrawsAChangedJournal() throws Exception {
+            File file = writeKitFile("solo.yml", "old-items");
+            service = createService();
+            java.nio.file.Path folder = tempDir.toPath().resolve("kit-journal");
+            java.nio.file.Files.createDirectories(folder);
+            java.nio.file.Files.write(folder.resolve("solo.yml.journal"),
+                    KitServiceImpl.journalRecord("solo.yml", false, "items: \"unrelated\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+            assertThat(service.deleteKit("solo")).isEqualTo(KitService.DeleteResult.DELETED);
+
+            assertThat(file).doesNotExist();
+            assertThat(journals(tempDir.toPath())).isEmpty();
+        }
+
+        /**
+         * A crash can leave a file whose length is already written while its last block is not, which
+         * reads as zeros: that is still what the interrupted write left, and it is completed.
+         */
+        @Test
+        @DisplayName("a part-written kit file whose unwritten block reads as zeros is completed")
+        void zeroFilledTailIsCompleted() throws Exception {
+            java.nio.file.Path image = savedWithCrashAt("mid-write");
+            java.nio.file.Path kitFile = image.resolve("kits").resolve("solo.yml");
+            byte[] part = java.nio.file.Files.readAllBytes(kitFile);
+            java.nio.file.Files.write(kitFile, Arrays.copyOf(part, part.length + 7));
+
+            assertReplayedToTheNewContent(image);
+        }
+
         @Test
         @DisplayName("a folder at a journal's name is not a pending write: the kit can still be deleted")
         void folderAtAJournalNameDoesNotBlockTheDelete() throws Exception {
