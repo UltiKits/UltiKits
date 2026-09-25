@@ -229,7 +229,7 @@ public class KitServiceImpl implements KitService {
     /**
      * The kit name a file in the kits folder loads as. The one mapping {@link #loadKits()},
      * {@link #deleteKit} and {@link #saveKitToFile} share, so "the kit's file" is decided in one place:
-     * rebuilding a path from the kit's name missed a file whose name has capitals (gate-1 CR-01).
+     * rebuilding a path from the kit's name missed a file whose name has capitals.
      * <p>
      * 文件对应的礼包名；加载、删除和保存共用这一映射。
      */
@@ -805,9 +805,9 @@ public class KitServiceImpl implements KitService {
     boolean saveKitToFile(String name, KitDefinition kit) {
         try {
             // Write every file the kit loads from (normally exactly one), so a save lands where the next
-            // reload reads it; a new kit gets "<name>.yml" (gate-1 CR-01). A folder that cannot be listed
-            // gives no way to know which file that is, so the save fails rather than writing a second file
-            // beside the real one (Codex review round 4).
+            // reload reads it; a new kit gets "<name>.yml". A folder that cannot be listed gives no way
+            // to know which file that is, so the save fails rather than writing a second file beside
+            // the real one (Codex review round 4).
             List<File> targets = kitFilesOf(name);
             if (targets == null) {
                 logger.error(String.format(plugin.i18n("kits.log.kits_folder_unreadable_save"),

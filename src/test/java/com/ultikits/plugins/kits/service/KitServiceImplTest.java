@@ -864,10 +864,10 @@ class KitServiceImplTest {
         }
 
         /**
-         * gate-1 CR-01. {@code loadKits} maps a file to a kit by lower-casing its name, so a hand-placed
-         * {@code VIP.yml} loads as {@code vip}. Deleting must remove the file the kit was loaded from,
-         * not a rebuilt {@code vip.yml}: on a case-sensitive file system that path does not exist, and
-         * the kit was reported deleted while {@code VIP.yml} stayed to be loaded again (UltiKits/UltiKits#23).
+         * {@code loadKits} maps a file to a kit by lower-casing its name, so a hand-placed {@code
+         * VIP.yml} loads as {@code vip}. Deleting must remove the file the kit was loaded from, not a
+         * rebuilt {@code vip.yml}: on a case-sensitive file system that path does not exist, and the
+         * kit was reported deleted while {@code VIP.yml} stayed to be loaded again (UltiKits/UltiKits#23).
          */
         @Test
         @DisplayName("a kit loaded from a file with capitals is deleted from that file and stays gone after a reload")
@@ -2201,7 +2201,7 @@ class KitServiceImplTest {
             assertThat(balance[0]).isEqualTo(500.0);
         }
 
-        /** gate-1 IN-03: an economy that throws while refunding counts as a failed refund. */
+        /** An economy that throws while refunding counts as a failed refund. */
         @Test
         @DisplayName("an economy that throws during the refund is a failed refund, reported as such")
         void refundThatThrowsIsAFailedRefund() throws Exception {
@@ -2819,10 +2819,10 @@ class KitServiceImplTest {
         }
 
         /**
-         * gate-1 CR-01, the save half of the same root cause: a save must write the file the kit loads
-         * from. Writing a rebuilt {@code vip.yml} beside {@code VIP.yml} left two files mapping to one
-         * kit, and which one a reload kept depended on directory order, so a save reported as done
-         * could silently revert.
+         * The save half of the same root cause: a save must write the file the kit loads from. Writing
+         * a rebuilt {@code vip.yml} beside {@code VIP.yml} left two files mapping to one kit, and
+         * which one a reload kept depended on directory order, so a save reported as done could
+         * silently revert.
          */
         @Test
         @DisplayName("saving a kit loaded from a file with capitals writes that file, not a second one")
