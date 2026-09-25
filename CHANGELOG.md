@@ -44,13 +44,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 修复：超出最大堆叠数的物品不再在领取时被销毁。领取前按背包实际的放置方式判断能否放下（先补满相同物品的未满堆，每个物品堆按自身的最大堆叠数拆分），放不下时先拒绝领取且不扣款；
   仍放不下的部分会掉落在玩家脚下并提示（UltiKits/UltiKits#24）。
 
-- `/kits delete` no longer reports a kit as deleted when its file could not be removed. The kit now
-  stays loaded, the sender is told it was not deleted, and the console names the file, so a kit an
+- `/kits delete` no longer reports a kit as deleted when its file could not be removed (or the kits
+  folder could not be read). The kit now stays loaded, the sender is told it was not deleted, and the
+  console names the file or folder, so a kit an
   admin was told is gone can no longer come back on the next `/kits reload` or restart. Deleting and
   saving a kit now use the file the kit was loaded from, so a hand-placed kit file whose name has
   capital letters (`VIP.yml`) is deleted, and saved from the editor, like any other
   (UltiKits/UltiKits#23).
-- 修复：礼包文件删除失败时，`/kits delete` 不再报告删除成功。礼包会保持加载，执行者会被告知未删除，控制台会记录该文件的路径，
+- 修复：礼包文件删除失败（或礼包文件夹无法读取）时，`/kits delete` 不再报告删除成功。礼包会保持加载，执行者会被告知未删除，控制台会记录该文件或文件夹的路径，
   因此被告知已删除的礼包不会在下次 `/kits reload` 或重启后重新出现。删除和保存礼包现在使用礼包加载时的那个文件，因此文件名含大写字母的手放礼包文件（如 `VIP.yml`）
   也能像其他礼包一样被删除，并能从编辑界面保存（UltiKits/UltiKits#23）。
 

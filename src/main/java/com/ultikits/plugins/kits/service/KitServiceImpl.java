@@ -192,8 +192,16 @@ public class KitServiceImpl implements KitService {
 
         // Every file that loads as this kit, found the way loadKits maps files to names - not a
         // rebuilt "<name>.yml", which misses a hand-placed "VIP.yml" on a case-sensitive file system.
+        List<File> kitFiles = kitFilesOf(normalizedName);
+        if (kitFiles == null) {
+            // The folder could not be listed, which is not the same as "no file": the kit's file may
+            // still be there and load again on the next reload (Codex review round 2).
+            logger.warn(String.format(plugin.i18n("kits.log.kits_folder_unreadable"), kitsFolder().getAbsolutePath(),
+                    normalizedName));
+            return DeleteResult.FILE_NOT_DELETED;
+        }
         boolean survived = false;
-        for (File kitFile : kitFilesOf(normalizedName)) {
+        for (File kitFile : kitFiles) {
             // Re-checked after a refused delete: a file another process removed in between is gone,
             // which is what the admin asked for.
             if (!deleteKitFile(kitFile) && kitFile.exists()) {
@@ -220,18 +228,38 @@ public class KitServiceImpl implements KitService {
         return file.getName().replace(".yml", "").toLowerCase();
     }
 
-    /** Every {@code .yml} file in the kits folder that loads as {@code kitName}; empty when none does. */
+    /**
+     * Every {@code .yml} file in the kits folder that loads as {@code kitName}: empty when none does, and
+     * {@code null} when the folder could not be listed - a caller must not read a failed scan as "no file".
+     */
+    @Nullable
     private List<File> kitFilesOf(String kitName) {
-        File[] files = new File(plugin.getResourceFolderPath(), "kits").listFiles((dir, name) -> name.endsWith(".yml"));
+        File[] files = listKitFiles(kitsFolder());
+        if (files == null) {
+            return null;
+        }
         List<File> matches = new ArrayList<>();
-        if (files != null) {
-            for (File file : files) {
-                if (kitNameOf(file).equals(kitName)) {
-                    matches.add(file);
-                }
+        for (File file : files) {
+            if (kitNameOf(file).equals(kitName)) {
+                matches.add(file);
             }
         }
         return matches;
+    }
+
+    private File kitsFolder() {
+        return new File(plugin.getResourceFolderPath(), "kits");
+    }
+
+    /**
+     * Lists the kit files in a folder; {@code null} when the folder cannot be listed. A seam,
+     * package-private so a test can make the listing fail without depending on file permissions.
+     * <p>
+     * 列出文件夹中的礼包文件；无法读取时返回 {@code null}。包级可见，供测试模拟读取失败。
+     */
+    @Nullable
+    File[] listKitFiles(File folder) {
+        return folder.listFiles((dir, name) -> name.endsWith(".yml"));
     }
 
     /**
@@ -753,7 +781,7 @@ public class KitServiceImpl implements KitService {
             // Write every file the kit loads from (normally exactly one), so a save lands where the next
             // reload reads it; a new kit gets "<name>.yml" (gate-1 CR-01).
             List<File> targets = kitFilesOf(name);
-            if (targets.isEmpty()) {
+            if (targets == null || targets.isEmpty()) {
                 targets = Collections.singletonList(new File(plugin.getResourceFolderPath(), "kits/" + name + ".yml"));
             }
             YamlConfiguration config = new YamlConfiguration();
