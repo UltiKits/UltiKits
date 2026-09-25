@@ -24,25 +24,15 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AccessDeniedException;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.AclFileAttributeView;
-import java.nio.file.attribute.BasicFileAttributeView;
-import java.nio.file.attribute.DosFileAttributeView;
-import java.nio.file.attribute.DosFileAttributes;
-import java.nio.file.attribute.FileOwnerAttributeView;
-import java.nio.file.attribute.PosixFileAttributeView;
-import java.nio.file.attribute.PosixFileAttributes;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.CRC32;
 import java.util.stream.Collectors;
 
 /**
@@ -342,183 +332,6 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
-     * Replaces {@code target} with {@code content} so that the file is either the old one or the whole
-     * new one: the text is written to a temporary file in the same folder (named so the kit loader,
-     * which reads only {@code .yml}, ignores it) and then moved over the target in one step. A file
-     * system that does not support an atomic move gets a plain replacing move of the complete file.
-     * The temporary file is removed whatever happens. Before, {@link YamlConfiguration#save} truncated
-     * the kit file and then wrote it, so a failure part-way left a cut-off file.
-     * <p>
-     * 先写同目录临时文件，再一次性移动覆盖礼包文件；失败时原文件不变，临时文件总会被清理。
-     */
-    private void writeAtomically(File target, byte[] content) throws IOException {
-        Path targetPath = target.getAbsoluteFile().toPath();
-        if (Files.isSymbolicLink(targetPath) && !Files.exists(targetPath)) {
-            // A link whose target has gone: replacing it would destroy the operator's link.
-            throw new NoSuchFileException(targetPath.toString(), null, "kit file is a symbolic link to a missing file");
-        }
-        if (Files.exists(targetPath)) {
-            // Replace what an in-place write would have written: the file a symbolic link points to,
-            // and never a file the server may not write (a rename needs only the folder's permission).
-            targetPath = targetPath.toRealPath();
-            if (!Files.isWritable(targetPath)) {
-                throw new AccessDeniedException(targetPath.toString(), null, "kit file is not writable");
-            }
-        }
-        Path folder = targetPath.getParent();
-        Files.createDirectories(folder);
-        Path temp = createTempSibling(folder, targetPath.getFileName().toString());
-        try {
-            try (FileChannel channel = FileChannel.open(temp, StandardOpenOption.WRITE)) {
-                // The replaced file's permissions, list and owner go on while the file is still empty,
-                // so the content is never readable by anyone the kit file does not let read it. The
-                // channel is opened first so a permission set that leaves the server only group access
-                // still lets it write.
-                copyFileIdentity(targetPath, temp);
-                writeContent(temp, channel, content);
-                // On disk before the move, so a power loss cannot leave the moved name pointing at an
-                // empty file.
-                channel.force(true);
-            }
-            try {
-                atomicMove(temp, targetPath);
-            } catch (AtomicMoveNotSupportedException unsupported) {
-                Files.move(temp, targetPath, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } finally {
-            try {
-                Files.deleteIfExists(temp);
-            } catch (IOException cleanup) {
-                logger.warn(String.format(plugin.i18n("kits.log.temp_file_not_removed"), temp, cleanup.getMessage()));
-            }
-        }
-    }
-
-    /**
-     * Writes the whole of {@code content} into the open temporary file. A seam, package-private so a
-     * test can observe the temporary file at the moment its content is written.
-     */
-    void writeContent(Path temp, FileChannel channel, byte[] content) throws IOException {
-        ByteBuffer buffer = ByteBuffer.wrap(content);
-        while (buffer.hasRemaining()) {
-            channel.write(buffer);
-        }
-    }
-
-    /**
-     * A new, empty file next to {@code name} in {@code folder}, created without explicit attributes so
-     * it gets the same permission bits as any file the server creates there ({@link Files#createTempFile}
-     * would make it {@code rw-------}). Its name starts with a dot and ends in {@code .tmp}, so the kit
-     * loader, which reads only {@code .yml}, never loads it.
-     */
-    private static Path createTempSibling(Path folder, String name) throws IOException {
-        for (int attempt = 0; ; attempt++) {
-            Path candidate = folder.resolve("." + name + "." + System.nanoTime() + "." + attempt + ".tmp");
-            try {
-                return Files.createFile(candidate);
-            } catch (FileAlreadyExistsException taken) {
-                if (attempt >= 9) {
-                    throw taken;
-                }
-            }
-        }
-    }
-
-    /**
-     * Gives the replacement file the access-control list of the file it replaces, on a file system
-     * that has one (Windows); nothing when either view is absent.
-     */
-    static void copyAcl(@Nullable AclFileAttributeView from, @Nullable AclFileAttributeView to) throws IOException {
-        if (from == null || to == null) {
-            return;
-        }
-        to.setAcl(from.getAcl());
-    }
-
-    /**
-     * Gives the replacement file the owner of the file it replaces, through whichever owner view the
-     * file system has (POSIX or ACL); left as the server's when it may not be assigned.
-     */
-    static void copyOwner(@Nullable FileOwnerAttributeView from, @Nullable FileOwnerAttributeView to) {
-        if (from == null || to == null) {
-            return;
-        }
-        try {
-            to.setOwner(from.getOwner());
-        } catch (IOException notAllowed) {
-            // Only a privileged process may give a file away; the server's own account stays.
-        }
-    }
-
-    /**
-     * Gives the replacement file the hidden, system and archive flags of the file it replaces, on a
-     * file system that has them (Windows); a flag that cannot be set is left as it is. The read-only
-     * flag needs no copy: a read-only kit file is never replaced.
-     */
-    static void copyDosFlags(@Nullable DosFileAttributeView from, @Nullable DosFileAttributeView to) {
-        if (from == null || to == null) {
-            return;
-        }
-        try {
-            DosFileAttributes attributes = from.readAttributes();
-            to.setHidden(attributes.isHidden());
-            to.setSystem(attributes.isSystem());
-            to.setArchive(attributes.isArchive());
-        } catch (IOException notSet) {
-            // Cosmetic flags; the file's content and access are already right.
-        }
-    }
-
-    /**
-     * Gives the replacement file the creation time of the file it replaces, where the file system
-     * records one; left as it is when it cannot be set.
-     */
-    static void copyCreationTime(@Nullable BasicFileAttributeView from, @Nullable BasicFileAttributeView to) {
-        if (from == null || to == null) {
-            return;
-        }
-        try {
-            to.setTimes(null, null, from.readAttributes().creationTime());
-        } catch (IOException notSet) {
-            // Informational only; the replacement keeps its own creation time.
-        }
-    }
-
-    /**
-     * Gives {@code temp} what an in-place write would have kept of the file it replaces: its
-     * access-control list where the file system has one (Windows), its permission bits, where the
-     * server may set them its owner and group, its hidden/system/archive flags (Windows) and its creation
-     * time. Nothing when there is no such file. A list or permission bits that cannot be copied fail the
-     * save (the file stays as it was) rather than leave a file with wider access; the rest is best effort.
-     * Not kept, as with any replace-by-rename, because Java cannot copy them: hard links, extended
-     * attributes and alternate data streams, a Windows file's primary group and audit list, and on
-     * Linux the entries of an extended (setfacl) access-control list beyond the permission bits.
-     */
-    private static void copyFileIdentity(Path target, Path temp) throws IOException {
-        if (!Files.exists(target)) {
-            return;
-        }
-        copyAcl(Files.getFileAttributeView(target, AclFileAttributeView.class),
-                Files.getFileAttributeView(temp, AclFileAttributeView.class));
-        PosixFileAttributeView targetPosix = Files.getFileAttributeView(target, PosixFileAttributeView.class);
-        if (targetPosix != null) {
-            PosixFileAttributes attributes = targetPosix.readAttributes();
-            Files.setPosixFilePermissions(temp, attributes.permissions());
-            try {
-                Files.getFileAttributeView(temp, PosixFileAttributeView.class).setGroup(attributes.group());
-            } catch (IOException notAllowed) {
-                // The server's own group stays; the permission bits above are what an in-place write kept.
-            }
-        }
-        copyOwner(Files.getFileAttributeView(target, FileOwnerAttributeView.class),
-                Files.getFileAttributeView(temp, FileOwnerAttributeView.class));
-        copyDosFlags(Files.getFileAttributeView(target, DosFileAttributeView.class),
-                Files.getFileAttributeView(temp, DosFileAttributeView.class));
-        copyCreationTime(Files.getFileAttributeView(target, BasicFileAttributeView.class),
-                Files.getFileAttributeView(temp, BasicFileAttributeView.class));
-    }
-
-    /**
      * The module-private folder holding the write journal of kit files, beside (not inside) the kits
      * folder, so the kit loader never reads a journal.
      */
@@ -544,20 +357,160 @@ public class KitServiceImpl implements KitService {
         }
     }
 
+    /** First four bytes of a kit write journal ("UKJ1"). */
+    private static final int JOURNAL_MAGIC = 0x554B4A31;
+
     /**
-     * Moves a fully written temporary file over a kit file in one step ({@link StandardCopyOption#ATOMIC_MOVE}).
-     * A seam, package-private so a test can make the move fail, or report that the file system does
-     * not support an atomic move.
+     * Writes {@code content} into the kit file {@code target} through a write journal, so that after
+     * any failure or crash the file holds either its old content or, once the next start has replayed
+     * the journal, the whole new content. The file is rewritten in place - opened, truncated, written,
+     * flushed - and never created anew over an existing file, replaced or moved, so everything the
+     * file system keeps about it (permissions, access-control list, owner, links, extended attributes,
+     * labels) stays as it was. Steps: the new content goes to a journal in {@link #journalFolder()}
+     * (length and checksum header, flushed together with its folder); then the kit file is rewritten;
+     * then the journal is deleted. A write that fails part-way puts the old content back and deletes
+     * the journal; when that fails too, the journal is kept and the next start completes the write.
+     * A new kit file ({@code create}) is created only after its journal is on disk, and removed again
+     * when its write fails.
      * <p>
-     * 以原子方式把写好的临时文件移动到礼包文件；包级可见，供测试模拟移动失败。
+     * 先写日志（含长度与校验和并落盘），再原地改写礼包文件，最后删除日志；失败时写回旧内容，
+     * 写回也失败则保留日志，下次启动时补完。礼包文件本身从不被替换或移动。
      *
-     * @param source the written temporary file / 已写好的临时文件
-     * @param target the kit file / 礼包文件
-     * @throws IOException when the move failed / 移动失败时抛出
+     * @param target  the kit file / 礼包文件
+     * @param content its new content / 新内容
+     * @param create  whether the file is new (it must not exist yet) / 是否为新文件
+     * @throws IOException when the write failed; the kit file is then as it was, unless the console
+     *                     names a kept journal / 写入失败时抛出
      */
-    void atomicMove(Path source, Path target) throws IOException {
-        Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+    private void writeKitFile(File target, byte[] content, boolean create) throws IOException {
+        Path targetPath = target.getAbsoluteFile().toPath();
+        Path journal = journalFolder().resolve(target.getName() + ".journal");
+        FileChannel channel = null;
+        try {
+            byte[] previous = null;
+            if (!create) {
+                // Opened before anything is written: a file the server may not write, or a symbolic
+                // link to a missing file, fails here with nothing changed.
+                previous = Files.readAllBytes(targetPath);
+                channel = FileChannel.open(targetPath, StandardOpenOption.WRITE);
+            }
+            try {
+                writeJournal(journal, journalRecord(target.getName(), create, content));
+            } catch (IOException | RuntimeException journalFailure) {
+                deleteJournal(journal);
+                throw journalFailure;
+            }
+            checkpoint("journal-written");
+            if (create) {
+                try {
+                    channel = FileChannel.open(targetPath, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW);
+                } catch (IOException | RuntimeException createFailure) {
+                    // Nothing was created, so the journal must not create it at the next start.
+                    deleteJournal(journal);
+                    throw createFailure;
+                }
+            }
+            try {
+                channel.truncate(0);
+                channel.position(0);
+                writeInPlace(channel, content);
+                channel.force(true);
+            } catch (IOException | RuntimeException writeFailure) {
+                undoPartialWrite(targetPath, channel, previous, journal, writeFailure);
+                throw writeFailure;
+            }
+            checkpoint("target-written");
+            deleteJournal(journal);
+        } finally {
+            if (channel != null && channel.isOpen()) {
+                try {
+                    channel.close();
+                } catch (IOException ignored) {
+                    // The content was flushed by force(); a failed close changes nothing on disk.
+                }
+            }
+        }
     }
+
+    /**
+     * After a write that stopped part-way: puts the old content back (or removes a new file) and
+     * deletes the journal, so the kit file is as it was; when that fails too, keeps the journal - it
+     * holds the whole new content - for the next start to complete, and says so.
+     */
+    private void undoPartialWrite(Path target, FileChannel channel, @Nullable byte[] previous,
+                                  Path journal, Throwable writeFailure) {
+        try {
+            if (previous == null) {
+                channel.close();
+                Files.delete(target);
+            } else {
+                channel.truncate(0);
+                channel.position(0);
+                writeInPlace(channel, previous);
+                channel.force(true);
+            }
+            deleteJournal(journal);
+        } catch (IOException | RuntimeException undoFailure) {
+            if (undoFailure != writeFailure) {
+                writeFailure.addSuppressed(undoFailure);
+            }
+            logger.error(String.format(plugin.i18n("kits.log.write_left_pending"),
+                    target, writeFailure.getMessage(), journal));
+        }
+    }
+
+    /** The journal of one kit file write: magic, new-file flag, file name, length, CRC-32, content. */
+    static byte[] journalRecord(String targetName, boolean create, byte[] content) {
+        try {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream(content.length + 64);
+            DataOutputStream out = new DataOutputStream(bytes);
+            CRC32 crc = new CRC32();
+            crc.update(content, 0, content.length);
+            out.writeInt(JOURNAL_MAGIC);
+            out.writeBoolean(create);
+            out.writeUTF(targetName);
+            out.writeInt(content.length);
+            out.writeLong(crc.getValue());
+            out.write(content);
+            out.flush();
+            return bytes.toByteArray();
+        } catch (IOException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    private void writeJournal(Path journal, byte[] record) throws IOException {
+        Files.createDirectories(journal.getParent());
+        try (FileChannel out = FileChannel.open(journal, StandardOpenOption.WRITE, StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING)) {
+            ByteBuffer buffer = ByteBuffer.wrap(record);
+            while (buffer.hasRemaining()) {
+                out.write(buffer);
+            }
+            out.force(true);
+        }
+        syncFolder(journal.getParent());
+    }
+
+    private void deleteJournal(Path journal) {
+        try {
+            Files.deleteIfExists(journal);
+            syncFolder(journal.getParent());
+        } catch (IOException e) {
+            // The kit file is complete; replaying this journal at the next start rewrites the same content.
+            logger.warn(String.format(plugin.i18n("kits.log.journal_not_removed"), journal, e.getMessage()));
+        }
+    }
+
+    /** Flushes a folder's entries to disk where the platform allows opening a folder (not on Windows). */
+    private static void syncFolder(Path folder) {
+        try (FileChannel dir = FileChannel.open(folder, StandardOpenOption.READ)) {
+            dir.force(true);
+        } catch (IOException | RuntimeException unsupported) {
+            // Windows cannot open a directory as a channel; NTFS journals its own metadata.
+        }
+    }
+
 
     /**
      * Writes a kit's item contents, and the only place in this module that does - the kit editor's
@@ -1103,7 +1056,7 @@ public class KitServiceImpl implements KitService {
             // Write the file the kit loads from, so a save lands where the next reload reads it; a new
             // kit gets "<name>.yml". A folder that cannot be listed gives no way to know which file
             // that is, and a kit that several files define has no single one, so both fail rather than
-            // writing a file beside the real one. The write itself is all-or-nothing (writeAtomically).
+            // writing a file beside the real one. The write itself goes through a journal (writeKitFile).
             List<File> targets = kitFilesOf(name);
             if (targets == null) {
                 logger.error(String.format(plugin.i18n("kits.log.kits_folder_unreadable_save"),
@@ -1114,7 +1067,8 @@ public class KitServiceImpl implements KitService {
                 // Never write one of several files a kit loads from (see conflictingFiles).
                 return false;
             }
-            if (targets.isEmpty()) {
+            boolean create = targets.isEmpty();
+            if (create) {
                 targets = Collections.singletonList(new File(plugin.getResourceFolderPath(), "kits/" + name + ".yml"));
             }
             YamlConfiguration config = new YamlConfiguration();
@@ -1132,7 +1086,7 @@ public class KitServiceImpl implements KitService {
             config.set("consoleCommands", kit.getConsoleCommands());
             config.set("items", kit.getItems());
 
-            writeAtomically(targets.get(0), config.saveToString().getBytes(StandardCharsets.UTF_8));
+            writeKitFile(targets.get(0), config.saveToString().getBytes(StandardCharsets.UTF_8), create);
             return true;
         } catch (IOException | RuntimeException e) {
             // A refused write is a failed save whatever its exception type; the callers answer false.
@@ -1152,7 +1106,7 @@ public class KitServiceImpl implements KitService {
                 for (int read = is.read(chunk); read != -1; read = is.read(chunk)) {
                     bytes.write(chunk, 0, read);
                 }
-                writeAtomically(exampleFile, bytes.toByteArray());
+                writeKitFile(exampleFile, bytes.toByteArray(), true);
             }
         } catch (IOException | RuntimeException e) {
             logger.warn(String.format(plugin.i18n("kits.log.example_copy_failed"), e.getMessage()));
