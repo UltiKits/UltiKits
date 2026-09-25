@@ -29,6 +29,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A kit containing a stack larger than its item's maximum stack size is refused before payment when
+  it will not fit — the claim now counts the slots each stack really needs, split at the stack's own
+  maximum — and anything that still does not fit is dropped at the player's feet with a message
+  instead of being destroyed (UltiKits/UltiKits#24).
+- 修复：超出最大堆叠数的物品不再在领取时被销毁。领取前按每个物品堆自身的最大堆叠数计算所需格数，放不下时先拒绝领取且不扣款；
+  仍放不下的部分会掉落在玩家脚下并提示（UltiKits/UltiKits#24）。
+
 - `/kits delete` no longer reports a kit as deleted when its file could not be removed. The kit now
   stays loaded, the sender is told it was not deleted, and the console names the file, so a kit an
   admin was told is gone can no longer come back on the next `/kits reload` or restart

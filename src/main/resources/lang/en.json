@@ -13,6 +13,7 @@
   "kits.claim.already_claimed": "You have already claimed this kit",
   "kits.claim.on_cooldown": "Kit on cooldown, remaining: %s",
   "kits.claim.inventory_full": "Inventory full",
+  "kits.claim.leftovers_dropped": "Part of the kit did not fit in your inventory and was dropped at your feet.",
   "kits.claim.empty_kit": "Kit is empty",
   "kits.claim.error": "Error claiming kit",
   "kits.list.empty": "No kits available",

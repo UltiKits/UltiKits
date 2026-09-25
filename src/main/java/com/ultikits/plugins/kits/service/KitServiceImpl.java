@@ -9,6 +9,7 @@ import com.ultikits.ultitools.interfaces.DataOperator;
 import com.ultikits.ultitools.interfaces.impl.logger.PluginLogger;
 import com.ultikits.ultitools.utils.EconomyUtils;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
@@ -295,7 +296,7 @@ public class KitServiceImpl implements KitService {
             return ClaimResult.EMPTY_KIT;
         }
 
-        if (countEmptySlots(player) < items.length) {
+        if (countEmptySlots(player) < countSlotsNeeded(player, items)) {
             return ClaimResult.INVENTORY_FULL;
         }
 
@@ -360,6 +361,36 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
+     * The empty storage slots a kit's stacks will occupy once {@code addItem} has split them.
+     * <p>
+     * One slot per stack is not the answer: a stack larger than its own maximum stack size - which
+     * another plugin, or a {@code max_stack_size} component, can put into an inventory that
+     * {@code /kits create} then captures - is split across several slots, so 128 cobblestone needs
+     * two. Counting one slot per stack let such a kit pass this check, and {@code addItem}'s
+     * leftovers were then discarded after the player had paid (UltiKits/UltiKits#24). Each stack is
+     * split at its <b>own</b> maximum ({@link ItemStack#getMaxStackSize()}, which reads the
+     * component), capped by the inventory's own maximum when that is lower. Merging into partial
+     * stacks already in the inventory is not counted, so the check can only over-reserve.
+     * <p>
+     * 计算礼包物品实际需要的空格数：按每个物品堆自身的最大堆叠数拆分，而不是一堆算一格。
+     */
+    private int countSlotsNeeded(Player player, ItemStack[] items) {
+        int inventoryMax = player.getInventory().getMaxStackSize();
+        int slots = 0;
+        for (ItemStack item : items) {
+            if (item == null) {
+                continue;
+            }
+            int perSlot = Math.max(1, item.getMaxStackSize());
+            if (inventoryMax > 0) {
+                perSlot = Math.min(perSlot, inventoryMax);
+            }
+            slots += Math.max(1, (item.getAmount() + perSlot - 1) / perSlot);
+        }
+        return slots;
+    }
+
+    /**
      * Charges for the kit, then delivers it. The order is the load-bearing part.
      * <p>
      * The price is taken <b>first</b> and its result checked, so a refused payment leaves nothing
@@ -373,10 +404,11 @@ public class KitServiceImpl implements KitService {
      * broken command would otherwise take the money, hand over the items and never record the
      * claim - silently making a one-time kit claimable again, which is the whole product of a
      * one-time kit. No <em>reordering</em> here can produce "recorded but not delivered", because the
-     * record is written after the items have been added to the inventory - subject to the
-     * pre-existing overflow path this ordering does not address, where {@code countEmptySlots}
-     * counts stacks against slots and {@code addItem}'s leftovers are discarded, so an over-sized
-     * stack can be recorded as claimed while only partly delivered (UltiKits/UltiKits#24).
+     * record is written after the items have been handed over, and every item is handed over:
+     * {@link #claimKit} refuses before charging unless the slots each stack really needs are free
+     * ({@link #countSlotsNeeded}), and anything {@code addItem} still cannot place - an inventory
+     * another plugin filled in between - is dropped at the player's feet, once, with a message,
+     * never discarded (UltiKits/UltiKits#24).
      * <p>
      * The cost of putting the record first, stated rather than left implicit: a storage fault in
      * {@code updateClaimData} now also skips the reward commands, where the previous order would
@@ -402,13 +434,36 @@ public class KitServiceImpl implements KitService {
             warnRefusedWithdrawalOnce(player, kit);
             return ClaimResult.PAYMENT_FAILED;
         }
-        for (ItemStack item : items) {
-            player.getInventory().addItem(item.clone());
-        }
+        giveOrDrop(player, items);
         updateClaimData(player.getUniqueId(), kit.getName());
         executePlayerCommands(player, kit.getPlayerCommands());
         executeConsoleCommands(player, kit.getConsoleCommands());
         return ClaimResult.SUCCESS;
+    }
+
+    /**
+     * Adds each item to the player's inventory and drops whatever {@code addItem} hands back at the
+     * player's location - each leftover exactly once - telling the player when anything was dropped.
+     * The module-wide precedent for items owed to a player: UltiMail's {@code ItemReturns#giveOrDrop}
+     * and UltiTrade's {@code TradeService#giveOrDrop} (UltiKits/UltiKits#24).
+     * <p>
+     * 逐个发放物品；放不下的部分掉落在玩家脚下（每份只掉落一次），并提示玩家。
+     */
+    private void giveOrDrop(Player player, ItemStack[] items) {
+        boolean dropped = false;
+        for (ItemStack item : items) {
+            Map<Integer, ItemStack> leftovers = player.getInventory().addItem(item.clone());
+            if (leftovers == null) {
+                continue;
+            }
+            for (ItemStack leftover : leftovers.values()) {
+                player.getWorld().dropItemNaturally(player.getLocation(), leftover);
+                dropped = true;
+            }
+        }
+        if (dropped) {
+            player.sendMessage(ChatColor.YELLOW + plugin.i18n("kits.claim.leftovers_dropped"));
+        }
     }
 
     /**

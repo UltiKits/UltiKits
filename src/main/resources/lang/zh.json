@@ -13,6 +13,7 @@
   "kits.claim.already_claimed": "你已经领取过此礼包",
   "kits.claim.on_cooldown": "礼包冷却中，剩余: %s",
   "kits.claim.inventory_full": "背包空间不足",
+  "kits.claim.leftovers_dropped": "礼包中有部分物品放不下，已掉落在你脚下。",
   "kits.claim.empty_kit": "礼包内容为空",
   "kits.claim.error": "领取礼包时发生错误",
   "kits.list.empty": "没有可用的礼包",
