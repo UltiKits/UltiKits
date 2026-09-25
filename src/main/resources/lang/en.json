@@ -41,6 +41,8 @@
   "kits.log.kit_file_conflict": "More than one file in the kits folder %s defines kit %s: %s. Loaded %s; the kit cannot be edited or deleted until only one of these files remains.",
   "kits.log.write_left_pending": "Kit file %s could not be written or put back (%s). Its new content is kept in %s and is written at the next start or /kits reload.",
   "kits.log.journal_not_withdrawn": "Could not remove or empty the kit write journal %s (%s). It still holds new content for kit file %s, which is written at the next start or /kits reload unless the journal is removed first.",
+  "kits.log.journal_folder_not_private": "Could not make the kit write journal folder %s private to the server's account (%s); saving goes on, but the journals there keep the folder's permissions.",
+  "kits.log.journal_still_pending": "an earlier write of this kit file is still pending in %s and could not be completed",
   "kits.log.journal_replayed": "Completed an interrupted write of kit file %s.",
   "kits.log.journal_damaged": "Discarded the damaged kit write journal %s; no kit file was changed.",
   "kits.log.journal_target_missing": "Discarded the kit write journal %s: its kit file %s no longer exists, so nothing was changed.",

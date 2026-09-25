@@ -414,7 +414,7 @@ public class KitServiceImpl implements KitService {
             // complete it first, so this write starts from a whole file and never truncates that copy.
             replayJournal(journal, targetPath.getParent());
             if (hasContent(journal)) {
-                throw new IOException("an earlier write of " + target.getName() + " is still pending in " + journal);
+                throw new IOException(String.format(plugin.i18n("kits.log.journal_still_pending"), journal));
             }
         }
         FileChannel channel = null;
@@ -530,7 +530,12 @@ public class KitServiceImpl implements KitService {
             syncFolder(folder.getParent());
         }
         if (posix) {
-            restrictJournalFolder(folder);
+            try {
+                restrictJournalFolder(folder);
+            } catch (IOException | RuntimeException notAllowed) {
+                // Hardening, not a condition of saving: the folder keeps its permissions.
+                logger.warn(String.format(plugin.i18n("kits.log.journal_folder_not_private"), folder, notAllowed.getMessage()));
+            }
         }
         Set<StandardOpenOption> options = EnumSet.of(StandardOpenOption.WRITE, StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING);
@@ -655,7 +660,9 @@ public class KitServiceImpl implements KitService {
             in.readFully(content);
             CRC32 crc = new CRC32();
             crc.update(content, 0, content.length);
-            if (crc.getValue() != checksum || !targetName.equals(expectedTarget) || !isPlainKitFileName(targetName)) {
+            // The target is the journal's own file name, so it can never leave the kits folder; any name
+            // the kit loader reads (a leading dot, a colon) is accepted, as the writer accepted it.
+            if (crc.getValue() != checksum || !targetName.equals(expectedTarget) || !targetName.endsWith(".yml")) {
                 throw new EOFException("checksum or file name does not match");
             }
         } catch (IOException | RuntimeException damaged) {
