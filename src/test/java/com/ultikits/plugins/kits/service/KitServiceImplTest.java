@@ -5113,6 +5113,38 @@ class KitServiceImplTest {
         }
 
         /**
+         * A create only ever creates its file: one that appears between the create's own check and its
+         * write (placed by hand at that moment) is not rewritten, and the create fails.
+         */
+        @Test
+        @DisplayName("a file that appears while a kit is being created is not rewritten")
+        void createNeverRewritesAFileThatAppearsMeanwhile() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            java.nio.file.Path appeared = tempDir.toPath().resolve("kits").resolve("race.yml");
+            byte[] operator = "icon: CHEST\nitems: \"operator-items\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            KitServiceImpl service = spy(new KitServiceImpl(plugin, config) {
+                @Override
+                public String serializeItems(ItemStack[] items) {
+                    try {
+                        java.nio.file.Files.write(appeared, operator);
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                    return "admin-items";
+                }
+            });
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[]{stone});
+
+            assertThat(service.createKit(player, "race")).isNotEqualTo(KitService.CreateResult.SUCCESS);
+
+            assertThat(java.nio.file.Files.readAllBytes(appeared)).isEqualTo(operator);
+            assertThat(journals(tempDir.toPath())).isEmpty();
+        }
+
+        /**
          * A journal folder that is a symbolic link is never written or replayed from, but its journal
          * names are read, so a kit file with a pending write there is still not loaded.
          */
