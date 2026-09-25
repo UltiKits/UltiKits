@@ -2825,6 +2825,35 @@ class KitServiceImplTest {
             assertThat(YamlConfiguration.loadConfiguration(upper).getDouble("price")).isEqualTo(42.0);
         }
 
+        /**
+         * Codex round 4 (P2): a kits folder that cannot be listed gives no way to know which file the
+         * kit loads from, so the save fails rather than writing a second file beside the real one - in a
+         * folder the server may write to but not list, that second file would win or lose against the
+         * stale one in directory order after the next reload.
+         */
+        @Test
+        @DisplayName("a save fails, writing nothing, when the kits folder cannot be listed")
+        void saveKitToFileFailsWhenTheKitsFolderCannotBeListed() throws Exception {
+            File upper = createSimpleKitFile("VIP");
+            String before = new String(java.nio.file.Files.readAllBytes(upper.toPath()), "UTF-8");
+            service = new KitServiceImpl(plugin, config) {
+                @Override
+                File[] listKitFiles(File folder) {
+                    return null;
+                }
+            };
+            KitDefinition kit = service.getKit("vip");
+            kit.setPrice(42.0);
+
+            assertThat(service.saveKitToFile("vip", kit)).isFalse();
+
+            assertThat(new File(tempDir, "kits").list()).containsExactly("VIP.yml");
+            assertThat(new String(java.nio.file.Files.readAllBytes(upper.toPath()), "UTF-8")).isEqualTo(before);
+            ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).error(error.capture());
+            assertThat(error.getAllValues()).anyMatch(line -> line.contains(upper.getParentFile().getAbsolutePath()));
+        }
+
         @Test
         @DisplayName("saveKitToFile creates YAML file with correct structure")
         void saveKitToFileCreatesYaml() throws Exception {
