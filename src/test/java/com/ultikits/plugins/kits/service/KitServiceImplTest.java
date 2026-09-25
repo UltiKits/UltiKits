@@ -1414,9 +1414,9 @@ class KitServiceImplTest {
          * What it does NOT guard: the module's own {@code !kit.isFree()} check in
          * {@code KitServiceImpl#deliverKit}. Through the public Vault path, the framework's economy
          * bridge refuses a zero amount before it reaches the registered {@link Economy}, so the
-         * {@code never()} verification below would hold even if that check were removed (measured by
-         * the gate-1 review, UltiKits/UltiKits#19 IN-01). On a live server the same framework refusal
-         * also stops a free kit from being charged. The GUI's separate {@code !kit.isFree()} check
+         * {@code never()} verification below would hold even if that check were removed (measured
+         * when reviewing UltiKits/UltiKits#19). On a live server the same framework refusal also
+         * stops a free kit from being charged. The GUI's separate {@code !kit.isFree()} check
          * (the "deducted" message) is guarded by {@code KitBrowserGuiTest#successFreeKit}.
          */
         @Test
@@ -1812,9 +1812,9 @@ class KitServiceImplTest {
 
         /**
          * The console line is promised by {@code FEATURES.md} and {@code CHANGELOG.md} to name the
-         * kit, the player AND the amount, so all three are asserted (gate-1 WR-04). The kit is
-         * named {@code vipcrate} rather than something like {@code logged}, which occurs in the
-         * message template itself and would let almost any warning satisfy the assertion.
+         * kit, the player AND the amount, so all three are asserted. The kit is named {@code
+         * vipcrate} rather than something like {@code logged}, which occurs in the message
+         * template itself and would let almost any warning satisfy the assertion.
          */
         @Test
         @DisplayName("the refused-payment line is in the server's language (zh)")
@@ -1845,11 +1845,11 @@ class KitServiceImplTest {
         }
 
         /**
-         * Throttling, gate-1 WR-05. The claim path is player-triggered behind only a 200ms GUI
-         * debounce, and {@code /kits claim} carries no cooldown at all, so one line per refused
-         * attempt floods the console during an economy outage - in the window an operator most
-         * needs to read it. The framework's own {@code EconomyUtils} already took this position for
-         * the adjacent condition: one line per calling module per server session.
+         * Throttling. The claim path is player-triggered behind only a 200ms GUI debounce, and
+         * {@code /kits claim} carries no cooldown at all, so one line per refused attempt floods
+         * the console during an economy outage - in the window an operator most needs to read it.
+         * The framework's own {@code EconomyUtils} already took this position for the adjacent
+         * condition: one line per calling module per server session.
          */
         @Test
         @DisplayName("repeated refusals for the same kit are logged once, not once per attempt")
@@ -1907,11 +1907,11 @@ class KitServiceImplTest {
         }
 
         /**
-         * gate-1 WR-01. The guard this fix first wrote read
-         * {@code !kit.isFree() && EconomyUtils.isAvailable() && !EconomyUtils.withdraw(...)}. If the
-         * Vault provider is deregistered after {@code canAfford} passed, that middle term
-         * short-circuits the whole condition to false and control falls through to delivery -
-         * reproducing #20's own outcome inside the guard that closes #20. The term bought nothing:
+         * The guard this fix first wrote read {@code !kit.isFree() && EconomyUtils.isAvailable() &&
+         * !EconomyUtils.withdraw(...)}. If the Vault provider is deregistered after {@code
+         * canAfford} passed, that middle term short-circuits the whole condition to false and
+         * control falls through to delivery - reproducing #20's own outcome inside the guard that
+         * closes #20. The term bought nothing:
          * the framework's bridge already returns false when no provider is registered.
          */
         @Test
@@ -1939,10 +1939,10 @@ class KitServiceImplTest {
         }
 
         /**
-         * gate-1 WR-06. {@code player.performCommand} propagates {@code CommandException} out of any
-         * third-party executor that throws, so a reward command failing between the money moving and
-         * the claim being recorded would leave a one-time kit silently claimable again. The claim
-         * record is therefore written before the reward commands run.
+         * {@code player.performCommand} propagates {@code CommandException} out of any third-party
+         * executor that throws, so a reward command failing between the money moving and the claim
+         * being recorded would leave a one-time kit silently claimable again. The claim record is
+         * therefore written before the reward commands run.
          */
         @Test
         @DisplayName("ordering: the claim is recorded before the reward commands, the likeliest step to fail")

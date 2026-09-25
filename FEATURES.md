@@ -110,12 +110,11 @@ javadoc sentence in `KitCommands#handleHelp` mentions the annotation's name, so 
 grep returns 9 where the annotation sites are 7.
 
 The `find`-based GUI-class count above returns 2,
-matching Phase 9's own independently-derived GUI-exclusion register for this module
-(`KitBrowserGui`, `KitEditorGui` — see `.planning/phases/09-module-ecosystem-readiness-and-test-coverage/gui-exclusions/UltiKits.md`;
-note that same register file also names two pre-6.3.0 base-class types removed outright in
-this milestone (the old command-executor base class and the old data-entity base class) — not
-GUI classes at all; confirmed neither name appears anywhere in this module's own source,
-a targeted grep for both returns zero hits; `KitCommands` extends `BaseCommandExecutor` and
+matching the module's independently-derived list of GUI classes excluded from the coverage gate
+(`KitBrowserGui`, `KitEditorGui`). The two pre-6.3.0 base-class types removed outright in
+6.3.0 (the old command-executor base class and the old data-entity base class) appear nowhere
+in this module's own source — a targeted grep for both returns zero hits; `KitCommands`
+extends `BaseCommandExecutor` and
 `KitClaimData` extends `BaseDataEntity<String>`, the current, non-removed generation of each).
 
 **Reconciliation note — `@EventListener` (0 against 0) and `@Scheduled` (0 against 0):** both
@@ -175,8 +174,8 @@ Two GUI page classes, neither carrying a page-marking annotation — identified 
 Conventions' own reconciliation note for this Kind). Both extend the `obliviate-invs` library's
 own `Gui` base class directly (unlike UltiBackup's `ForceRestoreConfirmPage`, which uses the
 framework's own `BaseConfirmationPage`) — neither of this module's GUI classes goes through any
-of this framework's own three GUI generations at all. Both are Phase 9's complete GUI-exclusion
-register for this module.
+of this framework's own three GUI generations at all. Both are the complete set of this
+module's GUI classes excluded from the coverage gate.
 
 | ID | Feature | Kind | How to reach | Permission | Target | Tier | Manual | Source |
 |---|---|---|---|---|---|---|---|---|
