@@ -462,7 +462,7 @@ public class KitServiceImpl implements KitService {
         }
     }
 
-    /** The journal of one kit file write: magic, new-file flag, file name, length, CRC-32, content. */
+    /** The journal of one kit file write: magic, new-file flag, file name, length, CRC32, content. */
     static byte[] journalRecord(String targetName, boolean create, byte[] content) {
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream(content.length + 64);
