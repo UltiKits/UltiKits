@@ -209,10 +209,18 @@ public class KitCommands extends BaseCommandExecutor {
             return;
         }
 
-        if (kitService.deleteKit(name)) {
-            sender.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("kits.delete.success"), name));
-        } else {
-            sender.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.kit.not_found"), name));
+        switch (kitService.deleteKit(name)) {
+            case DELETED:
+                sender.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("kits.delete.success"), name));
+                break;
+            case FILE_NOT_DELETED:
+                // The kit is still loaded and its file will load again on reload, so saying
+                // "Deleted" here would be false (UltiKits/UltiKits#23).
+                sender.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.delete.file_not_deleted"), name));
+                break;
+            default:
+                sender.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.kit.not_found"), name));
+                break;
         }
     }
 

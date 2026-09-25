@@ -32,6 +32,8 @@
   "kits.editor.saved": "已保存礼包: %s",
   "kits.create.success": "已创建礼包: %s",
   "kits.delete.success": "已删除礼包: %s",
+  "kits.delete.file_not_deleted": "礼包 %s 未被删除：无法删除其文件，控制台已记录文件路径。",
+  "kits.log.delete_file_failed": "无法删除礼包文件 %s，该礼包会保持加载，直到此文件可以被删除。",
   "kits.create.already_exists": "礼包名已存在: %s",
   "kits.create.invalid_name": "无效的礼包名",
   "kits.create.empty_inventory": "物品栏为空",

@@ -32,6 +32,8 @@
   "kits.editor.saved": "Saved kit: %s",
   "kits.create.success": "Created kit: %s",
   "kits.delete.success": "Deleted kit: %s",
+  "kits.delete.file_not_deleted": "Kit %s was not deleted: its file could not be removed. The console names the file.",
+  "kits.log.delete_file_failed": "Could not delete the kit file %s - the kit stays loaded until this file can be removed.",
   "kits.create.already_exists": "Kit name already exists: %s",
   "kits.create.invalid_name": "Invalid kit name",
   "kits.create.empty_inventory": "Inventory is empty",

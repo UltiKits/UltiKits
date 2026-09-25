@@ -59,6 +59,27 @@ public interface KitService {
         SYSTEM_DISABLED
     }
 
+    /**
+     * Outcome of deleting a kit.
+     * <p>
+     * Typed rather than a boolean because a boolean folded "the kit does not exist" and "the kit's
+     * file could not be removed" into one value, and the command then reported a deletion that had
+     * not happened on disk: the surviving file came back on the next {@code /kits reload} or restart
+     * (UltiKits/UltiKits#23).
+     * 删除礼包的结果：区分「礼包不存在」和「礼包文件无法删除」。
+     */
+    enum DeleteResult {
+        /** The kit's file is gone (or was already absent) and the kit is no longer loaded. */
+        DELETED,
+        /** No kit with this name is loaded. */
+        NOT_FOUND,
+        /**
+         * The kit's file exists and could not be deleted, so the kit stays loaded - the catalogue
+         * keeps matching what {@code /kits reload} would read back from disk.
+         */
+        FILE_NOT_DELETED
+    }
+
     void loadKits();
 
     void reload();
@@ -74,7 +95,7 @@ public interface KitService {
 
     CreateResult createKit(Player player, String name);
 
-    boolean deleteKit(String name);
+    DeleteResult deleteKit(String name);
 
     SaveResult saveKitItems(String kitName, ItemStack[] items);
 

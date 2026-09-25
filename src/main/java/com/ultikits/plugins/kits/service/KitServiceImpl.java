@@ -164,20 +164,53 @@ public class KitServiceImpl implements KitService {
         return CreateResult.SUCCESS;
     }
 
+    /**
+     * Deletes a kit: its file first, then its catalogue entry, and the catalogue entry only when the
+     * file is really gone.
+     * <p>
+     * {@link #loadKits()} rebuilds the catalogue from the files in the kits folder, so a kit whose
+     * file survived a delete comes back on the next {@code /kits reload} or restart. Removing it from
+     * the catalogue anyway - which this method used to do, discarding {@link File#delete()}'s result -
+     * told the admin a kit was gone that would return, and a kit deleted because it was mispriced or
+     * handed out something it should not was claimable again after the reload (UltiKits/UltiKits#23).
+     * When the file cannot be removed the kit therefore stays loaded, the result says so, and a
+     * console warning names the path so the operator can see which file and fix its permissions.
+     * <p>
+     * 先删文件，文件确实不在了才从目录中移除礼包；删除失败时保留礼包、返回失败并记录包含路径的警告。
+     *
+     * @param name the kit's name / 礼包名
+     * @return the outcome, never null / 结果，不为 null
+     */
     @Override
-    public boolean deleteKit(String name) {
+    public DeleteResult deleteKit(String name) {
         String normalizedName = name.toLowerCase().trim();
         if (kits.get(normalizedName) == null) {
-            return false;
+            return DeleteResult.NOT_FOUND;
         }
 
         File kitFile = new File(plugin.getResourceFolderPath(), "kits/" + normalizedName + ".yml");
-        if (kitFile.exists()) {
-            kitFile.delete(); // NOPMD
+        // Re-checked after a refused delete: a file another process removed in between is gone,
+        // which is what the admin asked for.
+        if (kitFile.exists() && !deleteKitFile(kitFile) && kitFile.exists()) {
+            logger.warn(String.format(plugin.i18n("kits.log.delete_file_failed"), kitFile.getAbsolutePath()));
+            return DeleteResult.FILE_NOT_DELETED;
         }
 
         kits.remove(normalizedName);
-        return true;
+        return DeleteResult.DELETED;
+    }
+
+    /**
+     * Deletes one kit file. A seam, package-private so a test can make the deletion fail: a
+     * permission-based test is not one, because a build running as root deletes a read-only file.
+     * <p>
+     * 删除单个礼包文件；包级可见，供测试模拟删除失败。
+     *
+     * @param kitFile the file to delete / 要删除的文件
+     * @return {@link File#delete()}'s result / 删除结果
+     */
+    boolean deleteKitFile(File kitFile) {
+        return kitFile.delete();
     }
 
     /**
