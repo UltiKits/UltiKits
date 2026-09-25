@@ -28,6 +28,8 @@ import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.OpenOption;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -241,6 +243,17 @@ public class KitServiceImpl implements KitService {
             // time, so none is removed until only one file defines the kit.
             return DeleteResult.FILE_CONFLICT;
         }
+        for (File kitFile : kitFiles) {
+            // A write still pending for the file would bring it back at the next start or reload.
+            Path journal = journalFolder().resolve(kitFile.getName() + ".journal");
+            if (hasContent(journal)) {
+                withdrawJournal(journal, kitFile.toPath());
+                if (hasContent(journal)) {
+                    logger.warn(String.format(plugin.i18n("kits.log.delete_journal_pending"), kitFile.getAbsolutePath(), journal));
+                    return DeleteResult.FILE_NOT_DELETED;
+                }
+            }
+        }
         boolean survived = false;
         for (File kitFile : kitFiles) {
             try {
@@ -384,6 +397,9 @@ public class KitServiceImpl implements KitService {
     /** First four bytes of a kit write journal ("UKJ1"). */
     private static final int JOURNAL_MAGIC = 0x554B4A31;
 
+    /** Whether the journal folder's permissions have been reported as not changeable this session. */
+    private boolean journalFolderWarned;
+
     /**
      * Writes {@code content} into the kit file {@code target} through a write journal, so that after
      * any failure or crash the file holds either its old content or, once the next start has replayed
@@ -420,14 +436,24 @@ public class KitServiceImpl implements KitService {
         FileChannel channel = null;
         try {
             byte[] previous = null;
+            String linkedTo = "";
             if (!create) {
-                // Opened before anything is written: a file the server may not write, or a symbolic
-                // link to a missing file, fails here with nothing changed.
-                previous = Files.readAllBytes(targetPath);
-                channel = FileChannel.open(targetPath, StandardOpenOption.WRITE);
+                // A kit file that is a symbolic link is written at the file it points to, and the journal
+                // records the link as written, so a replay never follows a link this write did not go
+                // through (a link pointed elsewhere, or one put in place of a plain file).
+                // Opened before anything is written: a file the server may not write, or a link to a
+                // missing file, fails here with nothing changed.
+                Path writePath = targetPath;
+                if (Files.isSymbolicLink(targetPath)) {
+                    linkedTo = Files.readSymbolicLink(targetPath).toString();
+                    writePath = targetPath.toRealPath();
+                }
+                channel = FileChannel.open(writePath, StandardOpenOption.READ, StandardOpenOption.WRITE,
+                        LinkOption.NOFOLLOW_LINKS);
+                previous = readAll(channel);
             }
             try {
-                writeJournal(journal, journalRecord(target.getName(), create, content));
+                writeJournal(journal, journalRecord(target.getName(), create, linkedTo, content));
             } catch (IOException | RuntimeException journalFailure) {
                 withdrawJournal(journal, targetPath);
                 throw journalFailure;
@@ -497,8 +523,16 @@ public class KitServiceImpl implements KitService {
         withdrawJournal(journal, target);
     }
 
-    /** The journal of one kit file write: magic, new-file flag, file name, length, CRC32, content. */
+    /** The journal of a kit file write that did not go through a symbolic link. */
     static byte[] journalRecord(String targetName, boolean create, byte[] content) {
+        return journalRecord(targetName, create, "", content);
+    }
+
+    /**
+     * The journal of one kit file write: magic, new-file flag, file name, the target of the symbolic link
+     * at that name as written in the link (empty when it was not a link), length, CRC32, content.
+     */
+    static byte[] journalRecord(String targetName, boolean create, String linkedTo, byte[] content) {
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream(content.length + 64);
             DataOutputStream out = new DataOutputStream(bytes);
@@ -507,6 +541,7 @@ public class KitServiceImpl implements KitService {
             out.writeInt(JOURNAL_MAGIC);
             out.writeBoolean(create);
             out.writeUTF(targetName);
+            out.writeUTF(linkedTo);
             out.writeInt(content.length);
             out.writeLong(crc.getValue());
             out.write(content);
@@ -533,12 +568,15 @@ public class KitServiceImpl implements KitService {
             try {
                 restrictJournalFolder(folder);
             } catch (IOException | RuntimeException notAllowed) {
-                // Hardening, not a condition of saving: the folder keeps its permissions.
-                logger.warn(String.format(plugin.i18n("kits.log.journal_folder_not_private"), folder, notAllowed.getMessage()));
+                // Hardening, not a condition of saving: the folder keeps its permissions. Said once.
+                if (!journalFolderWarned) {
+                    journalFolderWarned = true;
+                    logger.warn(String.format(plugin.i18n("kits.log.journal_folder_not_private"), folder, notAllowed.getMessage()));
+                }
             }
         }
-        Set<StandardOpenOption> options = EnumSet.of(StandardOpenOption.WRITE, StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING);
+        Set<OpenOption> options = new HashSet<>(Arrays.asList(StandardOpenOption.WRITE, StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS));
         FileAttribute<?>[] attributes = posix
                 ? new FileAttribute<?>[] {PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))}
                 : new FileAttribute<?>[0];
@@ -566,7 +604,7 @@ public class KitServiceImpl implements KitService {
         } catch (NoSuchFileException gone) {
             return;
         } catch (IOException | RuntimeException deleteFailure) {
-            try (FileChannel emptied = FileChannel.open(journal, StandardOpenOption.WRITE)) {
+            try (FileChannel emptied = FileChannel.open(journal, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
                 emptied.truncate(0);
                 emptied.force(true);
                 return;
@@ -582,9 +620,12 @@ public class KitServiceImpl implements KitService {
     /** Whether a journal exists with content (an emptied journal has been withdrawn). */
     private static boolean hasContent(Path journal) {
         try {
-            return Files.size(journal) > 0;
-        } catch (IOException missingOrUnreadable) {
-            return Files.exists(journal);
+            BasicFileAttributes attributes = Files.readAttributes(journal, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            return !attributes.isRegularFile() || attributes.size() > 0;
+        } catch (NoSuchFileException missing) {
+            return false;
+        } catch (IOException unreadable) {
+            return true;
         }
     }
 
@@ -624,17 +665,26 @@ public class KitServiceImpl implements KitService {
         String expectedTarget = journalName.substring(0, journalName.length() - ".journal".length());
         Path withdrawnTarget = kitsFolder.resolve(expectedTarget);
         try {
-            if (Files.size(journal) == 0) {
+            BasicFileAttributes attributes = Files.readAttributes(journal, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (!attributes.isRegularFile()) {
+                // Not a file this module wrote (a symbolic link, a folder): never read or written through.
+                logger.warn(String.format(plugin.i18n("kits.log.journal_damaged"), journal));
+                withdrawJournal(journal, withdrawnTarget);
+                return;
+            }
+            if (attributes.size() == 0) {
                 // A withdrawn journal: it changes nothing.
                 withdrawJournal(journal, withdrawnTarget);
                 return;
             }
+        } catch (NoSuchFileException gone) {
+            return;
         } catch (IOException unreadable) {
             // Read below, which reports it.
         }
         byte[] record;
-        try {
-            record = Files.readAllBytes(journal);
+        try (FileChannel in = FileChannel.open(journal, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+            record = readAll(in);
         } catch (NoSuchFileException gone) {
             return;
         } catch (IOException | RuntimeException unreadable) {
@@ -644,6 +694,7 @@ public class KitServiceImpl implements KitService {
         }
         boolean create;
         String targetName;
+        String linkedTo;
         byte[] content;
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(record))) {
             if (in.readInt() != JOURNAL_MAGIC) {
@@ -651,6 +702,7 @@ public class KitServiceImpl implements KitService {
             }
             create = in.readBoolean();
             targetName = in.readUTF();
+            linkedTo = in.readUTF();
             int length = in.readInt();
             long checksum = in.readLong();
             if (length < 0 || in.available() != length) {
@@ -671,34 +723,55 @@ public class KitServiceImpl implements KitService {
             return;
         }
         Path target = kitsFolder.resolve(targetName);
-        if (create && Files.isSymbolicLink(target)) {
-            // A new-file journal only ever creates a plain file; a link at its name was put there by
-            // someone else, and is never written through.
-            logger.warn(String.format(plugin.i18n("kits.log.journal_target_is_link"), journal, target));
-            withdrawJournal(journal, target);
-            return;
-        }
-        boolean exists;
+        BasicFileAttributes found;
         try {
-            Files.readAttributes(target, BasicFileAttributes.class);
-            exists = true;
+            found = Files.readAttributes(target, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
         } catch (NoSuchFileException missing) {
-            exists = false;
+            found = null;
         } catch (IOException | RuntimeException unknown) {
             // Not known to be missing (its folder cannot be searched): the journal may be the only whole
             // copy, so it is kept for a later start.
             logger.error(String.format(plugin.i18n("kits.log.journal_replay_failed"), target, unknown.getMessage(), journal));
             return;
         }
+        boolean exists = found != null;
         if (!exists && !create) {
             // The kit file this journal rewrites has gone.
             logger.warn(String.format(plugin.i18n("kits.log.journal_target_missing"), journal, target));
             withdrawJournal(journal, target);
             return;
         }
+        // Where to write: the kit file itself, never through a link; or, when the write went through a
+        // link, the file it recorded - and only while the link still points there.
+        Path writePath = target;
+        boolean isLink = exists && found.isSymbolicLink();
+        if (isLink || !linkedTo.isEmpty()) {
+            Path pointsTo = null;
+            if (isLink && !create && !linkedTo.isEmpty()) {
+                try {
+                    if (Files.readSymbolicLink(target).toString().equals(linkedTo)) {
+                        pointsTo = target.toRealPath();
+                    }
+                } catch (NoSuchFileException gone) {
+                    logger.warn(String.format(plugin.i18n("kits.log.journal_target_missing"), journal, target));
+                    withdrawJournal(journal, target);
+                    return;
+                } catch (IOException | RuntimeException unknown) {
+                    logger.error(String.format(plugin.i18n("kits.log.journal_replay_failed"), target, unknown.getMessage(), journal));
+                    return;
+                }
+            }
+            if (pointsTo == null) {
+                // A link added, removed or pointed elsewhere since the write: not the file it was writing.
+                logger.warn(String.format(plugin.i18n("kits.log.journal_target_is_link"), journal, target));
+                withdrawJournal(journal, target);
+                return;
+            }
+            writePath = pointsTo;
+        }
         try (FileChannel channel = exists
-                ? FileChannel.open(target, StandardOpenOption.WRITE)
-                : FileChannel.open(target, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW)) {
+                ? FileChannel.open(writePath, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)
+                : FileChannel.open(writePath, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW)) {
             channel.truncate(0);
             channel.position(0);
             writeInPlace(channel, content);
@@ -718,6 +791,20 @@ public class KitServiceImpl implements KitService {
     private static boolean isPlainKitFileName(String name) {
         return name.endsWith(".yml") && !name.startsWith(".") && name.indexOf('/') < 0 && name.indexOf('\\') < 0
                 && name.indexOf(':') < 0 && name.indexOf('\0') < 0;
+    }
+
+    /** The whole content of an open file, read from its start. */
+    private static byte[] readAll(FileChannel channel) throws IOException {
+        long size = channel.size();
+        if (size > Integer.MAX_VALUE) {
+            throw new IOException("file too large");
+        }
+        ByteBuffer buffer = ByteBuffer.allocate((int) size);
+        channel.position(0);
+        while (buffer.hasRemaining() && channel.read(buffer) >= 0) {
+            // read until full or end of file
+        }
+        return Arrays.copyOf(buffer.array(), buffer.position());
     }
 
     /** Flushes a folder's entries to disk where the platform allows opening a folder (not on Windows). */
