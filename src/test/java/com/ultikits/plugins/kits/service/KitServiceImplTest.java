@@ -3186,6 +3186,34 @@ class KitServiceImplTest {
             assertThat(java.nio.file.Files.readAllBytes(appeared)).isEqualTo(operator);
         }
 
+        /**
+         * A create whose write fails after it claimed its file removes that file again: otherwise the
+         * failure would read as "a file already exists", a retry would be refused, and a reload would
+         * load an empty kit.
+         */
+        @Test
+        @DisplayName("a create whose write fails leaves no claimed file and reports an error")
+        void failedCreateLeavesNoClaimedFile() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(
+                    java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix"), "POSIX permissions");
+            org.junit.jupiter.api.Assumptions.assumeFalse("root".equals(System.getProperty("user.name")),
+                    "root writes a read-only file");
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl failing = spy(new KitServiceImpl(plugin, config) {
+                @Override
+                void claimNewFile(java.nio.file.Path file) throws IOException {
+                    super.claimNewFile(file);
+                    java.nio.file.Files.setPosixFilePermissions(file,
+                            java.nio.file.attribute.PosixFilePermissions.fromString("r--r--r--"));
+                }
+            });
+            doReturn("admin-items").when(failing).serializeItems(any(ItemStack[].class));
+
+            assertThat(failing.createKit(playerWithOneItem(), "broken")).isEqualTo(KitService.CreateResult.ERROR);
+
+            assertThat(new File(tempDir, "kits").list()).isEmpty();
+        }
+
         @Test
         @DisplayName("a create into a kits folder removed since the start recreates the folder")
         void createRecreatesAMissingKitsFolder() throws Exception {

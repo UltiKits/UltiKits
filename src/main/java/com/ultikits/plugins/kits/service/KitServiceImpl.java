@@ -299,6 +299,14 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
+     * Creates the empty file a new kit is about to be written to, failing when it exists. A seam,
+     * package-private so a test can make the write after it fail.
+     */
+    void claimNewFile(Path file) throws IOException {
+        Files.createFile(file);
+    }
+
+    /**
      * Whether a kit name holds a path: a separator ({@code /} or {@code \\}) or {@code ..} anywhere. The
      * rule a sender is told; the file writer's own check ({@link #kitFileFor}) is the authoritative one.
      * <p>
@@ -965,7 +973,7 @@ public class KitServiceImpl implements KitService {
                 File created = targets.get(0);
                 Files.createDirectories(created.getAbsoluteFile().toPath().getParent());
                 try {
-                    Files.createFile(created.toPath());
+                    claimNewFile(created.toPath());
                 } catch (FileAlreadyExistsException appeared) {
                     return false;
                 }
