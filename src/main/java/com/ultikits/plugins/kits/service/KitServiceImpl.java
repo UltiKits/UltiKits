@@ -519,6 +519,32 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
+     * The module-private folder holding the write journal of kit files, beside (not inside) the kits
+     * folder, so the kit loader never reads a journal.
+     */
+    Path journalFolder() {
+        return new File(plugin.getResourceFolderPath(), "kit-journal").toPath();
+    }
+
+    /**
+     * A named point in a kit file write ({@code journal-written}, {@code target-written}). A seam, empty
+     * here, so a test can capture the files on disk at that moment as a crash would leave them.
+     */
+    void checkpoint(String point) {
+    }
+
+    /**
+     * Writes the whole of {@code content} at the channel's position. A seam, package-private so a test
+     * can stop a write part-way.
+     */
+    void writeInPlace(FileChannel channel, byte[] content) throws IOException {
+        ByteBuffer buffer = ByteBuffer.wrap(content);
+        while (buffer.hasRemaining()) {
+            channel.write(buffer);
+        }
+    }
+
+    /**
      * Moves a fully written temporary file over a kit file in one step ({@link StandardCopyOption#ATOMIC_MOVE}).
      * A seam, package-private so a test can make the move fail, or report that the file system does
      * not support an atomic move.

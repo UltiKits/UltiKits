@@ -3066,14 +3066,31 @@ class KitServiceImplTest {
             assertThat(service.getKit("vip")).isNotNull();
         }
 
-        /** A service whose final move of a written temporary file throws {@code failure}. */
-        private KitServiceImpl serviceWhoseMoveFails(IOException failure) {
+        /**
+         * A service whose in-place write of a kit file writes half of the bytes and then fails, for its
+         * first {@code failingCalls} writes: the first write is the new content, the second (after a
+         * failure) is putting the old content back.
+         */
+        private KitServiceImpl serviceWhoseInPlaceWriteFails(int failingCalls, Exception failure) {
+            int[] calls = {0};
             return new KitServiceImpl(plugin, config) {
                 @Override
-                void atomicMove(java.nio.file.Path source, java.nio.file.Path target) throws IOException {
-                    throw failure;
+                void writeInPlace(java.nio.channels.FileChannel channel, byte[] content) throws IOException {
+                    if (calls[0]++ < failingCalls) {
+                        channel.write(java.nio.ByteBuffer.wrap(content, 0, content.length / 2));
+                        if (failure instanceof IOException) {
+                            throw (IOException) failure;
+                        }
+                        throw (RuntimeException) failure;
+                    }
+                    super.writeInPlace(channel, content);
                 }
             };
+        }
+
+        private String[] journalListing() {
+            String[] names = new File(tempDir, "kit-journal").list();
+            return names == null ? new String[0] : names;
         }
 
         private String[] kitsFolderListing() {
@@ -3083,11 +3100,11 @@ class KitServiceImplTest {
         }
 
         @Test
-        @DisplayName("a save whose write fails leaves the kit file byte-for-byte as it was, with no temporary file")
+        @DisplayName("a save whose in-place write fails part-way puts the old content back and leaves no journal")
         void failedSaveLeavesTheFileUnchanged() throws Exception {
             File file = writeKitFile("solo.yml", "old-items");
             byte[] before = bytes(file);
-            KitServiceImpl failing = serviceWhoseMoveFails(new IOException("disk full"));
+            KitServiceImpl failing = serviceWhoseInPlaceWriteFails(1, new IOException("disk full"));
             KitDefinition kit = failing.getKit("solo");
             kit.setItems("new-items");
 
@@ -3095,13 +3112,83 @@ class KitServiceImplTest {
 
             assertThat(bytes(file)).isEqualTo(before);
             assertThat(kitsFolderListing()).containsExactly("solo.yml");
+            assertThat(journalListing()).isEmpty();
+        }
+
+        /**
+         * When the old content cannot be put back either, the kit file is left part-written and the
+         * journal - which holds the complete new content - is kept, so the next start completes the
+         * write (see the replay tests); the console says so.
+         */
+        @Test
+        @DisplayName("a save whose old content cannot be put back keeps the journal and says so")
+        void failedRestoreKeepsTheJournal() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            KitServiceImpl failing = serviceWhoseInPlaceWriteFails(2, new IOException("disk full"));
+            KitDefinition kit = failing.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(failing.saveKitToFile("solo", kit)).isFalse();
+
+            assertThat(journalListing()).containsExactly("solo.yml.journal");
+            ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).error(error.capture());
+            assertThat(error.getAllValues()).anyMatch(line -> line.contains("solo.yml") && line.contains("solo.yml.journal"));
+        }
+
+        /**
+         * The kit file is rewritten in place - opened, truncated, written - never created anew or moved,
+         * so it stays the same file: another hard link to it sees the new content, and its inode,
+         * permission bits and extended attributes are the ones it had.
+         */
+        @Test
+        @DisplayName("a save rewrites the kit file in place: a hard link to it sees the new content")
+        void saveRewritesTheFileInPlace() throws Exception {
+            File file = writeKitFile("solo.yml", "old-items");
+            File outside = new File(tempDir, "outside");
+            outside.mkdirs();
+            java.nio.file.Path hardLink = new File(outside, "hard.yml").toPath();
+            java.nio.file.Files.createLink(hardLink, file.toPath());
+            Object inodeBefore = java.nio.file.Files.getAttribute(file.toPath(), "unix:ino");
+            service = createService();
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(service.saveKitToFile("solo", kit)).isTrue();
+
+            assertThat(java.nio.file.Files.getAttribute(file.toPath(), "unix:ino")).isEqualTo(inodeBefore);
+            assertThat(YamlConfiguration.loadConfiguration(hardLink.toFile()).getString("items")).isEqualTo("new-items");
+            assertThat(kitsFolderListing()).containsExactly("solo.yml");
+            assertThat(journalListing()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("a save keeps the kit file's extended attributes")
+        void saveKeepsExtendedAttributes() throws Exception {
+            File file = writeKitFile("solo.yml", "old-items");
+            java.nio.file.attribute.UserDefinedFileAttributeView view = java.nio.file.Files.getFileAttributeView(
+                    file.toPath(), java.nio.file.attribute.UserDefinedFileAttributeView.class);
+            try {
+                view.write("kit.owner", java.nio.ByteBuffer.wrap("panel".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            } catch (UnsupportedOperationException | IOException | NullPointerException e) {
+                org.junit.jupiter.api.Assumptions.assumeTrue(false, "extended attributes not available: " + e);
+            }
+            service = createService();
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(service.saveKitToFile("solo", kit)).isTrue();
+
+            java.nio.file.attribute.UserDefinedFileAttributeView after = java.nio.file.Files.getFileAttributeView(
+                    file.toPath(), java.nio.file.attribute.UserDefinedFileAttributeView.class);
+            assertThat(after.list()).contains("kit.owner");
         }
 
         @Test
         @DisplayName("a new kit whose first write fails leaves no file behind and is not loaded")
         void failedCreateLeavesNoFile() throws Exception {
             new File(tempDir, "kits").mkdirs();
-            KitServiceImpl failing = spy(serviceWhoseMoveFails(new IOException("disk full")));
+            KitServiceImpl failing = spy(serviceWhoseInPlaceWriteFails(1, new IOException("disk full")));
             doReturn("items").when(failing).serializeItems(any(ItemStack[].class));
             Player player = createMockPlayer();
             ItemStack stone = mockItemStack(Material.STONE);
@@ -3113,43 +3200,7 @@ class KitServiceImplTest {
             assertThat(result).isEqualTo(KitService.CreateResult.ERROR);
             assertThat(new File(tempDir, "kits").list()).isEmpty();
             assertThat(failing.getKit("fresh")).isNull();
-        }
-
-        @Test
-        @DisplayName("a file system that refuses an atomic move still gets the whole new file")
-        void atomicMoveNotSupportedFallsBackToAReplacingMove() throws Exception {
-            File file = writeKitFile("solo.yml", "old-items");
-            KitServiceImpl noAtomic = serviceWhoseMoveFails(
-                    new java.nio.file.AtomicMoveNotSupportedException("a", "b", "not supported"));
-            KitDefinition kit = noAtomic.getKit("solo");
-            kit.setItems("new-items");
-
-            assertThat(noAtomic.saveKitToFile("solo", kit)).isTrue();
-
-            assertThat(YamlConfiguration.loadConfiguration(file).getString("items")).isEqualTo("new-items");
-            assertThat(kitsFolderListing()).containsExactly("solo.yml");
-        }
-
-        @Test
-        @DisplayName("a save replaces the existing kit file through the atomic move and leaves no temporary file")
-        void saveReplacesTheExistingFile() throws Exception {
-            File file = writeKitFile("solo.yml", "old-items");
-            java.util.List<java.nio.file.Path> moved = new java.util.ArrayList<>();
-            KitServiceImpl recording = new KitServiceImpl(plugin, config) {
-                @Override
-                void atomicMove(java.nio.file.Path source, java.nio.file.Path target) throws IOException {
-                    moved.add(target);
-                    super.atomicMove(source, target);
-                }
-            };
-            KitDefinition kit = recording.getKit("solo");
-            kit.setItems("new-items");
-
-            assertThat(recording.saveKitToFile("solo", kit)).isTrue();
-
-            assertThat(moved).containsExactly(file.toPath());
-            assertThat(YamlConfiguration.loadConfiguration(file).getString("items")).isEqualTo("new-items");
-            assertThat(kitsFolderListing()).containsExactly("solo.yml");
+            assertThat(journalListing()).isEmpty();
         }
 
         /**
@@ -3162,12 +3213,7 @@ class KitServiceImplTest {
         void uncheckedWriteFailureKeepsLiveItems() throws Exception {
             File file = writeKitFile("solo.yml", "old-items");
             byte[] before = bytes(file);
-            KitServiceImpl failing = spy(new KitServiceImpl(plugin, config) {
-                @Override
-                void atomicMove(java.nio.file.Path source, java.nio.file.Path target) {
-                    throw new SecurityException("write denied");
-                }
-            });
+            KitServiceImpl failing = spy(serviceWhoseInPlaceWriteFails(1, new SecurityException("write denied")));
             doReturn("new-items").when(failing).serializeItems(any(ItemStack[].class));
 
             KitService.SaveResult result = failing.saveKitItems("solo", new ItemStack[]{mockItemStack(Material.STONE)});
@@ -3235,37 +3281,6 @@ class KitServiceImplTest {
          * Discriminates only under a umask wider than {@code 077} (for example the usual {@code 022}):
          * under {@code 077} every new file is {@code rw-------} anyway.
          */
-        /**
-         * The kit's content must never sit in a file more readable than the kit file itself: the
-         * temporary file takes the replaced file's permissions before anything is written into it.
-         * Discriminates only under a umask wider than {@code 077}.
-         */
-        @Test
-        @DisplayName("the temporary file is already as restricted as the kit file when the content is written")
-        void tempIsRestrictedBeforeContentIsWritten() throws Exception {
-            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
-            File file = writeKitFile("solo.yml", "old-items");
-            java.nio.file.Files.setPosixFilePermissions(file.toPath(),
-                    java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
-            java.util.List<String> modesAtWrite = new java.util.ArrayList<>();
-            KitServiceImpl observing = new KitServiceImpl(plugin, config) {
-                @Override
-                void writeContent(java.nio.file.Path temp, java.nio.channels.FileChannel channel, byte[] content)
-                        throws IOException {
-                    modesAtWrite.add(java.nio.file.attribute.PosixFilePermissions.toString(
-                            java.nio.file.Files.getPosixFilePermissions(temp)));
-                    super.writeContent(temp, channel, content);
-                }
-            };
-            KitDefinition kit = observing.getKit("solo");
-            kit.setItems("new-items");
-
-            assertThat(observing.saveKitToFile("solo", kit)).isTrue();
-
-            assertThat(modesAtWrite).containsExactly("rw-------");
-            assertThat(mode(file)).isEqualTo("rw-------");
-        }
-
         @Test
         @DisplayName("a new kit file gets the same permission bits as any file the server creates there")
         void newFileGetsTheDefaultMode() throws Exception {
@@ -3404,101 +3419,6 @@ class KitServiceImplTest {
             KitService.SaveResult result = spyService.saveKitItems("vip", new ItemStack[]{mockItemStack(Material.STONE)});
 
             assertThat(result).isEqualTo(KitService.SaveResult.FILE_CONFLICT);
-        }
-
-        /**
-         * On a file system with access-control lists (Windows) a replaced kit file must keep its own
-         * list rather than inherit the folder's, which could grant access an operator removed. The
-         * build runs on a file system without ACLs, so the copy is pinned on the views directly.
-         */
-        @Test
-        @DisplayName("the replacement file gets the replaced file's access-control list")
-        void aclIsCopied() throws Exception {
-            java.nio.file.attribute.AclFileAttributeView from = mock(java.nio.file.attribute.AclFileAttributeView.class);
-            java.nio.file.attribute.AclFileAttributeView to = mock(java.nio.file.attribute.AclFileAttributeView.class);
-            java.util.List<java.nio.file.attribute.AclEntry> acl = Collections.singletonList(
-                    java.nio.file.attribute.AclEntry.newBuilder()
-                            .setType(java.nio.file.attribute.AclEntryType.DENY)
-                            .setPrincipal(mock(java.nio.file.attribute.UserPrincipal.class))
-                            .setPermissions(java.nio.file.attribute.AclEntryPermission.READ_DATA)
-                            .build());
-            when(from.getAcl()).thenReturn(acl);
-
-            KitServiceImpl.copyAcl(from, to);
-
-            verify(to).setAcl(acl);
-        }
-
-        @Test
-        @DisplayName("the replacement file gets the replaced file's owner, whichever owner view there is")
-        void ownerIsCopied() throws Exception {
-            java.nio.file.attribute.FileOwnerAttributeView from = mock(java.nio.file.attribute.FileOwnerAttributeView.class);
-            java.nio.file.attribute.FileOwnerAttributeView to = mock(java.nio.file.attribute.FileOwnerAttributeView.class);
-            java.nio.file.attribute.UserPrincipal owner = mock(java.nio.file.attribute.UserPrincipal.class);
-            when(from.getOwner()).thenReturn(owner);
-
-            KitServiceImpl.copyOwner(from, to);
-
-            verify(to).setOwner(owner);
-        }
-
-        @Test
-        @DisplayName("an owner the server may not assign leaves the save going")
-        void ownerThatCannotBeSetIsLeft() throws Exception {
-            java.nio.file.attribute.FileOwnerAttributeView from = mock(java.nio.file.attribute.FileOwnerAttributeView.class);
-            java.nio.file.attribute.FileOwnerAttributeView to = mock(java.nio.file.attribute.FileOwnerAttributeView.class);
-            java.nio.file.attribute.UserPrincipal owner = mock(java.nio.file.attribute.UserPrincipal.class);
-            when(from.getOwner()).thenReturn(owner);
-            doThrow(new java.nio.file.AccessDeniedException("temp")).when(to).setOwner(owner);
-
-            KitServiceImpl.copyOwner(from, to);
-
-            verify(to).setOwner(owner);
-        }
-
-        @Test
-        @DisplayName("the replacement file gets the replaced file's hidden, system and archive flags")
-        void dosFlagsAreCopied() throws Exception {
-            java.nio.file.attribute.DosFileAttributeView from = mock(java.nio.file.attribute.DosFileAttributeView.class);
-            java.nio.file.attribute.DosFileAttributeView to = mock(java.nio.file.attribute.DosFileAttributeView.class);
-            java.nio.file.attribute.DosFileAttributes attributes = mock(java.nio.file.attribute.DosFileAttributes.class);
-            when(from.readAttributes()).thenReturn(attributes);
-            when(attributes.isHidden()).thenReturn(true);
-            when(attributes.isSystem()).thenReturn(false);
-            when(attributes.isArchive()).thenReturn(true);
-
-            KitServiceImpl.copyDosFlags(from, to);
-
-            verify(to).setHidden(true);
-            verify(to).setSystem(false);
-            verify(to).setArchive(true);
-        }
-
-        @Test
-        @DisplayName("the replacement file gets the replaced file's creation time")
-        void creationTimeIsCopied() throws Exception {
-            java.nio.file.attribute.BasicFileAttributeView from = mock(java.nio.file.attribute.BasicFileAttributeView.class);
-            java.nio.file.attribute.BasicFileAttributeView to = mock(java.nio.file.attribute.BasicFileAttributeView.class);
-            java.nio.file.attribute.BasicFileAttributes attributes = mock(java.nio.file.attribute.BasicFileAttributes.class);
-            java.nio.file.attribute.FileTime created = java.nio.file.attribute.FileTime.fromMillis(1_000_000L);
-            when(from.readAttributes()).thenReturn(attributes);
-            when(attributes.creationTime()).thenReturn(created);
-
-            KitServiceImpl.copyCreationTime(from, to);
-
-            verify(to).setTimes(null, null, created);
-        }
-
-        @Test
-        @DisplayName("without an access-control list on either side nothing is copied")
-        void noAclNoCopy() throws Exception {
-            java.nio.file.attribute.AclFileAttributeView view = mock(java.nio.file.attribute.AclFileAttributeView.class);
-
-            KitServiceImpl.copyAcl(null, view);
-            KitServiceImpl.copyAcl(view, null);
-
-            verify(view, never()).setAcl(any());
-            verify(view, never()).getAcl();
         }
 
         /**
@@ -4222,7 +4142,7 @@ class KitServiceImplTest {
         /**
          * The example kit is written like any kit file: a copy that fails part-way leaves no
          * {@code starter.yml} (which would stop the next start from copying it again) and no
-         * temporary file. The control shows the jar's example really is copied when nothing fails.
+         * journal. The control shows the jar's example really is copied when nothing fails.
          */
         @Test
         @DisplayName("a failed copy of the example kit leaves no partial starter.yml")
@@ -4230,7 +4150,8 @@ class KitServiceImplTest {
             File folder = new File(tempDir, "kits");
             new KitServiceImpl(plugin, config) {
                 @Override
-                void atomicMove(java.nio.file.Path source, java.nio.file.Path target) throws IOException {
+                void writeInPlace(java.nio.channels.FileChannel channel, byte[] content) throws IOException {
+                    channel.write(java.nio.ByteBuffer.wrap(content, 0, content.length / 2));
                     throw new IOException("disk full");
                 }
             };
