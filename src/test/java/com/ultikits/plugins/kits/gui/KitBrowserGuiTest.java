@@ -11,6 +11,7 @@ import mc.obliviate.inventory.Gui;
 import mc.obliviate.inventory.Icon;
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.Plugin;
@@ -901,6 +902,65 @@ class KitBrowserGuiTest {
             ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
             verify(player).sendMessage(captor.capture());
             assertThat(captor.getValue()).contains("领取礼包时发生错误");
+        }
+
+        @Test
+        @DisplayName("NOT_RECORDED tells the player nothing was charged or given and keeps the browser open (UltiKits/UltiKits#26)")
+        void notRecordedSaysNothingWasChargedOrGiven() {
+            setEconomyAvailable(true);
+            KitDefinition kit = createKit("paid", "&6Paid", "CHEST", 50.0, 0);
+            when(kitService.claimKit(player, "paid")).thenReturn(KitService.ClaimResult.NOT_RECORDED);
+
+            gui.handleKitClick(kit);
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + CatalogueText.text("zh", "kits.claim.not_recorded"));
+            assertThat(captor.getAllValues()).noneMatch(m -> m.contains("已扣除"));
+            verify(player, never()).closeInventory();
+        }
+
+        @Test
+        @DisplayName("NOT_RECORDED_REFUND_FAILED has its own reply and never says a price was deducted or returned")
+        void notRecordedRefundFailedHasItsOwnReply() {
+            setEconomyAvailable(true);
+            KitDefinition kit = createKit("paid", "&6Paid", "CHEST", 50.0, 0);
+            when(kitService.claimKit(player, "paid")).thenReturn(KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED);
+
+            gui.handleKitClick(kit);
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + CatalogueText.text("zh", "kits.claim.not_recorded_refund_failed"));
+        }
+
+        /**
+         * Sweep by class, the browser's copy of the command test: a result this switch forgets falls
+         * to {@code default:} and says "Error claiming kit", which is true of no result but
+         * {@code ERROR}.
+         */
+        @Test
+        @DisplayName("every claim result other than ERROR has its own reply, never the generic error")
+        void everyResultHasItsOwnReply() throws Exception {
+            String generic = CatalogueText.text("zh", "kits.claim.error");
+            lenient().when(kitService.formatCooldown(anyLong())).thenReturn("1s");
+            KitDefinition kit = createKit("k", "&fK", "CHEST", 0, 0);
+            for (KitService.ClaimResult result : KitService.ClaimResult.values()) {
+                if (result == KitService.ClaimResult.ERROR) {
+                    continue;
+                }
+                reset(player);
+                resetDebounce();
+                when(kitService.claimKit(player, "k")).thenReturn(result);
+
+                gui.handleKitClick(kit);
+
+                ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+                verify(player, atLeastOnce()).sendMessage(captor.capture());
+                assertThat(captor.getAllValues()).as(result.name()).noneMatch(m -> m.contains(generic));
+            }
         }
 
         /**

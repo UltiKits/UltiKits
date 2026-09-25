@@ -5,10 +5,12 @@ import com.ultikits.plugins.kits.entity.KitClaimData;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
 import com.ultikits.ultitools.annotations.Service;
+import com.ultikits.ultitools.exceptions.DataAccessException;
 import com.ultikits.ultitools.interfaces.DataOperator;
 import com.ultikits.ultitools.interfaces.impl.logger.PluginLogger;
 import com.ultikits.ultitools.utils.EconomyUtils;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
@@ -19,7 +21,13 @@ import org.yaml.snakeyaml.external.biz.base64Coder.Base64Coder;
 
 import javax.annotation.Nullable;
 import java.io.*;
+import java.nio.file.DirectoryIteratorException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -82,13 +90,27 @@ public class KitServiceImpl implements KitService {
         }
 
         int loadedCount = 0;
+        Map<String, List<File>> filesByKit = new LinkedHashMap<>();
+        Map<String, File> loadedFrom = new HashMap<>();
         for (File file : files) {
+            String kitName = kitNameOf(file);
+            filesByKit.computeIfAbsent(kitName, name -> new ArrayList<>()).add(file);
             KitDefinition kit = parseKitFile(file);
             if (kit != null) {
-                String kitName = file.getName().replace(".yml", "").toLowerCase();
                 kit.setName(kitName);
                 kits.put(kitName, kit);
+                loadedFrom.put(kitName, file);
                 loadedCount++;
+            }
+        }
+        // Loading is unchanged when several files define one kit (the last one listed wins, as
+        // before), but that kit is no longer saved or deleted, so the console names the files.
+        for (Map.Entry<String, List<File>> entry : filesByKit.entrySet()) {
+            File loaded = loadedFrom.get(entry.getKey());
+            if (entry.getValue().size() > 1 && loaded != null) {
+                logger.warn(String.format(plugin.i18n("kits.log.kit_file_conflict"),
+                        kitsFolder.getAbsolutePath(), entry.getKey(),
+                        String.join(", ", fileNames(entry.getValue())), loaded.getName()));
             }
         }
 
@@ -129,9 +151,23 @@ public class KitServiceImpl implements KitService {
         if (normalizedName.isEmpty() || normalizedName.length() > 32) {
             return CreateResult.INVALID_NAME;
         }
+        // The name becomes kits/<name>.yml; a path in it would write outside the kits folder.
+        if (nameHasPath(normalizedName)) {
+            return CreateResult.NAME_HAS_PATH;
+        }
 
         if (kits.get(normalizedName) != null) {
             return CreateResult.ALREADY_EXISTS;
+        }
+        // Files that load as this name but did not parse still decide which one the next reload
+        // reads, so a name several of them share is refused like a save.
+        if (!conflictingFiles(normalizedName).isEmpty()) {
+            return CreateResult.FILE_CONFLICT;
+        }
+        // A create only ever creates: a file that already loads as this name (placed by hand without a
+        // reload, or unreadable) is left as it is.
+        if (!kitFileNames(normalizedName).isEmpty()) {
+            return CreateResult.FILE_EXISTS;
         }
 
         // Filter out air and null items from player inventory
@@ -155,29 +191,191 @@ public class KitServiceImpl implements KitService {
         kit.setIcon(validItems[0].getType().name());
         kit.setItems(serializedItems);
 
-        // Save to YAML
-        if (!saveKitToFile(normalizedName, kit)) {
-            return CreateResult.ERROR;
+        // Save to YAML; the writer refuses a file that appeared after the checks above.
+        if (!saveKitToFile(normalizedName, kit, true)) {
+            if (!conflictingFiles(normalizedName).isEmpty()) {
+                return CreateResult.FILE_CONFLICT;
+            }
+            return kitFileNames(normalizedName).isEmpty() ? CreateResult.ERROR : CreateResult.FILE_EXISTS;
         }
 
         kits.put(normalizedName, kit);
         return CreateResult.SUCCESS;
     }
 
+    /**
+     * Deletes a kit: its file first, then its catalogue entry, and the catalogue entry only when the
+     * file is really gone.
+     * <p>
+     * {@link #loadKits()} rebuilds the catalogue from the files in the kits folder, so a kit whose
+     * file survived a delete comes back on the next {@code /kits reload} or restart. Removing it from
+     * the catalogue anyway - which this method used to do, discarding {@link File#delete()}'s result -
+     * told the admin a kit was gone that would return, and a kit deleted because it was mispriced or
+     * handed out something it should not was claimable again after the reload (UltiKits/UltiKits#23).
+     * When the file cannot be removed the kit therefore stays loaded, the result says so, and a
+     * console warning names the path so the operator can see which file and fix its permissions.
+     * <p>
+     * 先删文件，文件确实不在了才从目录中移除礼包；删除失败时保留礼包、返回失败并记录包含路径的警告。
+     *
+     * @param name the kit's name / 礼包名
+     * @return the outcome, never null / 结果，不为 null
+     */
     @Override
-    public boolean deleteKit(String name) {
+    public DeleteResult deleteKit(String name) {
         String normalizedName = name.toLowerCase().trim();
         if (kits.get(normalizedName) == null) {
-            return false;
+            return DeleteResult.NOT_FOUND;
         }
 
-        File kitFile = new File(plugin.getResourceFolderPath(), "kits/" + normalizedName + ".yml");
-        if (kitFile.exists()) {
-            kitFile.delete(); // NOPMD
+        // Every file that loads as this kit, found the way loadKits maps files to names - not a
+        // rebuilt "<name>.yml", which misses a hand-placed "VIP.yml" on a case-sensitive file system.
+        List<File> kitFiles = kitFilesOf(normalizedName);
+        if (kitFiles == null) {
+            // The folder could not be listed, which is not the same as "no file": the kit's file may
+            // still be there and load again on the next reload.
+            logger.warn(String.format(plugin.i18n("kits.log.kits_folder_unreadable"), kitsFolder().getAbsolutePath(),
+                    normalizedName));
+            return DeleteResult.FILE_NOT_DELETED;
+        }
+        if (kitFiles.size() > 1) {
+            // Deleting them one by one can stop part-way and leave a different file to load next
+            // time, so none is removed until only one file defines the kit.
+            return DeleteResult.FILE_CONFLICT;
+        }
+        boolean survived = false;
+        for (File kitFile : kitFiles) {
+            try {
+                deleteKitFile(kitFile);
+            } catch (NoSuchFileException gone) {
+                // Another process removed it first: it is gone, which is what the admin asked for.
+            } catch (IOException e) {
+                // Any other reason is a failure. The delete reports it; no existence check is asked
+                // afterwards, because in a folder the server may list but not search File#exists
+                // answers false for a file that is still there.
+                logger.warn(String.format(plugin.i18n("kits.log.delete_file_failed"), kitFile.getAbsolutePath()));
+                survived = true;
+            }
+        }
+        if (survived) {
+            return DeleteResult.FILE_NOT_DELETED;
         }
 
         kits.remove(normalizedName);
-        return true;
+        return DeleteResult.DELETED;
+    }
+
+    /**
+     * The kit name a file in the kits folder loads as. The one mapping {@link #loadKits()},
+     * {@link #deleteKit} and {@link #saveKitToFile} share, so "the kit's file" is decided in one place:
+     * rebuilding a path from the kit's name missed a file whose name has capitals.
+     * <p>
+     * 文件对应的礼包名；加载、删除和保存共用这一映射。
+     */
+    static String kitNameOf(File file) {
+        return file.getName().replace(".yml", "").toLowerCase();
+    }
+
+    /**
+     * Every {@code .yml} file in the kits folder that loads as {@code kitName}: empty when none does, and
+     * {@code null} when the folder could not be listed - a caller must not read a failed scan as "no file".
+     */
+    @Nullable
+    private List<File> kitFilesOf(String kitName) {
+        File[] files = listKitFiles(kitsFolder());
+        if (files == null) {
+            return null;
+        }
+        List<File> matches = new ArrayList<>();
+        for (File file : files) {
+            if (kitNameOf(file).equals(kitName)) {
+                matches.add(file);
+            }
+        }
+        return matches;
+    }
+
+    private File kitsFolder() {
+        return new File(plugin.getResourceFolderPath(), "kits");
+    }
+
+    /**
+     * Creates the empty file a new kit is about to be written to, failing when it exists. A seam,
+     * package-private so a test can make the write after it fail.
+     */
+    void claimNewFile(Path file) throws IOException {
+        Files.createFile(file);
+    }
+
+    /**
+     * Whether a kit name holds a path: a separator ({@code /} or {@code \\}) or {@code ..} anywhere. The
+     * rule a sender is told; the file writer's own check ({@link #kitFileFor}) is the authoritative one.
+     * <p>
+     * 礼包名是否包含路径（分隔符或 {@code ..}）。
+     */
+    static boolean nameHasPath(String name) {
+        return name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.contains("..");
+    }
+
+    /**
+     * The file a new kit named {@code name} is written to - {@code <name>.yml} directly in the kits
+     * folder - or {@code null} when that file would be anywhere else. This is the one place a kit name
+     * becomes a path; every other file this module opens comes from listing the kits folder.
+     */
+    @Nullable
+    private File kitFileFor(String name) {
+        Path folder = kitsFolder().getAbsoluteFile().toPath().normalize();
+        Path file;
+        try {
+            file = folder.resolve(name + ".yml").normalize();
+        } catch (InvalidPathException notAPath) {
+            // A name the platform cannot make a path of (a NUL; * or ? on Windows).
+            return null;
+        }
+        if (!folder.equals(file.getParent())) {
+            return null;
+        }
+        return file.toFile();
+    }
+
+    /**
+     * Lists the kit files in a folder: empty when the folder does not exist, {@code null} when it exists
+     * but cannot be listed. Read through {@link Files#newDirectoryStream}, which says why a listing
+     * failed, because {@link File#listFiles} answers {@code null} for both - and a missing folder holds
+     * no file, while an unreadable one may. A seam, package-private so a test can make the listing fail
+     * without depending on file permissions.
+     * <p>
+     * 列出文件夹中的礼包文件：文件夹不存在时为空，存在但无法读取时为 {@code null}。包级可见，供测试模拟读取失败。
+     */
+    @Nullable
+    File[] listKitFiles(File folder) {
+        List<File> files = new ArrayList<>();
+        try (DirectoryStream<Path> stream =
+                     Files.newDirectoryStream(folder.toPath(), path -> path.getFileName().toString().endsWith(".yml"))) {
+            for (Path path : stream) {
+                files.add(path.toFile());
+            }
+        } catch (NoSuchFileException missing) {
+            return new File[0];
+        } catch (IOException | DirectoryIteratorException e) {
+            return null;
+        }
+        return files.toArray(new File[0]);
+    }
+
+    /**
+     * Deletes one kit file through {@link Files#delete}, which says why it failed instead of answering
+     * {@code false}: {@link NoSuchFileException} when the file is already gone, another
+     * {@link IOException} when it could not be removed. A seam, package-private so a test can make the
+     * deletion fail: a permission-based test is not one, because a build running as root deletes a
+     * read-only file.
+     * <p>
+     * 通过 {@link Files#delete} 删除单个礼包文件，失败时给出原因；包级可见，供测试模拟删除失败。
+     *
+     * @param kitFile the file to delete / 要删除的文件
+     * @throws IOException when the file could not be deleted / 无法删除时抛出
+     */
+    void deleteKitFile(File kitFile) throws IOException {
+        Files.delete(kitFile.toPath());
     }
 
     /**
@@ -215,9 +413,46 @@ public class KitServiceImpl implements KitService {
         if (serialized == null) {
             return SaveResult.FAILED;
         }
+        // Two files loading as one kit: writing one leaves the other to win or lose in directory
+        // order, and writing both can stop half-way, so nothing is written until one file remains.
+        if (!conflictingFiles(kit.getName()).isEmpty()) {
+            return SaveResult.FILE_CONFLICT;
+        }
 
+        // The live kit keeps the new items only when the file took them: after a failed save the
+        // editor reports the failure, so a claim must still hand out what the file holds.
+        String previous = kit.getItems();
         kit.setItems(serialized);
-        return saveKitToFile(kit.getName(), kit) ? SaveResult.SUCCESS : SaveResult.FAILED;
+        if (!saveKitToFile(kit.getName(), kit)) {
+            kit.setItems(previous);
+            // The writer also refuses a second file that appeared after the check above.
+            return conflictingFiles(kit.getName()).isEmpty() ? SaveResult.FAILED : SaveResult.FILE_CONFLICT;
+        }
+        return SaveResult.SUCCESS;
+    }
+
+    @Override
+    public List<String> conflictingFiles(String kitName) {
+        List<File> files = kitFilesOf(kitName.toLowerCase().trim());
+        if (files == null || files.size() < 2) {
+            return Collections.emptyList();
+        }
+        return fileNames(files);
+    }
+
+    @Override
+    public List<String> kitFileNames(String kitName) {
+        List<File> files = kitFilesOf(kitName.toLowerCase().trim());
+        return files == null ? Collections.emptyList() : fileNames(files);
+    }
+
+    private static List<String> fileNames(List<File> files) {
+        List<String> names = new ArrayList<>();
+        for (File file : files) {
+            names.add(file.getName());
+        }
+        Collections.sort(names);
+        return names;
     }
 
     /**
@@ -262,7 +497,7 @@ public class KitServiceImpl implements KitService {
             return ClaimResult.EMPTY_KIT;
         }
 
-        if (countEmptySlots(player) < items.length) {
+        if (!fitsInStorage(player, items)) {
             return ClaimResult.INVENTORY_FULL;
         }
 
@@ -316,45 +551,104 @@ public class KitServiceImpl implements KitService {
         return getRemainingCooldown(player, kit) > 0 ? ClaimResult.ON_COOLDOWN : null;
     }
 
-    private int countEmptySlots(Player player) {
-        int count = 0;
-        for (ItemStack slot : player.getInventory().getStorageContents()) {
-            if (slot == null || slot.getType() == Material.AIR) {
-                count++;
+    /**
+     * Whether the kit's stacks fit the player's storage slots, worked out the way {@code addItem} fills
+     * them: each stack first tops up matching partial stacks ({@link ItemStack#isSimilar}) - those the
+     * player holds and those an earlier stack of this kit started - and then takes empty slots, every
+     * slot holding at most the stack's <b>own</b> maximum stack size ({@link ItemStack#getMaxStackSize()},
+     * which reads a {@code max_stack_size} component), capped by the inventory's maximum when that is
+     * lower.
+     * <p>
+     * One slot per stack was not the answer: a stack larger than its maximum - which another plugin, or
+     * a component, can put into an inventory that {@code /kits create} then captures - is split across
+     * several slots, so 128 cobblestone needs two; counting one let the claim pass, and {@code addItem}'s
+     * leftovers were then discarded after the player had paid (UltiKits/UltiKits#24). Counting only
+     * empty slots over-reserved instead, refusing a claim that fits into room left in a partial stack.
+     * Anything this still gets wrong is dropped at the player's feet by {@link #giveOrDrop}, never
+     * destroyed.
+     * <p>
+     * 按背包实际的放置方式判断能否放下：先补满相同物品的未满堆，再占用空格，每格上限为物品堆自身的最大堆叠数。
+     */
+    private boolean fitsInStorage(Player player, ItemStack[] items) {
+        ItemStack[] contents = player.getInventory().getStorageContents();
+        int inventoryMax = player.getInventory().getMaxStackSize();
+        ItemStack[] slots = new ItemStack[contents.length];
+        int[] amounts = new int[contents.length];
+        for (int i = 0; i < contents.length; i++) {
+            ItemStack stack = contents[i];
+            if (stack != null && stack.getType() != Material.AIR) {
+                slots[i] = stack;
+                amounts[i] = stack.getAmount();
             }
         }
-        return count;
+        for (ItemStack item : items) {
+            if (item == null) {
+                continue;
+            }
+            int perSlot = Math.max(1, item.getMaxStackSize());
+            if (inventoryMax > 0) {
+                perSlot = Math.min(perSlot, inventoryMax);
+            }
+            int remaining = Math.max(1, item.getAmount());
+            for (int i = 0; i < slots.length && remaining > 0; i++) {
+                if (slots[i] != null && amounts[i] < perSlot && slots[i].isSimilar(item)) {
+                    int moved = Math.min(perSlot - amounts[i], remaining);
+                    amounts[i] += moved;
+                    remaining -= moved;
+                }
+            }
+            for (int i = 0; i < slots.length && remaining > 0; i++) {
+                if (slots[i] == null) {
+                    slots[i] = item;
+                    amounts[i] = Math.min(perSlot, remaining);
+                    remaining -= amounts[i];
+                }
+            }
+            if (remaining > 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
-     * Charges for the kit, then delivers it. The order is the load-bearing part.
+     * Charges for the kit, records the claim, then delivers it. The order is the load-bearing part.
      * <p>
      * The price is taken <b>first</b> and its result checked, so a refused payment leaves nothing
-     * half-applied - no items, no reward commands, no claim record. Paying after delivery was
+     * half-applied - no claim record, no items, no reward commands. Paying after delivery was
      * rejected: undoing a delivery means reclaiming items the player may already have moved,
-     * equipped or traded, which is not a compensation anyone can trust.
+     * equipped or traded, which is not a compensation anyone can trust (UltiKits/UltiKits#20).
      * <p>
-     * After the money moves, the claim record is written <b>before</b> the reward commands, because
-     * those commands are the step most likely to fail: {@code player.performCommand} propagates
-     * {@code CommandException} out of any third-party executor that throws, and a kit pointing at a
-     * broken command would otherwise take the money, hand over the items and never record the
-     * claim - silently making a one-time kit claimable again, which is the whole product of a
-     * one-time kit. No <em>reordering</em> here can produce "recorded but not delivered", because the
-     * record is written after the items have been added to the inventory - subject to the
-     * pre-existing overflow path this ordering does not address, where {@code countEmptySlots}
-     * counts stacks against slots and {@code addItem}'s leftovers are discarded, so an over-sized
-     * stack can be recorded as claimed while only partly delivered (UltiKits/UltiKits#24).
+     * The claim record is written <b>second</b>, before anything is handed over, and a record that
+     * cannot be written refuses the claim: the price is refunded, nothing is given, no command runs,
+     * and the player is told to try again. This is the maintainer's decision of 2026-09-24 for a
+     * one-time claim whose record cannot be written - write the record first, refuse on a failed
+     * write, and for a paid kit keep the charge-first order and refund (UltiKits/UltiKits#26). The
+     * previous order handed the items over first, and because {@link #getClaimData} re-reads the
+     * table on every claim, a write that failed made a one-time kit claimable again at once. Both
+     * write failures are caught: the checked {@code IllegalAccessException} {@code update} declares
+     * and the unchecked {@code DataAccessException} the relational backends throw on any SQL error.
      * <p>
-     * The cost of putting the record first, stated rather than left implicit: a storage fault in
-     * {@code updateClaimData} now also skips the reward commands, where the previous order would
-     * have run them. That is the favourable side of the trade - a claim that goes unrecorded now
-     * duplicates fewer effects when it is made again - but it is a real change, and what to do
-     * about the unguarded write itself is owned by UltiKits/UltiKits#26, not decided here.
+     * Then the items: every stack lands in the inventory or is dropped at the player's feet, never
+     * discarded - {@link #claimKit} refuses before charging unless the slots each stack really needs
+     * are free ({@link #fitsInStorage}), and {@code addItem}'s leftovers are dropped
+     * (UltiKits/UltiKits#24). The reward commands run last, after the record, because they are the
+     * step most likely to throw ({@code player.performCommand} propagates a third-party executor's
+     * {@code CommandException}).
      * <p>
-     * 顺序：先扣款并检查结果，再发放物品，随后写入领取记录，最后执行奖励命令。
+     * What this order costs, as the decision accepted it: while the claim table cannot be written,
+     * nobody can claim a kit; and if the refund fails too, the player has paid for nothing until an
+     * operator refunds them by hand - the result says so to the player, never "nothing was charged",
+     * and an ERROR names the player, the kit and the amount. A reward command that fails after the
+     * record is not retried. On the JSON storage backend a write only reaches an in-memory cache that
+     * a timer flushes to disk, so a disk failure there cannot be seen at claim time; that is the
+     * framework's storage contract and is not changed here.
+     * <p>
+     * 顺序：先扣款并检查结果，再写入领取记录（写入失败则退款并拒绝领取），然后发放物品，最后执行奖励命令。
      *
-     * @return {@link ClaimResult#PAYMENT_FAILED} when the price could not be withdrawn, otherwise
-     *         {@link ClaimResult#SUCCESS}
+     * @return {@link ClaimResult#PAYMENT_FAILED} when the price could not be withdrawn,
+     *         {@link ClaimResult#NOT_RECORDED} or {@link ClaimResult#NOT_RECORDED_REFUND_FAILED} when
+     *         the claim record could not be written, otherwise {@link ClaimResult#SUCCESS}
      */
     private ClaimResult deliverKit(Player player, KitDefinition kit, ItemStack[] items) {
         // No isAvailable() term here on purpose: it would short-circuit this whole condition to
@@ -369,13 +663,68 @@ public class KitServiceImpl implements KitService {
             warnRefusedWithdrawalOnce(player, kit);
             return ClaimResult.PAYMENT_FAILED;
         }
-        for (ItemStack item : items) {
-            player.getInventory().addItem(item.clone());
+        if (!updateClaimData(player.getUniqueId(), kit.getName())) {
+            return refuseUnrecordedClaim(player, kit);
         }
-        updateClaimData(player.getUniqueId(), kit.getName());
+        giveOrDrop(player, items);
         executePlayerCommands(player, kit.getPlayerCommands());
         executeConsoleCommands(player, kit.getConsoleCommands());
         return ClaimResult.SUCCESS;
+    }
+
+    /**
+     * Refuses a claim whose record could not be written, after the price - if any - was taken:
+     * refunds it, and when the refund fails as well, logs an ERROR naming the player, the kit and
+     * the amount so an operator can refund by hand, and returns a result whose reply does not claim
+     * the money came back (UltiKits/UltiKits#26).
+     * <p>
+     * 领取记录写入失败时拒绝领取：退款；退款也失败时记录包含玩家、礼包和金额的错误日志。
+     */
+    private ClaimResult refuseUnrecordedClaim(Player player, KitDefinition kit) {
+        if (kit.isFree() || refund(player, kit.getPrice())) {
+            return ClaimResult.NOT_RECORDED;
+        }
+        logger.error(String.format(plugin.i18n("kits.log.refund_failed"), player.getName(), kit.getName(),
+                kit.getPrice()));
+        return ClaimResult.NOT_RECORDED_REFUND_FAILED;
+    }
+
+    /** Returns the price to the player; an economy that throws counts as a failed refund. */
+    private boolean refund(Player player, double amount) {
+        try {
+            return EconomyUtils.deposit(player, amount);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Adds each item to the player's inventory and drops whatever {@code addItem} hands back at the
+     * player's location - each leftover exactly once - telling the player when anything was dropped.
+     * The module-wide precedent for items owed to a player: UltiMail's {@code ItemReturns#giveOrDrop}
+     * and UltiTrade's {@code TradeService#giveOrDrop} (UltiKits/UltiKits#24).
+     * <p>
+     * 逐个发放物品；放不下的部分掉落在玩家脚下（每份只掉落一次），并提示玩家。
+     */
+    private void giveOrDrop(Player player, ItemStack[] items) {
+        boolean dropped = false;
+        for (ItemStack item : items) {
+            if (item == null) {
+                // The claim is already recorded, so nothing here may throw half-way through.
+                continue;
+            }
+            Map<Integer, ItemStack> leftovers = player.getInventory().addItem(item.clone());
+            if (leftovers == null) {
+                continue;
+            }
+            for (ItemStack leftover : leftovers.values()) {
+                player.getWorld().dropItemNaturally(player.getLocation(), leftover);
+                dropped = true;
+            }
+        }
+        if (dropped) {
+            player.sendMessage(ChatColor.YELLOW + plugin.i18n("kits.claim.leftovers_dropped"));
+        }
     }
 
     /**
@@ -489,26 +838,42 @@ public class KitServiceImpl implements KitService {
                 .orElse(null);
     }
 
-    void updateClaimData(UUID playerUuid, String kitName) {
-        KitClaimData existing = getClaimData(playerUuid, kitName);
+    /**
+     * Writes a claim: a new row on the first claim, the existing row's time and count after that.
+     * <p>
+     * Returns whether the write happened, and never throws for a storage failure: the relational
+     * backends throw the unchecked {@link DataAccessException} on any SQL error - from {@code insert},
+     * {@code update} or the read before them - and {@code update} also declares
+     * {@code IllegalAccessException}. The caller refuses the claim on {@code false}
+     * (UltiKits/UltiKits#26); before, the {@code insert} was unguarded and only the checked exception
+     * was caught, so a database error escaped after the kit had been handed over.
+     * <p>
+     * 写入领取记录；返回是否写入成功，存储失败时不抛出异常。
+     *
+     * @return {@code true} when the row was written / 写入成功时为 {@code true}
+     */
+    boolean updateClaimData(UUID playerUuid, String kitName) {
+        try {
+            KitClaimData existing = getClaimData(playerUuid, kitName);
 
-        if (existing != null) {
-            existing.setLastClaim(System.currentTimeMillis());
-            existing.setClaimCount(existing.getClaimCount() + 1);
-            try {
+            if (existing != null) {
+                existing.setLastClaim(System.currentTimeMillis());
+                existing.setClaimCount(existing.getClaimCount() + 1);
                 claimOperator.update(existing);
-            } catch (IllegalAccessException e) {
-                logger.error(String.format(plugin.i18n("kits.log.claim_update_failed"), e.getMessage()));
+            } else {
+                KitClaimData claim = KitClaimData.builder()
+                        .uuid(UUID.randomUUID().toString())
+                        .playerUuid(playerUuid.toString())
+                        .kitName(kitName)
+                        .lastClaim(System.currentTimeMillis())
+                        .claimCount(1)
+                        .build();
+                claimOperator.insert(claim);
             }
-        } else {
-            KitClaimData claim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID().toString())
-                    .playerUuid(playerUuid.toString())
-                    .kitName(kitName)
-                    .lastClaim(System.currentTimeMillis())
-                    .claimCount(1)
-                    .build();
-            claimOperator.insert(claim);
+            return true;
+        } catch (IllegalAccessException | DataAccessException e) {
+            logger.error(String.format(plugin.i18n("kits.log.claim_update_failed"), e.getMessage()));
+            return false;
         }
     }
 
@@ -552,8 +917,41 @@ public class KitServiceImpl implements KitService {
     }
 
     boolean saveKitToFile(String name, KitDefinition kit) {
+        return saveKitToFile(name, kit, false);
+    }
+
+    /**
+     * Writes a kit's file; with {@code newOnly} (a create), a file that already loads as the name is
+     * never written - it fails instead - so a create never overwrites an existing file.
+     */
+    boolean saveKitToFile(String name, KitDefinition kit, boolean newOnly) {
         try {
-            File kitFile = new File(plugin.getResourceFolderPath(), "kits/" + name + ".yml");
+            // Write the file the kit loads from, so a save lands where the next reload reads it; a new
+            // kit gets "<name>.yml". A folder that cannot be listed gives no way to know which file that
+            // is, and a kit that several files define has no single one, so both fail rather than
+            // writing a file beside the real one.
+            List<File> targets = kitFilesOf(name);
+            if (targets == null) {
+                logger.error(String.format(plugin.i18n("kits.log.kits_folder_unreadable_save"),
+                        kitsFolder().getAbsolutePath(), name));
+                return false;
+            }
+            if (targets.size() > 1) {
+                // Never write one of several files a kit loads from (see conflictingFiles).
+                return false;
+            }
+            if (newOnly && !targets.isEmpty()) {
+                return false;
+            }
+            if (targets.isEmpty()) {
+                File newFile = kitFileFor(name);
+                if (newFile == null) {
+                    logger.error(String.format(plugin.i18n("kits.log.kit_name_outside_folder"), name,
+                            kitsFolder().getAbsolutePath()));
+                    return false;
+                }
+                targets = Collections.singletonList(newFile);
+            }
             YamlConfiguration config = new YamlConfiguration();
 
             // A fallback name is left out, so it keeps following the language (null writes nothing).
@@ -569,7 +967,32 @@ public class KitServiceImpl implements KitService {
             config.set("consoleCommands", kit.getConsoleCommands());
             config.set("items", kit.getItems());
 
-            config.save(kitFile);
+            if (newOnly) {
+                // A create claims its file exclusively before writing, so a file that appeared after the
+                // scan above fails the create instead of being written over.
+                File created = targets.get(0);
+                Files.createDirectories(created.getAbsoluteFile().toPath().getParent());
+                try {
+                    claimNewFile(created.toPath());
+                } catch (FileAlreadyExistsException appeared) {
+                    return false;
+                }
+                boolean written = false;
+                try {
+                    config.save(created);
+                    written = true;
+                } finally {
+                    if (!written) {
+                        // The file this create claimed is removed again, so the failure is not read as
+                        // "a file already exists" and a retry can succeed.
+                        Files.deleteIfExists(created.toPath());
+                    }
+                }
+                return true;
+            }
+            for (File kitFile : targets) {
+                config.save(kitFile);
+            }
             return true;
         } catch (IOException e) {
             logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));

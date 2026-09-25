@@ -147,6 +147,10 @@ public class KitEditorGui extends Gui {
                 // the same sentence every other surface says.
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.disabled"));
                 break;
+            case FILE_CONFLICT:
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.conflict.not_changed"),
+                        kit.getName(), String.join(", ", kitService.conflictingFiles(kit.getName()))));
+                break;
             default:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.editor.save_error"));
                 break;

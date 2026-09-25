@@ -156,6 +156,14 @@ public class KitCommands extends BaseCommandExecutor {
             player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.kit.not_found"), name));
             return;
         }
+        // An editor for a kit that several files define could never be saved (the save gateway
+        // refuses it), so say why now instead of after the edit.
+        List<String> conflicting = kitService.conflictingFiles(kit.getName());
+        if (!conflicting.isEmpty()) {
+            player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.conflict.not_changed"),
+                    kit.getName(), String.join(", ", conflicting)));
+            return;
+        }
 
         new KitEditorGui(player, plugin, kitService, kit).open();
     }
@@ -185,8 +193,19 @@ public class KitCommands extends BaseCommandExecutor {
             case INVALID_NAME:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.create.invalid_name"));
                 break;
+            case FILE_EXISTS:
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.create.file_exists"),
+                        name.toLowerCase().trim(), String.join(", ", kitService.kitFileNames(name))));
+                break;
+            case NAME_HAS_PATH:
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.create.name_has_path"), name));
+                break;
             case EMPTY_INVENTORY:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.create.empty_inventory"));
+                break;
+            case FILE_CONFLICT:
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.conflict.not_changed"),
+                        name.toLowerCase().trim(), String.join(", ", kitService.conflictingFiles(name))));
                 break;
             default:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.create.error"));
@@ -209,10 +228,22 @@ public class KitCommands extends BaseCommandExecutor {
             return;
         }
 
-        if (kitService.deleteKit(name)) {
-            sender.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("kits.delete.success"), name));
-        } else {
-            sender.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.kit.not_found"), name));
+        switch (kitService.deleteKit(name)) {
+            case DELETED:
+                sender.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("kits.delete.success"), name));
+                break;
+            case FILE_NOT_DELETED:
+                // The kit is still loaded and its file will load again on reload, so saying
+                // "Deleted" here would be false (UltiKits/UltiKits#23).
+                sender.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.delete.file_not_deleted"), name));
+                break;
+            case FILE_CONFLICT:
+                sender.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.conflict.not_changed"),
+                        name, String.join(", ", kitService.conflictingFiles(name))));
+                break;
+            default:
+                sender.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.kit.not_found"), name));
+                break;
         }
     }
 
@@ -302,6 +333,12 @@ public class KitCommands extends BaseCommandExecutor {
                 break;
             case EMPTY_KIT:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.empty_kit"));
+                break;
+            case NOT_RECORDED:
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.not_recorded"));
+                break;
+            case NOT_RECORDED_REFUND_FAILED:
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.not_recorded_refund_failed"));
                 break;
             case SYSTEM_DISABLED:
                 // Not reached from /kits claim, which refuses at refusedAsDisabled before the
