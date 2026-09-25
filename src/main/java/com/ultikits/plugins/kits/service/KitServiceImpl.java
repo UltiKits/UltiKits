@@ -37,6 +37,7 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.AclFileAttributeView;
 import java.nio.file.attribute.BasicFileAttributeView;
 import java.nio.file.attribute.DosFileAttributeView;
+import java.nio.file.attribute.DosFileAttributes;
 import java.nio.file.attribute.FileOwnerAttributeView;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFileAttributes;
@@ -423,6 +424,14 @@ public class KitServiceImpl implements KitService {
      * file system has (POSIX or ACL); left as the server's when it may not be assigned.
      */
     static void copyOwner(@Nullable FileOwnerAttributeView from, @Nullable FileOwnerAttributeView to) {
+        if (from == null || to == null) {
+            return;
+        }
+        try {
+            to.setOwner(from.getOwner());
+        } catch (IOException notAllowed) {
+            // Only a privileged process may give a file away; the server's own account stays.
+        }
     }
 
     /**
@@ -431,6 +440,17 @@ public class KitServiceImpl implements KitService {
      * flag needs no copy: a read-only kit file is never replaced.
      */
     static void copyDosFlags(@Nullable DosFileAttributeView from, @Nullable DosFileAttributeView to) {
+        if (from == null || to == null) {
+            return;
+        }
+        try {
+            DosFileAttributes attributes = from.readAttributes();
+            to.setHidden(attributes.isHidden());
+            to.setSystem(attributes.isSystem());
+            to.setArchive(attributes.isArchive());
+        } catch (IOException notSet) {
+            // Cosmetic flags; the file's content and access are already right.
+        }
     }
 
     /**
@@ -438,16 +458,25 @@ public class KitServiceImpl implements KitService {
      * records one; left as it is when it cannot be set.
      */
     static void copyCreationTime(@Nullable BasicFileAttributeView from, @Nullable BasicFileAttributeView to) {
+        if (from == null || to == null) {
+            return;
+        }
+        try {
+            to.setTimes(null, null, from.readAttributes().creationTime());
+        } catch (IOException notSet) {
+            // Informational only; the replacement keeps its own creation time.
+        }
     }
 
     /**
      * Gives {@code temp} what an in-place write would have kept of the file it replaces: its
-     * access-control list where the file system has one (Windows), its permission bits, and where the
-     * server may set them its owner and group. Nothing when there is no such file. A list or permission
-     * bits that cannot be copied fail the save (the file stays as it was) rather than leave a file with
-     * wider access; an owner or group the server may not assign is left as the server's. Not kept, as
-     * with any replace-by-rename: hard links, extended attributes, and on Linux the entries of an
-     * extended (setfacl) access-control list beyond the permission bits.
+     * access-control list where the file system has one (Windows), its permission bits, where the
+     * server may set them its owner and group, its hidden/system/archive flags (Windows) and its creation
+     * time. Nothing when there is no such file. A list or permission bits that cannot be copied fail the
+     * save (the file stays as it was) rather than leave a file with wider access; the rest is best effort.
+     * Not kept, as with any replace-by-rename, because Java cannot copy them: hard links, extended
+     * attributes and alternate data streams, a Windows file's primary group and audit list, and on
+     * Linux the entries of an extended (setfacl) access-control list beyond the permission bits.
      */
     private static void copyFileIdentity(Path target, Path temp) throws IOException {
         if (!Files.exists(target)) {
@@ -455,23 +484,22 @@ public class KitServiceImpl implements KitService {
         }
         copyAcl(Files.getFileAttributeView(target, AclFileAttributeView.class),
                 Files.getFileAttributeView(temp, AclFileAttributeView.class));
-        PosixFileAttributeView targetView = Files.getFileAttributeView(target, PosixFileAttributeView.class);
-        if (targetView == null) {
-            return;
+        PosixFileAttributeView targetPosix = Files.getFileAttributeView(target, PosixFileAttributeView.class);
+        if (targetPosix != null) {
+            PosixFileAttributes attributes = targetPosix.readAttributes();
+            Files.setPosixFilePermissions(temp, attributes.permissions());
+            try {
+                Files.getFileAttributeView(temp, PosixFileAttributeView.class).setGroup(attributes.group());
+            } catch (IOException notAllowed) {
+                // The server's own group stays; the permission bits above are what an in-place write kept.
+            }
         }
-        PosixFileAttributes attributes = targetView.readAttributes();
-        Files.setPosixFilePermissions(temp, attributes.permissions());
-        PosixFileAttributeView view = Files.getFileAttributeView(temp, PosixFileAttributeView.class);
-        try {
-            view.setGroup(attributes.group());
-        } catch (IOException notAllowed) {
-            // The server's own group stays; the permission bits above are what an in-place write kept.
-        }
-        try {
-            view.setOwner(attributes.owner());
-        } catch (IOException notAllowed) {
-            // Only a privileged process may give a file away; the server's own user stays.
-        }
+        copyOwner(Files.getFileAttributeView(target, FileOwnerAttributeView.class),
+                Files.getFileAttributeView(temp, FileOwnerAttributeView.class));
+        copyDosFlags(Files.getFileAttributeView(target, DosFileAttributeView.class),
+                Files.getFileAttributeView(temp, DosFileAttributeView.class));
+        copyCreationTime(Files.getFileAttributeView(target, BasicFileAttributeView.class),
+                Files.getFileAttributeView(temp, BasicFileAttributeView.class));
     }
 
     /**
