@@ -897,9 +897,14 @@ class KitServiceImplTest {
             assertThat(service.getKit("vip")).isNotNull();
         }
 
+        /**
+         * Two files that load as one kit are not deleted one by one - that could stop part-way and
+         * leave a different file to load next time. The deletion is refused, both files stay and the
+         * kit stays loaded until only one file defines it (this replaced "delete every such file").
+         */
         @Test
-        @DisplayName("every file that loads as the kit is deleted, so none of them brings it back")
-        void deleteKitRemovesEveryFileThatLoadsAsTheKit() throws Exception {
+        @DisplayName("a kit two files load as is not deleted, so a half-finished delete cannot swap its file")
+        void deleteKitWithTwoFilesDeletesNeither() throws Exception {
             File upper = createSimpleKitFile("VIP");
             File lower = createSimpleKitFile("vip");
             service = createService();
@@ -907,10 +912,10 @@ class KitServiceImplTest {
             KitService.DeleteResult result = service.deleteKit("vip");
             service.reload();
 
-            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
-            assertThat(upper).doesNotExist();
-            assertThat(lower).doesNotExist();
-            assertThat(service.getKit("vip")).isNull();
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_CONFLICT);
+            assertThat(upper).exists();
+            assertThat(lower).exists();
+            assertThat(service.getKit("vip")).isNotNull();
         }
 
         /**

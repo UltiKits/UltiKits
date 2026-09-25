@@ -204,6 +204,11 @@ public class KitServiceImpl implements KitService {
                     normalizedName));
             return DeleteResult.FILE_NOT_DELETED;
         }
+        if (kitFiles.size() > 1) {
+            // Deleting them one by one can stop part-way and leave a different file to load next
+            // time, so none is removed until only one file defines the kit.
+            return DeleteResult.FILE_CONFLICT;
+        }
         boolean survived = false;
         for (File kitFile : kitFiles) {
             try {

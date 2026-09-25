@@ -218,6 +218,10 @@ public class KitCommands extends BaseCommandExecutor {
                 // "Deleted" here would be false (UltiKits/UltiKits#23).
                 sender.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.delete.file_not_deleted"), name));
                 break;
+            case FILE_CONFLICT:
+                sender.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.conflict.not_changed"),
+                        name, String.join(", ", kitService.conflictingFiles(name))));
+                break;
             default:
                 sender.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.kit.not_found"), name));
                 break;
