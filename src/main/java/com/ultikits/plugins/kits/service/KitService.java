@@ -56,7 +56,12 @@ public interface KitService {
     }
 
     enum CreateResult {
-        SUCCESS, ALREADY_EXISTS, INVALID_NAME, EMPTY_INVENTORY, ERROR
+        SUCCESS, ALREADY_EXISTS, INVALID_NAME, EMPTY_INVENTORY, ERROR,
+        /**
+         * More than one file in the kits folder already loads as this name (none of them parsed, or
+         * the kit would exist); nothing was written. {@link #conflictingFiles(String)} names them.
+         */
+        FILE_CONFLICT
     }
 
     /**

@@ -473,6 +473,22 @@ class KitCommandsTest {
         }
 
         @Test
+        @DisplayName("FILE_CONFLICT names the files that already define the name")
+        void fileConflictNamesTheFiles() {
+            when(player.hasPermission("ultikits.kits.admin")).thenReturn(true);
+            when(kitService.createKit(player, "vip")).thenReturn(KitService.CreateResult.FILE_CONFLICT);
+            when(kitService.conflictingFiles("vip")).thenReturn(Arrays.asList("VIP.yml", "vip.yml"));
+
+            kitCommands.onCreate(player, "vip");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(
+                            CatalogueText.text("zh", "kits.conflict.not_changed"), "vip", "VIP.yml, vip.yml"));
+        }
+
+        @Test
         @DisplayName("INVALID_NAME sends invalid name message")
         void invalidName() {
             when(player.hasPermission("ultikits.kits.admin")).thenReturn(true);

@@ -3300,6 +3300,50 @@ class KitServiceImplTest {
         }
 
         @Test
+        @DisplayName("creating a kit two unloadable files already map to is refused as a conflict, writing nothing")
+        void createRefusedForDuplicateFiles() throws Exception {
+            File folder = new File(tempDir, "kits");
+            folder.mkdirs();
+            File upperFile = new File(folder, "VIP.yml");
+            File lowerFile = new File(folder, "vip.yml");
+            java.nio.file.Files.write(upperFile.toPath(), "icon: [unclosed".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            java.nio.file.Files.write(lowerFile.toPath(), "icon: [unclosed".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            byte[] upperBefore = bytes(upperFile);
+            byte[] lowerBefore = bytes(lowerFile);
+            KitServiceImpl spyService = spy(createService());
+            assertThat(spyService.getKit("vip")).isNull();
+            doReturn("items").when(spyService).serializeItems(any(ItemStack[].class));
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[]{stone});
+
+            KitService.CreateResult result = spyService.createKit(player, "vip");
+
+            assertThat(result).isEqualTo(KitService.CreateResult.FILE_CONFLICT);
+            assertThat(bytes(upperFile)).isEqualTo(upperBefore);
+            assertThat(bytes(lowerFile)).isEqualTo(lowerBefore);
+            assertThat(kitsFolderListing()).containsExactly("VIP.yml", "vip.yml");
+        }
+
+        /**
+         * A second file that appears between the gateway's check and the write is caught by the writer;
+         * the caller still gets the conflict, with the files, not a bare failure.
+         */
+        @Test
+        @DisplayName("a conflict the writer finds after the gateway's check is still reported as a conflict")
+        void conflictFoundByTheWriterIsReportedAsAConflict() throws Exception {
+            twoFilesForOneKit();
+            KitServiceImpl spyService = spy(createService());
+            doReturn(Collections.emptyList()).doCallRealMethod().when(spyService).conflictingFiles("vip");
+            doReturn("new-items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            KitService.SaveResult result = spyService.saveKitItems("vip", new ItemStack[]{mockItemStack(Material.STONE)});
+
+            assertThat(result).isEqualTo(KitService.SaveResult.FILE_CONFLICT);
+        }
+
+        @Test
         @DisplayName("a kit with a single file has no conflicting files")
         void singleFileIsNoConflict() throws Exception {
             writeKitFile("solo.yml", "solo-items");
@@ -4387,7 +4431,8 @@ class KitServiceImplTest {
                     KitService.CreateResult.ALREADY_EXISTS,
                     KitService.CreateResult.INVALID_NAME,
                     KitService.CreateResult.EMPTY_INVENTORY,
-                    KitService.CreateResult.ERROR
+                    KitService.CreateResult.ERROR,
+                    KitService.CreateResult.FILE_CONFLICT
             );
         }
     }
