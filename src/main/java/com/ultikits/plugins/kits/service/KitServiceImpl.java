@@ -255,11 +255,14 @@ public class KitServiceImpl implements KitService {
                 continue;
             }
             Path kitFile = kitsFolder().toPath().resolve(journalTargetName(journal));
-            if (Files.exists(kitFile, LinkOption.NOFOLLOW_LINKS)) {
+            try {
+                Files.readAttributes(kitFile, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
                 // Complete the pending write first, so the file is whole even if it then cannot be deleted.
                 replayJournal(journal, kitsFolder().toPath());
-            } else {
+            } catch (NoSuchFileException gone) {
                 withdrawJournal(journal, kitFile);
+            } catch (IOException | RuntimeException unknown) {
+                // Not known to be gone: the journal may be the only whole copy, so it stays and the kit too.
             }
             if (hasContent(journal)) {
                 logger.warn(String.format(plugin.i18n("kits.log.delete_journal_pending"), kitFile, journal));
@@ -441,6 +444,10 @@ public class KitServiceImpl implements KitService {
             throw new IOException(String.format(plugin.i18n("kits.log.journal_folder_is_link"), journalFolder()));
         }
         Path journal = journalFolder().resolve(target.getName() + ".journal");
+        if (Files.isDirectory(journal, LinkOption.NOFOLLOW_LINKS)) {
+            // Not a journal and not this module's: left alone, and no journal can be written there.
+            throw new IOException(String.format(plugin.i18n("kits.log.journal_not_a_file"), journal));
+        }
         if (hasContent(journal)) {
             // An earlier write of this file could not be undone and its journal is the only whole copy:
             // complete it first, so this write starts from a whole file and never truncates that copy.
@@ -636,11 +643,12 @@ public class KitServiceImpl implements KitService {
     /**
      * Completes every kit file write a crash (or a failed write that could not be undone) left
      * behind: an intact journal is written into its kit file in place - or creates it, for a new file -
-     * and withdrawn. A journal that was read and is cut short, fails its checksum, or names a file other
-     * than its own name or outside the kits folder; one whose existing kit file has gone; and a new-file
-     * journal whose name is now a symbolic link, are logged and withdrawn without touching any file; an
-     * emptied (withdrawn) journal changes nothing. A journal that cannot be read, or whose kit file cannot
-     * be checked or written, is kept and retried at the next start or {@code /kits reload}.
+     * and withdrawn. Only a plain kit file is written, never through a symbolic link. A journal that was
+     * read and is cut short, fails its checksum, or names a file other than its own name; and one whose
+     * existing kit file has gone, are logged and withdrawn without touching any file; an emptied
+     * (withdrawn) journal changes nothing, and a link at a journal's name is removed. A journal that cannot
+     * be read, whose kit file cannot be checked or written, or whose kit file is not a plain file (a
+     * symbolic link or a folder), is kept and retried at the next start or {@code /kits reload}.
      * <p>
      * 启动时在读取礼包之前补完被中断的写入；损坏或目标已不存在的日志只记录并丢弃，不改动任何礼包文件。
      */
@@ -785,14 +793,17 @@ public class KitServiceImpl implements KitService {
     /**
      * Every journal in the journal folder whose kit file loads as {@code kitName} (by the same mapping
      * as the loader), whether or not that file exists; empty when there is no journal folder, and
-     * {@code null} when it cannot be listed.
+     * {@code null} when it cannot be listed or is a symbolic link (set aside, so not known to be empty).
      */
     @Nullable
     private List<Path> journalsOf(String kitName) {
         Path folder = journalFolder();
         List<Path> matches = new ArrayList<>();
+        if (Files.isSymbolicLink(folder)) {
+            // Set aside until it is a plain folder again, not empty: a journal in it may be pending.
+            return null;
+        }
         if (!Files.isDirectory(folder, LinkOption.NOFOLLOW_LINKS)) {
-            // No folder, or a link this module never writes into: no pending write of this kit.
             return matches;
         }
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(folder, "*.journal")) {
