@@ -54,12 +54,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   When more than one file defines the same kit (`VIP.yml` and `vip.yml` on a case-sensitive file
   system), `/kits edit`, the editor's Save button, `/kits create` and `/kits delete` change nothing
   and name the files; one of them still loads, so the kit can be claimed, and `/kits reload` names
-  them on the console (UltiKits/UltiKits#23). A kit file is still written the way earlier versions
+  them on the console (UltiKits/UltiKits#23). `/kits create` now refuses a name holding `/`, `\` or
+  `..`, which used to write the kit file outside the kits folder, and refuses a name that a file in
+  the kits folder already loads as (placed by hand without a reload, or unreadable), naming the file
+  instead of overwriting it (UltiKits/UltiKits#37). A kit file is still written the way earlier versions
   wrote it, so a crash during a save can leave it cut off; crash-safe writes for modules are tracked
   in UltiKits/UltiTools-Reborn#545.
 - 修复：礼包文件删除失败（或礼包文件夹无法读取）时，`/kits delete` 不再报告删除成功。礼包会保持加载，执行者会被告知未删除，控制台会记录该文件或文件夹的路径，
   因此被告知已删除的礼包不会在下次 `/kits reload` 或重启后重新出现。删除和保存礼包现在使用礼包加载时的那个文件，因此文件名含大写字母的手放礼包文件（如 `VIP.yml`）
-  也能像其他礼包一样被删除，并能从编辑界面保存。编辑界面保存失败时不再改动已加载的礼包，领取时发放的仍是文件中的物品。当多个文件定义同一礼包时（在区分大小写的文件系统上同时存在 `VIP.yml` 和 `vip.yml`），`/kits edit`、编辑界面的保存按钮、`/kits create` 和 `/kits delete` 不做任何修改并列出这些文件；其中一个仍会被加载，礼包照常可以领取，`/kits reload` 也会在控制台列出这些文件（UltiKits/UltiKits#23）。礼包文件仍按以前版本的方式写入，保存过程中崩服可能留下残缺文件；模块的崩溃安全写入在 UltiKits/UltiTools-Reborn#545 中跟踪。
+  也能像其他礼包一样被删除，并能从编辑界面保存。编辑界面保存失败时不再改动已加载的礼包，领取时发放的仍是文件中的物品。当多个文件定义同一礼包时（在区分大小写的文件系统上同时存在 `VIP.yml` 和 `vip.yml`），`/kits edit`、编辑界面的保存按钮、`/kits create` 和 `/kits delete` 不做任何修改并列出这些文件；其中一个仍会被加载，礼包照常可以领取，`/kits reload` 也会在控制台列出这些文件（UltiKits/UltiKits#23）。`/kits create` 现在会拒绝含 `/`、`\` 或 `..` 的礼包名（以前会把礼包文件写到 kits 文件夹之外），也会拒绝礼包文件夹中已有文件（手工放入但未 reload 的，或无法解析的）加载为该名字的礼包名，并列出该文件而不是覆盖它（UltiKits/UltiKits#37）。礼包文件仍按以前版本的方式写入，保存过程中崩服可能留下残缺文件；模块的崩溃安全写入在 UltiKits/UltiTools-Reborn#545 中跟踪。
 
 - `language: zh` now applies to the text that was fixed English: the kit editor's save-button lore
   (`Click to save kit contents`), the `/kits help` lines for `edit`, `create`, `delete` and `reload`,
