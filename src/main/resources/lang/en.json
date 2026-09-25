@@ -37,6 +37,7 @@
   "kits.create.success": "Created kit: %s",
   "kits.delete.success": "Deleted kit: %s",
   "kits.delete.file_not_deleted": "Kit %s was not deleted: its file could not be removed. The console names the file.",
+  "kits.conflict.not_changed": "Kit %s was not changed: more than one file in the kits folder defines it (%s). Keep one of these files, rename or remove the others, then run /kits reload.",
   "kits.log.delete_file_failed": "Could not delete the kit file %s - the kit stays loaded until this file can be removed.",
   "kits.log.kits_folder_unreadable": "Could not read the kits folder %s, so kit %s was not deleted and stays loaded.",
   "kits.log.kits_folder_unreadable_save": "Could not read the kits folder %s, so kit %s was not saved.",

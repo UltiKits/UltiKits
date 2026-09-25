@@ -73,7 +73,12 @@ public interface KitService {
         /** The kit does not exist, its items could not be serialized, or the file write failed. */
         FAILED,
         /** The kit system's master switch ({@code config.yml: enabled}) is off. */
-        SYSTEM_DISABLED
+        SYSTEM_DISABLED,
+        /**
+         * More than one file in the kits folder loads as this kit (for example {@code VIP.yml} and
+         * {@code vip.yml}); nothing was written. {@link #conflictingFiles(String)} names them.
+         */
+        FILE_CONFLICT
     }
 
     /**
@@ -115,6 +120,18 @@ public interface KitService {
     DeleteResult deleteKit(String name);
 
     SaveResult saveKitItems(String kitName, ItemStack[] items);
+
+    /**
+     * The names of the files in the kits folder that load as {@code kitName}, sorted, when there is
+     * more than one; empty when there is at most one or the folder cannot be listed. A kit in this
+     * state is neither saved nor deleted until only one file remains.
+     * <p>
+     * 当礼包文件夹中有多个文件加载为同一礼包时，返回这些文件名（已排序）；否则为空。
+     *
+     * @param kitName the kit / 礼包名
+     * @return the conflicting file names, never null / 冲突的文件名，不为 null
+     */
+    List<String> conflictingFiles(String kitName);
 
     ClaimResult claimKit(Player player, String kitName);
 

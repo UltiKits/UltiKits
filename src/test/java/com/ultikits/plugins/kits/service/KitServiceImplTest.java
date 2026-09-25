@@ -2969,6 +2969,72 @@ class KitServiceImplTest {
     }
 
     // =========================================================================
+    // Duplicate kit files and the atomic single-file write
+    // =========================================================================
+
+    /**
+     * A kit that more than one file maps to (for example {@code VIP.yml} and {@code vip.yml} on a
+     * case-sensitive file system) is neither saved nor deleted: nothing is written or removed, and the
+     * caller can name the files. The single file a kit does have is replaced through a temporary sibling
+     * moved into place, so a failed write leaves it as it was.
+     */
+    @Nested
+    @DisplayName("Duplicate kit files and atomic writes")
+    class DuplicateAndAtomicWriteTests {
+
+        private File upper;
+        private File lower;
+
+        private File writeKitFile(String fileName, String items) throws IOException {
+            File kitsFolder = new File(tempDir, "kits");
+            kitsFolder.mkdirs();
+            File file = new File(kitsFolder, fileName);
+            String yaml = "displayName: \"&a" + fileName + "\"\nicon: CHEST\nitems: \"" + items + "\"\n";
+            java.nio.file.Files.write(file.toPath(), yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return file;
+        }
+
+        private byte[] bytes(File file) throws IOException {
+            return java.nio.file.Files.readAllBytes(file.toPath());
+        }
+
+        private void twoFilesForOneKit() throws IOException {
+            upper = writeKitFile("VIP.yml", "upper-items");
+            lower = writeKitFile("vip.yml", "lower-items");
+        }
+
+        @Test
+        @DisplayName("a kit two files map to is not saved, neither file changes, and the files are named")
+        void saveRefusedForDuplicateFiles() throws Exception {
+            twoFilesForOneKit();
+            byte[] upperBefore = bytes(upper);
+            byte[] lowerBefore = bytes(lower);
+            KitServiceImpl spyService = spy(createService());
+            String liveBefore = spyService.getKit("vip").getItems();
+            doReturn("new-items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            KitService.SaveResult result = spyService.saveKitItems("vip", new ItemStack[]{mockItemStack(Material.STONE)});
+
+            assertThat(result).isEqualTo(KitService.SaveResult.FILE_CONFLICT);
+            assertThat(bytes(upper)).isEqualTo(upperBefore);
+            assertThat(bytes(lower)).isEqualTo(lowerBefore);
+            assertThat(new File(tempDir, "kits").list()).containsExactlyInAnyOrder("VIP.yml", "vip.yml");
+            assertThat(spyService.getKit("vip").getItems()).isEqualTo(liveBefore);
+            assertThat(spyService.conflictingFiles("vip")).containsExactly("VIP.yml", "vip.yml");
+        }
+
+        @Test
+        @DisplayName("a kit with a single file has no conflicting files")
+        void singleFileIsNoConflict() throws Exception {
+            writeKitFile("solo.yml", "solo-items");
+            service = createService();
+
+            assertThat(service.conflictingFiles("solo")).isEmpty();
+            assertThat(service.conflictingFiles("missing")).isEmpty();
+        }
+    }
+
+    // =========================================================================
     // Command Execution Tests
     // =========================================================================
     @Nested

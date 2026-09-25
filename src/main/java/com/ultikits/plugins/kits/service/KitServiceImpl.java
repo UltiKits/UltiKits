@@ -348,6 +348,11 @@ public class KitServiceImpl implements KitService {
         return SaveResult.SUCCESS;
     }
 
+    @Override
+    public List<String> conflictingFiles(String kitName) {
+        return Collections.emptyList();
+    }
+
     /**
      * Claims a kit for a player. This method is the module's only gateway to a kit: {@code
      * deliverKit} is private with this as its single caller, and the item, command and claim-row
