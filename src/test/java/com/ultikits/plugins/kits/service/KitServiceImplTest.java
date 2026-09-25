@@ -2974,18 +2974,18 @@ class KitServiceImplTest {
     }
 
     // =========================================================================
-    // Duplicate kit files and the atomic single-file write
+    // Duplicate kit files and the journaled in-place write
     // =========================================================================
 
     /**
      * A kit that more than one file maps to (for example {@code VIP.yml} and {@code vip.yml} on a
      * case-sensitive file system) is neither saved nor deleted: nothing is written or removed, and the
-     * caller can name the files. The single file a kit does have is replaced through a temporary sibling
-     * moved into place, so a failed write leaves it as it was.
+     * caller can name the files. The single file a kit does have is rewritten in place after its new
+     * content is in the write journal, so it stays the same file, and a failed write leaves it as it was.
      */
     @Nested
-    @DisplayName("Duplicate kit files and atomic writes")
-    class DuplicateAndAtomicWriteTests {
+    @DisplayName("Duplicate kit files and the journaled in-place write")
+    class DuplicateFileAndKitWriteTests {
 
         private File upper;
         private File lower;
@@ -3256,9 +3256,9 @@ class KitServiceImplTest {
         }
 
         /**
-         * Replacing the file through a moved temporary file must keep what an in-place write kept: the
-         * file's permission bits, a symbolic link (the file it points to is the one written) and a
-         * read-only file's protection (the save fails and the file is unchanged).
+         * The file is rewritten in place, so it keeps what it had without anything copying it: the file's
+         * permission bits, a symbolic link (the file it points to is the one written) and a read-only
+         * file's protection (opening it for writing fails, so the save fails and the file is unchanged).
          */
         @Test
         @DisplayName("a save keeps the kit file's permission bits")

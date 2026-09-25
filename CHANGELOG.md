@@ -51,19 +51,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   saving a kit now use the file the kit was loaded from, so a hand-placed kit file whose name has
   capital letters (`VIP.yml`) is deleted, and saved from the editor, like any other. A save from the
   editor that fails no longer changes the loaded kit, so a claim still hands out what the file holds.
-  A kit file is now written through a temporary file moved into place in one step, so a failed save
-  leaves the old file intact and a failed `/kits create` leaves no partial file; the file keeps its
-  permissions, owner, creation time and, on Windows, access-control list and hidden/system flags, a
-  symbolic link keeps pointing where it did, a read-only kit file is not replaced, and the example kit
-  is copied the same way. Saving now needs write access to the kits folder, and hard links, extended
-  attributes, alternate data streams and Linux `setfacl` entries on a kit file are not kept. When more
-  than one file defines the same kit (`VIP.yml` and `vip.yml` on a case-sensitive file system), `/kits
+  A kit file is now rewritten in place after its new content is first written to a write journal in
+  the module's `kit-journal` folder, so a failed save puts the old content back, a failed `/kits
+  create` leaves no partial file, and after a crash during a save the next start completes the write
+  before the kits load (a damaged journal, or one whose kit file has gone, is logged and discarded
+  without changing anything). The file itself is never replaced, so its permissions, owner,
+  access-control list, links and other attributes stay as they were; a kit file the server may not
+  write is refused before anything is written. The example kit is written the same way. When more than
+  one file defines the same kit (`VIP.yml` and `vip.yml` on a case-sensitive file system), `/kits
   edit`, the editor's Save button, `/kits create` and `/kits delete` change nothing and name the
   files; one of them still loads, so the kit can be claimed, and `/kits reload` names them on the
   console (UltiKits/UltiKits#23).
 - 修复：礼包文件删除失败（或礼包文件夹无法读取）时，`/kits delete` 不再报告删除成功。礼包会保持加载，执行者会被告知未删除，控制台会记录该文件或文件夹的路径，
   因此被告知已删除的礼包不会在下次 `/kits reload` 或重启后重新出现。删除和保存礼包现在使用礼包加载时的那个文件，因此文件名含大写字母的手放礼包文件（如 `VIP.yml`）
-  也能像其他礼包一样被删除，并能从编辑界面保存。编辑界面保存失败时不再改动已加载的礼包，领取时发放的仍是文件中的物品。礼包文件现在先写入临时文件，再一次性移动到位，因此保存失败时原文件保持完整，`/kits create` 失败时也不会留下残缺文件；文件保留原有权限、属主和创建时间（在 Windows 上也保留访问控制列表和隐藏/系统属性），符号链接仍指向原处，只读的礼包文件不会被替换，示例礼包也按同样方式复制。保存现在需要礼包文件夹的写权限；礼包文件的硬链接、扩展属性、备用数据流以及 Linux `setfacl` 设置的额外条目不会保留。当多个文件定义同一礼包时（在区分大小写的文件系统上同时存在 `VIP.yml` 和 `vip.yml`），`/kits edit`、编辑界面的保存按钮、`/kits create` 和 `/kits delete` 不做任何修改并列出这些文件；其中一个仍会被加载，礼包照常可以领取，`/kits reload` 也会在控制台列出这些文件（UltiKits/UltiKits#23）。
+  也能像其他礼包一样被删除，并能从编辑界面保存。编辑界面保存失败时不再改动已加载的礼包，领取时发放的仍是文件中的物品。礼包文件现在先把新内容写入模块的 `kit-journal` 文件夹中的写入日志，再原地改写礼包文件，因此保存失败时会写回旧内容，`/kits create` 失败时不会留下残缺文件；保存过程中崩服时，下次启动会在读取礼包之前补完这次写入（损坏的日志或礼包文件已不存在的日志只记录并丢弃，不做任何修改）。礼包文件本身从不被替换，因此其权限、属主、访问控制列表、链接及其他属性都保持不变；服务端无权写入的礼包文件在写入任何内容之前就会被拒绝。示例礼包也按同样方式写入。当多个文件定义同一礼包时（在区分大小写的文件系统上同时存在 `VIP.yml` 和 `vip.yml`），`/kits edit`、编辑界面的保存按钮、`/kits create` 和 `/kits delete` 不做任何修改并列出这些文件；其中一个仍会被加载，礼包照常可以领取，`/kits reload` 也会在控制台列出这些文件（UltiKits/UltiKits#23）。
 
 - `language: zh` now applies to the text that was fixed English: the kit editor's save-button lore
   (`Click to save kit contents`), the `/kits help` lines for `edit`, `create`, `delete` and `reload`,
