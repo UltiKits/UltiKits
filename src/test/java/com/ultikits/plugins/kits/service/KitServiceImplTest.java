@@ -863,6 +863,56 @@ class KitServiceImplTest {
             assertThat(service.getKit("racy")).isNull();
         }
 
+        /**
+         * gate-1 CR-01. {@code loadKits} maps a file to a kit by lower-casing its name, so a hand-placed
+         * {@code VIP.yml} loads as {@code vip}. Deleting must remove the file the kit was loaded from,
+         * not a rebuilt {@code vip.yml}: on a case-sensitive file system that path does not exist, and
+         * the kit was reported deleted while {@code VIP.yml} stayed to be loaded again (UltiKits/UltiKits#23).
+         */
+        @Test
+        @DisplayName("a kit loaded from a file with capitals is deleted from that file and stays gone after a reload")
+        void deleteKitFromCapitalisedFile() throws Exception {
+            File kitFile = createSimpleKitFile("VIP");
+            service = createService();
+            assertThat(service.getKit("vip")).isNotNull();
+
+            KitService.DeleteResult result = service.deleteKit("vip");
+            service.reload();
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
+            assertThat(kitFile).doesNotExist();
+            assertThat(service.getKit("vip")).isNull();
+        }
+
+        @Test
+        @DisplayName("a kit loaded from a file with capitals whose deletion fails is reported as not deleted")
+        void deleteKitFromCapitalisedFileThatCannotBeDeleted() throws Exception {
+            File kitFile = createSimpleKitFile("VIP");
+            service = createServiceWhoseFileDeleteFails(new AtomicInteger());
+
+            KitService.DeleteResult result = service.deleteKit("vip");
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+            assertThat(kitFile).exists();
+            assertThat(service.getKit("vip")).isNotNull();
+        }
+
+        @Test
+        @DisplayName("every file that loads as the kit is deleted, so none of them brings it back")
+        void deleteKitRemovesEveryFileThatLoadsAsTheKit() throws Exception {
+            File upper = createSimpleKitFile("VIP");
+            File lower = createSimpleKitFile("vip");
+            service = createService();
+
+            KitService.DeleteResult result = service.deleteKit("vip");
+            service.reload();
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
+            assertThat(upper).doesNotExist();
+            assertThat(lower).doesNotExist();
+            assertThat(service.getKit("vip")).isNull();
+        }
+
         @Test
         @DisplayName("deleteKit returns NOT_FOUND for nonexistent kit")
         void deleteKitNotFound() {
@@ -2081,6 +2131,25 @@ class KitServiceImplTest {
             assertThat(balance[0]).isEqualTo(500.0);
         }
 
+        /** gate-1 IN-03: an economy that throws while refunding counts as a failed refund. */
+        @Test
+        @DisplayName("an economy that throws during the refund is a failed refund, reported as such")
+        void refundThatThrowsIsAFailedRefund() throws Exception {
+            writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
+            Economy economy = Bukkit.getServicesManager().getRegistration(Economy.class).getProvider();
+            when(economy.depositPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble()))
+                    .thenThrow(new IllegalStateException("economy offline"));
+            KitServiceImpl spyService = serviceWithKit("vipcrate", PRICE, true);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "vipcrate");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED);
+            assertThat(balance[0]).isEqualTo(400.0);
+            assertThat(given).isEmpty();
+            assertThat(errors()).anyMatch(line -> line.contains(player.getName())
+                    && line.contains("vipcrate") && line.contains(String.valueOf(PRICE)));
+        }
+
         @Test
         @DisplayName("the refund also fails: its own result, and an ERROR naming the player, the kit and the amount")
         void refundFailureIsLoggedWithPlayerKitAndAmount() throws Exception {
@@ -2630,6 +2699,27 @@ class KitServiceImplTest {
 
             KitService.SaveResult result = service.saveKitItems("nosuchkit", new ItemStack[]{mockItem});
             assertThat(result).isEqualTo(KitService.SaveResult.FAILED);
+        }
+
+        /**
+         * gate-1 CR-01, the save half of the same root cause: a save must write the file the kit loads
+         * from. Writing a rebuilt {@code vip.yml} beside {@code VIP.yml} left two files mapping to one
+         * kit, and which one a reload kept depended on directory order, so a save reported as done
+         * could silently revert.
+         */
+        @Test
+        @DisplayName("saving a kit loaded from a file with capitals writes that file, not a second one")
+        void saveKitToFileWritesTheFileTheKitLoadsFrom() throws Exception {
+            File upper = createSimpleKitFile("VIP");
+            service = createService();
+            KitDefinition kit = service.getKit("vip");
+            kit.setPrice(42.0);
+
+            assertThat(service.saveKitToFile("vip", kit)).isTrue();
+
+            File[] files = new File(tempDir, "kits").listFiles((dir, name) -> name.endsWith(".yml"));
+            assertThat(files).extracting(File::getName).containsExactly("VIP.yml");
+            assertThat(YamlConfiguration.loadConfiguration(upper).getDouble("price")).isEqualTo(42.0);
         }
 
         @Test
