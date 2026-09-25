@@ -337,8 +337,15 @@ public class KitServiceImpl implements KitService {
             return SaveResult.FAILED;
         }
 
+        // The live kit keeps the new items only when the file took them: after a failed save the
+        // editor reports the failure, so a claim must still hand out what the file holds.
+        String previous = kit.getItems();
         kit.setItems(serialized);
-        return saveKitToFile(kit.getName(), kit) ? SaveResult.SUCCESS : SaveResult.FAILED;
+        if (!saveKitToFile(kit.getName(), kit)) {
+            kit.setItems(previous);
+            return SaveResult.FAILED;
+        }
+        return SaveResult.SUCCESS;
     }
 
     /**
