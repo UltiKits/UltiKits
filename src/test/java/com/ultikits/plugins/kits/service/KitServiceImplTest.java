@@ -2808,6 +2808,34 @@ class KitServiceImplTest {
             verify(spyService).saveKitToFile("editable", kit);
         }
 
+        /**
+         * A save the file does not take must leave the kit as it was: the editor reports the failure,
+         * so a claim afterwards must still hand out the items the file holds, not the unsaved ones.
+         */
+        @Test
+        @DisplayName("a failed save leaves the kit's live items unchanged")
+        void failedSaveLeavesLiveItemsUnchanged() throws Exception {
+            File upper = createSimpleKitFile("VIP");
+            service = new KitServiceImpl(plugin, config) {
+                @Override
+                File[] listKitFiles(File folder) {
+                    return null;
+                }
+            };
+            KitServiceImpl spyService = spy(service);
+            KitDefinition kit = spyService.getKit("vip");
+            String before = kit.getItems();
+            doReturn("unsaved-items").when(spyService).serializeItems(any(ItemStack[].class));
+            ItemStack stone = mock(ItemStack.class);
+            when(stone.getType()).thenReturn(Material.STONE);
+
+            KitService.SaveResult result = spyService.saveKitItems("vip", new ItemStack[]{stone});
+
+            assertThat(result).isEqualTo(KitService.SaveResult.FAILED);
+            assertThat(spyService.getKit("vip").getItems()).isEqualTo(before).isNotEqualTo("unsaved-items");
+            assertThat(YamlConfiguration.loadConfiguration(upper).getString("items", "")).isEqualTo(before);
+        }
+
         @Test
         @DisplayName("saveKitItems returns false for nonexistent kit")
         void saveNonexistentKit() {
