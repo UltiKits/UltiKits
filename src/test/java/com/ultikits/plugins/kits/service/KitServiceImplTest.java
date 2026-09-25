@@ -3028,6 +3028,28 @@ class KitServiceImplTest {
             assertThat(spyService.conflictingFiles("vip")).containsExactly("VIP.yml", "vip.yml");
         }
 
+        /**
+         * The file writer itself never picks one of several files: every writer (the editor's save and
+         * {@code createKit}) goes through it, so the refusal holds even for a caller that does not ask
+         * {@code conflictingFiles} first.
+         */
+        @Test
+        @DisplayName("the kit file writer refuses a kit two files map to and writes neither")
+        void fileWriterRefusesDuplicateFiles() throws Exception {
+            twoFilesForOneKit();
+            byte[] upperBefore = bytes(upper);
+            byte[] lowerBefore = bytes(lower);
+            service = createService();
+            KitDefinition kit = service.getKit("vip");
+            kit.setItems("new-items");
+
+            assertThat(service.saveKitToFile("vip", kit)).isFalse();
+
+            assertThat(bytes(upper)).isEqualTo(upperBefore);
+            assertThat(bytes(lower)).isEqualTo(lowerBefore);
+            assertThat(new File(tempDir, "kits").list()).containsExactlyInAnyOrder("VIP.yml", "vip.yml");
+        }
+
         @Test
         @DisplayName("a kit two files map to is not deleted: both files stay and the kit stays loaded")
         void deleteRefusedForDuplicateFiles() throws Exception {
