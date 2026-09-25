@@ -91,8 +91,11 @@ public class KitServiceImpl implements KitService {
             copyExampleKit(kitsFolder);
         }
 
-        // An interrupted write is completed (or discarded) before any kit file is read.
+        // An interrupted write is completed (or discarded) before any kit file is read; a kit file whose
+        // write is still pending holds a part-written file, or one the journal may still overwrite, so
+        // it is not loaded until that is resolved.
         replayJournals(kitsFolder.toPath());
+        Set<String> pending = pendingKitFileNames();
 
         File[] files = kitsFolder.listFiles((dir, name) -> name.endsWith(".yml"));
         if (files == null || files.length == 0) {
@@ -104,6 +107,11 @@ public class KitServiceImpl implements KitService {
         Map<String, List<File>> filesByKit = new LinkedHashMap<>();
         Map<String, File> loadedFrom = new HashMap<>();
         for (File file : files) {
+            if (pending.contains(file.getName())) {
+                logger.warn(String.format(plugin.i18n("kits.log.kit_pending_not_loaded"), file.getAbsolutePath(),
+                        journalFolder().resolve(file.getName() + ".journal")));
+                continue;
+            }
             String kitName = kitNameOf(file);
             filesByKit.computeIfAbsent(kitName, name -> new ArrayList<>()).add(file);
             KitDefinition kit = parseKitFile(file);
@@ -258,7 +266,10 @@ public class KitServiceImpl implements KitService {
             try {
                 Files.readAttributes(kitFile, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
                 // Complete the pending write first, so the file is whole even if it then cannot be deleted.
-                replayJournal(journal, kitsFolder().toPath());
+                // A journal kept because the file was changed since is outdated by the file being deleted.
+                if (replayJournal(journal, kitsFolder().toPath()) == ReplayOutcome.CHANGED) {
+                    withdrawJournal(journal, kitFile);
+                }
             } catch (NoSuchFileException gone) {
                 withdrawJournal(journal, kitFile);
             } catch (IOException | RuntimeException unknown) {
@@ -409,8 +420,8 @@ public class KitServiceImpl implements KitService {
         }
     }
 
-    /** First four bytes of a kit write journal ("UKJ2"). */
-    private static final int JOURNAL_MAGIC = 0x554B4A32;
+    /** First four bytes of a kit write journal ("UKJ3"). */
+    private static final int JOURNAL_MAGIC = 0x554B4A33;
 
     /** Whether the journal folder's permissions have been reported as not changeable this session. */
     private boolean journalFolderWarned;
@@ -472,7 +483,7 @@ public class KitServiceImpl implements KitService {
                 previous = readAll(channel);
             }
             try {
-                writeJournal(journal, journalRecord(target.getName(), create, content));
+                writeJournal(journal, journalRecord(target.getName(), create, content, previous));
             } catch (IOException | RuntimeException journalFailure) {
                 withdrawJournal(journal, targetPath);
                 throw journalFailure;
@@ -542,24 +553,79 @@ public class KitServiceImpl implements KitService {
         withdrawJournal(journal, target);
     }
 
-    /** The journal of one kit file write: magic, new-file flag, file name, length, CRC32, content. */
+    /** The journal of a kit file write that records no old content (as for a new kit file). */
     static byte[] journalRecord(String targetName, boolean create, byte[] content) {
+        return journalRecord(targetName, create, content, null);
+    }
+
+    /**
+     * The journal of one kit file write: magic, new-file flag, file name, then the new content and the
+     * old content (absent for a new file), each as length, CRC32 and bytes. The old content lets replay
+     * tell a file the interrupted write left from one changed afterwards.
+     */
+    static byte[] journalRecord(String targetName, boolean create, byte[] content, @Nullable byte[] previous) {
         try {
-            ByteArrayOutputStream bytes = new ByteArrayOutputStream(content.length + 64);
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream(content.length + (previous == null ? 0 : previous.length) + 64);
             DataOutputStream out = new DataOutputStream(bytes);
-            CRC32 crc = new CRC32();
-            crc.update(content, 0, content.length);
             out.writeInt(JOURNAL_MAGIC);
             out.writeBoolean(create);
             out.writeUTF(targetName);
-            out.writeInt(content.length);
-            out.writeLong(crc.getValue());
-            out.write(content);
+            writeBlock(out, content);
+            if (previous == null) {
+                out.writeInt(-1);
+            } else {
+                writeBlock(out, previous);
+            }
             out.flush();
             return bytes.toByteArray();
         } catch (IOException impossible) {
             throw new IllegalStateException(impossible);
         }
+    }
+
+    private static void writeBlock(DataOutputStream out, byte[] block) throws IOException {
+        CRC32 crc = new CRC32();
+        crc.update(block, 0, block.length);
+        out.writeInt(block.length);
+        out.writeLong(crc.getValue());
+        out.write(block);
+    }
+
+    /** One length + CRC32 + bytes block; {@code null} for the length -1 (absent). */
+    @Nullable
+    private static byte[] readBlock(DataInputStream in) throws IOException {
+        int length = in.readInt();
+        if (length == -1) {
+            return null;
+        }
+        if (length < 0 || length > in.available()) {
+            throw new EOFException("length does not match");
+        }
+        long checksum = in.readLong();
+        byte[] block = new byte[length];
+        in.readFully(block);
+        CRC32 crc = new CRC32();
+        crc.update(block, 0, block.length);
+        if (crc.getValue() != checksum) {
+            throw new EOFException("checksum does not match");
+        }
+        return block;
+    }
+
+    /**
+     * Whether {@code file} is what writing {@code content} from the start could leave: a prefix of it,
+     * where a block the crash left unwritten may read as zeros.
+     */
+    private static boolean isPartOf(byte[] file, @Nullable byte[] content) {
+        if (content == null || file.length > content.length) {
+            return false;
+        }
+        for (int i = 0; i < file.length; i++) {
+            if (file[i] != content[i] && file[i] != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void writeJournal(Path journal, byte[] record) throws IOException {
@@ -676,7 +742,17 @@ public class KitServiceImpl implements KitService {
         }
     }
 
-    private void replayJournal(Path journal, Path kitsFolder) {
+    /** What replaying one journal did. */
+    private enum ReplayOutcome {
+        /** Applied, discarded or withdrawn: nothing pending any more (unless it could not be withdrawn). */
+        DONE,
+        /** Kept, because its kit file was changed after the interrupted write. */
+        CHANGED,
+        /** Kept, because it could not be read, or its kit file could not be checked, written or is a link. */
+        KEPT
+    }
+
+    private ReplayOutcome replayJournal(Path journal, Path kitsFolder) {
         String journalName = journal.getFileName().toString();
         String expectedTarget = journalName.substring(0, journalName.length() - ".journal".length());
         Path withdrawnTarget = kitsFolder.resolve(expectedTarget);
@@ -689,15 +765,15 @@ public class KitServiceImpl implements KitService {
                 if (attributes.isSymbolicLink()) {
                     withdrawJournal(journal, withdrawnTarget);
                 }
-                return;
+                return ReplayOutcome.DONE;
             }
             if (attributes.size() == 0) {
                 // A withdrawn journal: it changes nothing.
                 withdrawJournal(journal, withdrawnTarget);
-                return;
+                return ReplayOutcome.DONE;
             }
         } catch (NoSuchFileException gone) {
-            return;
+            return ReplayOutcome.DONE;
         } catch (IOException unreadable) {
             // Read below, which reports it.
         }
@@ -705,39 +781,33 @@ public class KitServiceImpl implements KitService {
         try (FileChannel in = FileChannel.open(journal, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
             record = readAll(in);
         } catch (NoSuchFileException gone) {
-            return;
+            return ReplayOutcome.DONE;
         } catch (IOException | RuntimeException unreadable) {
             // Not read is not damaged: the journal may be the only whole copy, so it is kept.
             logger.error(String.format(plugin.i18n("kits.log.journal_unreadable"), journal, unreadable.getMessage()));
-            return;
+            return ReplayOutcome.KEPT;
         }
         boolean create;
         String targetName;
         byte[] content;
+        byte[] previous;
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(record))) {
             if (in.readInt() != JOURNAL_MAGIC) {
                 throw new EOFException("not a kit write journal");
             }
             create = in.readBoolean();
             targetName = in.readUTF();
-            int length = in.readInt();
-            long checksum = in.readLong();
-            if (length < 0 || in.available() != length) {
-                throw new EOFException("length does not match");
-            }
-            content = new byte[length];
-            in.readFully(content);
-            CRC32 crc = new CRC32();
-            crc.update(content, 0, content.length);
+            content = readBlock(in);
+            previous = readBlock(in);
             // The target is the journal's own file name, so it can never leave the kits folder; any name
             // the kit loader reads (a leading dot, a colon) is accepted, as the writer accepted it.
-            if (crc.getValue() != checksum || !targetName.equals(expectedTarget) || !targetName.endsWith(".yml")) {
-                throw new EOFException("checksum or file name does not match");
+            if (content == null || in.available() != 0 || !targetName.equals(expectedTarget) || !targetName.endsWith(".yml")) {
+                throw new EOFException("structure or file name does not match");
             }
         } catch (IOException | RuntimeException damaged) {
             logger.warn(String.format(plugin.i18n("kits.log.journal_damaged"), journal));
             withdrawJournal(journal, withdrawnTarget);
-            return;
+            return ReplayOutcome.DONE;
         }
         Path target = kitsFolder.resolve(targetName);
         BasicFileAttributes found;
@@ -749,26 +819,36 @@ public class KitServiceImpl implements KitService {
             // Not known to be missing (its folder cannot be searched): the journal may be the only whole
             // copy, so it is kept for a later start.
             logger.error(String.format(plugin.i18n("kits.log.journal_replay_failed"), target, unknown.getMessage(), journal));
-            return;
+            return ReplayOutcome.KEPT;
         }
         boolean exists = found != null;
         if (!exists && !create) {
             // The kit file this journal rewrites has gone.
             logger.warn(String.format(plugin.i18n("kits.log.journal_target_missing"), journal, target));
             withdrawJournal(journal, target);
-            return;
+            return ReplayOutcome.DONE;
         }
         if (exists && !found.isRegularFile()) {
             // Replay writes only a plain kit file and never follows a link: a link here (put in place of
             // the file, or the link the save itself went through) is left alone and the journal - maybe
             // the only whole copy - is kept for the operator.
             logger.error(String.format(plugin.i18n("kits.log.journal_target_is_link"), journal, target));
-            return;
+            return ReplayOutcome.KEPT;
         }
         Path writePath = target;
         try (FileChannel channel = exists
-                ? FileChannel.open(writePath, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)
+                ? FileChannel.open(writePath, StandardOpenOption.READ, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)
                 : FileChannel.open(writePath, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW)) {
+            if (exists) {
+                // Only a file the interrupted write itself could have left - its old content, or part of
+                // the old or the new content - is completed; a file changed since (placed or edited by
+                // hand) is not overwritten, and the journal is kept for the operator.
+                byte[] onDisk = readAll(channel);
+                if (!isPartOf(onDisk, content) && !isPartOf(onDisk, previous)) {
+                    logger.error(String.format(plugin.i18n("kits.log.journal_target_changed"), journal, target));
+                    return ReplayOutcome.CHANGED;
+                }
+            }
             channel.truncate(0);
             channel.position(0);
             writeInPlace(channel, content);
@@ -778,10 +858,11 @@ public class KitServiceImpl implements KitService {
             }
         } catch (IOException | RuntimeException e) {
             logger.error(String.format(plugin.i18n("kits.log.journal_replay_failed"), target, e.getMessage(), journal));
-            return;
+            return ReplayOutcome.KEPT;
         }
         withdrawJournal(journal, target);
         logger.info(String.format(plugin.i18n("kits.log.journal_replayed"), target));
+        return ReplayOutcome.DONE;
     }
 
     /** A bare {@code .yml} file name: no folder part, not hidden, so it can only name a file in the kits folder. */
@@ -816,6 +897,25 @@ public class KitServiceImpl implements KitService {
             return null;
         }
         return matches;
+    }
+
+    /** The kit file names whose journal still has content (a write still pending); empty when unknown. */
+    private Set<String> pendingKitFileNames() {
+        Set<String> names = new HashSet<>();
+        Path folder = journalFolder();
+        if (Files.isSymbolicLink(folder) || !Files.isDirectory(folder, LinkOption.NOFOLLOW_LINKS)) {
+            return names;
+        }
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(folder, "*.journal")) {
+            for (Path journal : stream) {
+                if (hasContent(journal)) {
+                    names.add(journalTargetName(journal));
+                }
+            }
+        } catch (IOException | DirectoryIteratorException e) {
+            // Reported by replayJournals, which read the same folder a moment ago.
+        }
+        return names;
     }
 
     /** The kit file name a journal is for: its own file name without {@code .journal}. */

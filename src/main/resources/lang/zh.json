@@ -48,6 +48,8 @@
   "kits.log.journal_target_missing": "已丢弃礼包写入日志 %s：其礼包文件 %s 已不存在，因此没有做任何修改。",
   "kits.log.journal_unreadable": "无法读取礼包写入日志 %s（%s）。该日志会保留，并在下次启动或 /kits reload 时重试。",
   "kits.log.journal_target_is_link": "已保留礼包写入日志 %s：%s 不是普通文件（是符号链接或文件夹），被中断的写入绝不会经过它补完。请把它换成链接所指向的文件，下次启动或 /kits reload 时会补完这次写入；或者删除该日志以放弃这次写入。在此之前，此礼包的保存会等待。",
+  "kits.log.journal_target_changed": "已保留礼包写入日志 %s：礼包文件 %s 在写入中断之后被改动过，因此不会被覆盖。删除该日志即可保留文件的现状。",
+  "kits.log.kit_pending_not_loaded": "未加载礼包文件 %s：其一次写入仍在 %s 中等待处理（见上方消息）。",
   "kits.log.journal_not_a_file": "已忽略礼包写入日志文件夹中的 %s：它不是日志文件。",
   "kits.log.journal_folder_is_link": "礼包写入日志文件夹 %s 是一个符号链接；在它变回普通文件夹之前，不会写入礼包文件，也不会重放其中的任何日志。",
   "kits.log.journal_replay_failed": "无法补完礼包文件 %s 被中断的写入（%s）。日志 %s 会保留，并在下次启动或 /kits reload 时重试。",
