@@ -4655,6 +4655,54 @@ class KitServiceImplTest {
             assertThat(folder.toFile().list()).isEmpty();
         }
 
+        /**
+         * Only a journal that was read and fails its own checks is damaged. One that cannot be read at
+         * all (its permissions changed, a transient error) may be the only whole copy, so it is kept.
+         */
+        @Test
+        @DisplayName("a journal that cannot be read is kept, and completed once it can")
+        void unreadableJournalIsKept() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
+            org.junit.jupiter.api.Assumptions.assumeFalse("root".equals(System.getProperty("user.name")),
+                    "root reads any file");
+            java.nio.file.Path image = savedWithCrashAt("mid-write");
+            java.nio.file.Path journal = image.resolve("kit-journal").resolve("solo.yml.journal");
+            java.nio.file.Files.setPosixFilePermissions(journal, java.nio.file.attribute.PosixFilePermissions.fromString("---------"));
+            try {
+                startOn(image);
+                assertThat(journals(image)).containsExactly("solo.yml.journal");
+            } finally {
+                java.nio.file.Files.setPosixFilePermissions(journal, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+            }
+
+            assertReplayedToTheNewContent(image);
+        }
+
+        /**
+         * A new-file journal only ever creates a plain file. If its name has become a symbolic link to an
+         * existing file (outside the kits folder, say), replay does not write through it.
+         */
+        @Test
+        @DisplayName("a new-file journal whose name is now a link to an existing file does not write through it")
+        void createJournalOverALiveLinkIsDiscarded() throws Exception {
+            java.nio.file.Path[] image = new java.nio.file.Path[1];
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl crashing = crashingAt("journal-written", image);
+            KitDefinition kit = createTestKit("fresh");
+            assertThat(crashing.saveKitToFile("fresh", kit)).isTrue();
+            java.nio.file.Path victim = image[0].resolve("victim.yml");
+            java.nio.file.Files.write(victim, "items: \"victim\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            byte[] before = java.nio.file.Files.readAllBytes(victim);
+            java.nio.file.Path link = image[0].resolve("kits").resolve("fresh.yml");
+            java.nio.file.Files.createSymbolicLink(link, victim);
+
+            startOn(image[0]);
+
+            assertThat(java.nio.file.Files.readAllBytes(victim)).isEqualTo(before);
+            assertThat(java.nio.file.Files.isSymbolicLink(link)).isTrue();
+            assertThat(journals(image[0])).isEmpty();
+        }
+
         @Test
         @DisplayName("without a journal the start reads the kit files as they are (control)")
         void noJournalNothingReplayed() throws Exception {
