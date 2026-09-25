@@ -399,11 +399,15 @@ public class KitServiceImpl implements KitService {
         // editor reports the failure, so a claim must still hand out what the file holds.
         String previous = kit.getItems();
         kit.setItems(serialized);
-        if (!saveKitToFile(kit.getName(), kit)) {
-            kit.setItems(previous);
-            return SaveResult.FAILED;
+        boolean saved = false;
+        try {
+            saved = saveKitToFile(kit.getName(), kit);
+        } finally {
+            if (!saved) {
+                kit.setItems(previous);
+            }
         }
-        return SaveResult.SUCCESS;
+        return saved ? SaveResult.SUCCESS : SaveResult.FAILED;
     }
 
     @Override
@@ -921,7 +925,8 @@ public class KitServiceImpl implements KitService {
 
             writeAtomically(targets.get(0), config.saveToString());
             return true;
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
+            // A refused write is a failed save whatever its exception type; the callers answer false.
             logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
             return false;
         }
