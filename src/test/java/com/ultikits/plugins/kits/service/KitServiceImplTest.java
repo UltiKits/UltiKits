@@ -3130,6 +3130,32 @@ class KitServiceImplTest {
             assertThat(kitsFolderListing()).containsExactly("solo.yml");
         }
 
+        /**
+         * A write that fails with an unchecked exception (a security manager's refusal, for example)
+         * is a failed save like any other: the editor is told, the loaded kit keeps its items and the
+         * file and folder are as they were.
+         */
+        @Test
+        @DisplayName("a save that fails with an unchecked exception reports FAILED and keeps the live items")
+        void uncheckedWriteFailureKeepsLiveItems() throws Exception {
+            File file = writeKitFile("solo.yml", "old-items");
+            byte[] before = bytes(file);
+            KitServiceImpl failing = spy(new KitServiceImpl(plugin, config) {
+                @Override
+                void atomicMove(java.nio.file.Path source, java.nio.file.Path target) {
+                    throw new SecurityException("write denied");
+                }
+            });
+            doReturn("new-items").when(failing).serializeItems(any(ItemStack[].class));
+
+            KitService.SaveResult result = failing.saveKitItems("solo", new ItemStack[]{mockItemStack(Material.STONE)});
+
+            assertThat(result).isEqualTo(KitService.SaveResult.FAILED);
+            assertThat(failing.getKit("solo").getItems()).isEqualTo("old-items");
+            assertThat(bytes(file)).isEqualTo(before);
+            assertThat(kitsFolderListing()).containsExactly("solo.yml");
+        }
+
         @Test
         @DisplayName("a kit with a single file has no conflicting files")
         void singleFileIsNoConflict() throws Exception {
