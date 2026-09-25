@@ -21,13 +21,21 @@ import org.yaml.snakeyaml.external.biz.base64Coder.Base64Coder;
 
 import javax.annotation.Nullable;
 import java.io.*;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributes;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -334,11 +342,28 @@ public class KitServiceImpl implements KitService {
      */
     private void writeAtomically(File target, String text) throws IOException {
         Path targetPath = target.getAbsoluteFile().toPath();
+        if (Files.exists(targetPath)) {
+            // Replace what an in-place write would have written: the file a symbolic link points to,
+            // and never a file the server may not write (a rename needs only the folder's permission).
+            targetPath = targetPath.toRealPath();
+            if (!Files.isWritable(targetPath)) {
+                throw new AccessDeniedException(targetPath.toString(), null, "kit file is not writable");
+            }
+        }
         Path folder = targetPath.getParent();
         Files.createDirectories(folder);
-        Path temp = Files.createTempFile(folder, "." + target.getName() + ".", ".tmp");
+        Path temp = createTempSibling(folder, targetPath.getFileName().toString());
         try {
-            Files.write(temp, text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            try (FileChannel channel = FileChannel.open(temp, StandardOpenOption.WRITE)) {
+                ByteBuffer buffer = ByteBuffer.wrap(text.getBytes(StandardCharsets.UTF_8));
+                while (buffer.hasRemaining()) {
+                    channel.write(buffer);
+                }
+                // On disk before the move, so a power loss cannot leave the moved name pointing at an
+                // empty file.
+                channel.force(true);
+            }
+            copyFileIdentity(targetPath, temp);
             try {
                 atomicMove(temp, targetPath);
             } catch (AtomicMoveNotSupportedException unsupported) {
@@ -348,8 +373,52 @@ public class KitServiceImpl implements KitService {
             try {
                 Files.deleteIfExists(temp);
             } catch (IOException cleanup) {
-                logger.warn(String.format(plugin.i18n("kits.log.save_file_failed"), target.getName(), cleanup.getMessage()));
+                logger.warn(String.format(plugin.i18n("kits.log.temp_file_not_removed"), temp, cleanup.getMessage()));
             }
+        }
+    }
+
+    /**
+     * A new, empty file next to {@code name} in {@code folder}, created without explicit attributes so
+     * it gets the same permission bits as any file the server creates there ({@link Files#createTempFile}
+     * would make it {@code rw-------}). Its name starts with a dot and ends in {@code .tmp}, so the kit
+     * loader, which reads only {@code .yml}, never loads it.
+     */
+    private static Path createTempSibling(Path folder, String name) throws IOException {
+        for (int attempt = 0; ; attempt++) {
+            Path candidate = folder.resolve("." + name + "." + System.nanoTime() + "." + attempt + ".tmp");
+            try {
+                return Files.createFile(candidate);
+            } catch (FileAlreadyExistsException taken) {
+                if (attempt >= 9) {
+                    throw taken;
+                }
+            }
+        }
+    }
+
+    /**
+     * Gives {@code temp} the permission bits, and where the server may set them the owner and group,
+     * of the file it replaces; nothing when there is no such file or the file system has no POSIX
+     * attributes. An owner or group the server may not assign is left as the server's.
+     */
+    private static void copyFileIdentity(Path target, Path temp) throws IOException {
+        if (!Files.exists(target)
+                || !Files.getFileStore(target).supportsFileAttributeView(PosixFileAttributeView.class)) {
+            return;
+        }
+        PosixFileAttributes attributes = Files.readAttributes(target, PosixFileAttributes.class);
+        Files.setPosixFilePermissions(temp, attributes.permissions());
+        PosixFileAttributeView view = Files.getFileAttributeView(temp, PosixFileAttributeView.class);
+        try {
+            view.setGroup(attributes.group());
+        } catch (IOException notAllowed) {
+            // The server's own group stays; the permission bits above are what an in-place write kept.
+        }
+        try {
+            view.setOwner(attributes.owner());
+        } catch (IOException notAllowed) {
+            // Only a privileged process may give a file away; the server's own user stays.
         }
     }
 
