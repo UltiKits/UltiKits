@@ -4106,6 +4106,276 @@ class KitServiceImplTest {
     }
 
     // =========================================================================
+    // Write journal replay at start
+    // =========================================================================
+
+    /**
+     * A crash is modelled by copying the module's folder at a named point of a kit file write (what a
+     * crash at that moment leaves on disk) and starting a new service on that copy. Whatever point the
+     * copy is taken at, the start must leave the kit file with its old content or its whole new content,
+     * and a journal that is damaged, or whose kit file has gone, must change nothing.
+     */
+    @Nested
+    @DisplayName("Write journal replay at start")
+    class JournalReplayTests {
+
+        @TempDir
+        java.nio.file.Path crashImages;
+
+        private int imageCount;
+
+        private File writeKitFile(String fileName, String items) throws IOException {
+            File kitsFolder = new File(tempDir, "kits");
+            kitsFolder.mkdirs();
+            File file = new File(kitsFolder, fileName);
+            String yaml = "displayName: \"&a" + fileName + "\"\nicon: CHEST\nitems: \"" + items + "\"\n";
+            java.nio.file.Files.write(file.toPath(), yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return file;
+        }
+
+        /** Copies the module folder as it is now: the disk a crash at this moment leaves behind. */
+        private java.nio.file.Path crashImage() throws IOException {
+            java.nio.file.Path image = crashImages.resolve("image-" + (imageCount++));
+            java.nio.file.Path source = tempDir.toPath();
+            try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(source)) {
+                for (java.nio.file.Path path : (Iterable<java.nio.file.Path>) paths::iterator) {
+                    java.nio.file.Path copy = image.resolve(source.relativize(path).toString());
+                    if (java.nio.file.Files.isDirectory(path)) {
+                        java.nio.file.Files.createDirectories(copy);
+                    } else {
+                        java.nio.file.Files.copy(path, copy);
+                    }
+                }
+            }
+            return image;
+        }
+
+        /** A service that takes a crash image at {@code point}; {@code mid-write} is half-way through the kit file. */
+        private KitServiceImpl crashingAt(String point, java.nio.file.Path[] image) {
+            return new KitServiceImpl(plugin, config) {
+                @Override
+                void checkpoint(String reached) {
+                    if (reached.equals(point)) {
+                        try {
+                            image[0] = crashImage();
+                        } catch (IOException e) {
+                            throw new java.io.UncheckedIOException(e);
+                        }
+                    }
+                }
+
+                @Override
+                void writeInPlace(java.nio.channels.FileChannel channel, byte[] content) throws IOException {
+                    if (!"mid-write".equals(point) || image[0] != null) {
+                        super.writeInPlace(channel, content);
+                        return;
+                    }
+                    int half = content.length / 2;
+                    channel.write(java.nio.ByteBuffer.wrap(content, 0, half));
+                    channel.force(true);
+                    image[0] = crashImage();
+                    channel.write(java.nio.ByteBuffer.wrap(content, half, content.length - half));
+                }
+            };
+        }
+
+        /** Starts the module on a crash image, as the next server start would. */
+        private KitServiceImpl startOn(java.nio.file.Path image) {
+            when(plugin.getResourceFolderPath()).thenReturn(image.toString());
+            return createService();
+        }
+
+        /** The kit file's {@code items}, or a marker when the file is cut off and does not parse. */
+        private String itemsIn(java.nio.file.Path image, String fileName) {
+            try {
+                YamlConfiguration yaml = new YamlConfiguration();
+                yaml.loadFromString(new String(java.nio.file.Files.readAllBytes(image.resolve("kits").resolve(fileName)),
+                        java.nio.charset.StandardCharsets.UTF_8));
+                return yaml.getString("items");
+            } catch (IOException | org.bukkit.configuration.InvalidConfigurationException e) {
+                return "<unreadable: " + e.getClass().getSimpleName() + ">";
+            }
+        }
+
+        private String[] journals(java.nio.file.Path image) {
+            String[] names = image.resolve("kit-journal").toFile().list();
+            return names == null ? new String[0] : names;
+        }
+
+        private java.nio.file.Path savedWithCrashAt(String point) throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            java.nio.file.Path[] image = new java.nio.file.Path[1];
+            KitServiceImpl crashing = crashingAt(point, image);
+            KitDefinition kit = crashing.getKit("solo");
+            kit.setItems("new-items");
+            assertThat(crashing.saveKitToFile("solo", kit)).isTrue();
+            assertThat(image[0]).as("crash image taken at " + point).isNotNull();
+            return image[0];
+        }
+
+        private void assertReplayedToTheNewContent(java.nio.file.Path image) {
+            KitServiceImpl restarted = startOn(image);
+
+            assertThat(itemsIn(image, "solo.yml")).isEqualTo("new-items");
+            assertThat(restarted.getKit("solo").getItems()).isEqualTo("new-items");
+            assertThat(journals(image)).isEmpty();
+            ArgumentCaptor<String> info = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).info(info.capture());
+            assertThat(info.getAllValues()).anyMatch(line -> line.contains("solo.yml"));
+        }
+
+        @Test
+        @DisplayName("a crash after the journal is on disk: the next start writes the whole new content")
+        void crashAfterJournalWritten() throws Exception {
+            java.nio.file.Path image = savedWithCrashAt("journal-written");
+            assertThat(itemsIn(image, "solo.yml")).isEqualTo("old-items");
+
+            assertReplayedToTheNewContent(image);
+        }
+
+        @Test
+        @DisplayName("a crash half-way through rewriting the kit file: the next start writes the whole new content")
+        void crashMidInPlaceWrite() throws Exception {
+            java.nio.file.Path image = savedWithCrashAt("mid-write");
+
+            assertReplayedToTheNewContent(image);
+        }
+
+        @Test
+        @DisplayName("a crash before the journal is deleted: the next start rewrites the same content and deletes it")
+        void crashBeforeJournalDeleted() throws Exception {
+            java.nio.file.Path image = savedWithCrashAt("target-written");
+            assertThat(itemsIn(image, "solo.yml")).isEqualTo("new-items");
+
+            assertReplayedToTheNewContent(image);
+        }
+
+        @Test
+        @DisplayName("a crash while creating a new kit file: the next start creates it whole, or finishes it")
+        void crashWhileCreating() throws Exception {
+            for (String point : new String[] {"journal-written", "mid-write"}) {
+                java.nio.file.Path[] image = new java.nio.file.Path[1];
+                new File(tempDir, "kits").mkdirs();
+                KitServiceImpl crashing = crashingAt(point, image);
+                KitDefinition kit = createTestKit("fresh" + point.length());
+                kit.setItems("created-items");
+                assertThat(crashing.saveKitToFile(kit.getName(), kit)).isTrue();
+
+                KitServiceImpl restarted = startOn(image[0]);
+
+                assertThat(itemsIn(image[0], kit.getName() + ".yml")).as(point).isEqualTo("created-items");
+                assertThat(restarted.getKit(kit.getName())).as(point).isNotNull();
+                assertThat(journals(image[0])).as(point).isEmpty();
+                when(plugin.getResourceFolderPath()).thenReturn(tempDir.getAbsolutePath());
+            }
+        }
+
+        @Test
+        @DisplayName("a crash after a failed write whose old content could not be put back: the next start completes it")
+        void keptJournalIsCompletedAtTheNextStart() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            int[] calls = {0};
+            KitServiceImpl failing = new KitServiceImpl(plugin, config) {
+                @Override
+                void writeInPlace(java.nio.channels.FileChannel channel, byte[] content) throws IOException {
+                    if (calls[0]++ < 2) {
+                        channel.write(java.nio.ByteBuffer.wrap(content, 0, content.length / 2));
+                        throw new IOException("disk full");
+                    }
+                    super.writeInPlace(channel, content);
+                }
+            };
+            KitDefinition kit = failing.getKit("solo");
+            kit.setItems("new-items");
+            assertThat(failing.saveKitToFile("solo", kit)).isFalse();
+
+            assertReplayedToTheNewContent(crashImage());
+        }
+
+        private void assertDiscardedWithNothingChanged(java.nio.file.Path image, String expectedItems) throws Exception {
+            byte[] before = java.nio.file.Files.readAllBytes(image.resolve("kits").resolve("solo.yml"));
+
+            KitServiceImpl restarted = startOn(image);
+
+            assertThat(java.nio.file.Files.readAllBytes(image.resolve("kits").resolve("solo.yml"))).isEqualTo(before);
+            assertThat(restarted.getKit("solo").getItems()).isEqualTo(expectedItems);
+            assertThat(journals(image)).isEmpty();
+            ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(warning.capture());
+            assertThat(warning.getAllValues()).anyMatch(line -> line.contains("solo.yml.journal"));
+        }
+
+        @Test
+        @DisplayName("a journal cut short is discarded and the kit file is not touched")
+        void truncatedJournalIsDiscarded() throws Exception {
+            java.nio.file.Path image = savedWithCrashAt("journal-written");
+            java.nio.file.Path journal = image.resolve("kit-journal").resolve("solo.yml.journal");
+            byte[] record = java.nio.file.Files.readAllBytes(journal);
+            java.nio.file.Files.write(journal, Arrays.copyOf(record, record.length - 5));
+
+            assertDiscardedWithNothingChanged(image, "old-items");
+        }
+
+        @Test
+        @DisplayName("a journal whose content does not match its checksum is discarded and the kit file is not touched")
+        void corruptJournalIsDiscarded() throws Exception {
+            java.nio.file.Path image = savedWithCrashAt("journal-written");
+            java.nio.file.Path journal = image.resolve("kit-journal").resolve("solo.yml.journal");
+            byte[] record = java.nio.file.Files.readAllBytes(journal);
+            record[record.length - 2] ^= 0x01;
+            java.nio.file.Files.write(journal, record);
+
+            assertDiscardedWithNothingChanged(image, "old-items");
+        }
+
+        @Test
+        @DisplayName("a journal whose kit file no longer exists is discarded and no file is created")
+        void journalForAMissingFileIsDiscarded() throws Exception {
+            java.nio.file.Path image = savedWithCrashAt("journal-written");
+            java.nio.file.Files.delete(image.resolve("kits").resolve("solo.yml"));
+
+            KitServiceImpl restarted = startOn(image);
+
+            assertThat(image.resolve("kits").resolve("solo.yml")).doesNotExist();
+            assertThat(restarted.getKit("solo")).isNull();
+            assertThat(journals(image)).isEmpty();
+            ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(warning.capture());
+            assertThat(warning.getAllValues()).anyMatch(line -> line.contains("solo.yml.journal"));
+        }
+
+        @Test
+        @DisplayName("a journal that names a file outside the kits folder, or another file than its own name, is discarded")
+        void journalWithABadNameIsDiscarded() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            java.nio.file.Path folder = tempDir.toPath().resolve("kit-journal");
+            java.nio.file.Files.createDirectories(folder);
+            byte[] content = "items: \"evil\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            java.nio.file.Files.write(folder.resolve("evil.yml.journal"),
+                    KitServiceImpl.journalRecord("../evil.yml", true, content));
+            java.nio.file.Files.write(folder.resolve("other.yml.journal"),
+                    KitServiceImpl.journalRecord("solo.yml", false, content));
+
+            KitServiceImpl restarted = createService();
+
+            assertThat(tempDir.toPath().resolve("evil.yml")).doesNotExist();
+            assertThat(restarted.getKit("solo").getItems()).isEqualTo("old-items");
+            assertThat(folder.toFile().list()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("without a journal the start reads the kit files as they are (control)")
+        void noJournalNothingReplayed() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+
+            KitServiceImpl started = createService();
+
+            assertThat(started.getKit("solo").getItems()).isEqualTo("old-items");
+            verify(mockLogger, never()).error(anyString());
+        }
+    }
+
+    // =========================================================================
     // CopyExampleKit Tests
     // =========================================================================
     @Nested
