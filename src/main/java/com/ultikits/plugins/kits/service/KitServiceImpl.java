@@ -336,6 +336,11 @@ public class KitServiceImpl implements KitService {
         if (serialized == null) {
             return SaveResult.FAILED;
         }
+        // Two files loading as one kit: writing one leaves the other to win or lose in directory
+        // order, and writing both can stop half-way, so nothing is written until one file remains.
+        if (!conflictingFiles(kit.getName()).isEmpty()) {
+            return SaveResult.FILE_CONFLICT;
+        }
 
         // The live kit keeps the new items only when the file took them: after a failed save the
         // editor reports the failure, so a claim must still hand out what the file holds.
@@ -350,7 +355,20 @@ public class KitServiceImpl implements KitService {
 
     @Override
     public List<String> conflictingFiles(String kitName) {
-        return Collections.emptyList();
+        List<File> files = kitFilesOf(kitName.toLowerCase().trim());
+        if (files == null || files.size() < 2) {
+            return Collections.emptyList();
+        }
+        return fileNames(files);
+    }
+
+    private static List<String> fileNames(List<File> files) {
+        List<String> names = new ArrayList<>();
+        for (File file : files) {
+            names.add(file.getName());
+        }
+        Collections.sort(names);
+        return names;
     }
 
     /**
@@ -824,6 +842,10 @@ public class KitServiceImpl implements KitService {
             if (targets == null) {
                 logger.error(String.format(plugin.i18n("kits.log.kits_folder_unreadable_save"),
                         kitsFolder().getAbsolutePath(), name));
+                return false;
+            }
+            if (targets.size() > 1) {
+                // Never write one of several files a kit loads from (see conflictingFiles).
                 return false;
             }
             if (targets.isEmpty()) {
