@@ -4949,6 +4949,72 @@ class KitServiceImplTest {
             assertThat(itemsIn(tempDir.toPath(), "solo.yml")).isEqualTo("old-items");
         }
 
+        /**
+         * On delete, a kit file whose existence cannot be determined (its folder can be listed but not
+         * searched) is not a missing file: its kept journal, maybe the only whole copy, is not withdrawn
+         * and the kit is not deleted.
+         */
+        @Test
+        @DisplayName("deleting a kit whose file cannot be checked keeps its journal and refuses the delete")
+        void deleteKeepsTheJournalWhenTheFileCannotBeChecked() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
+            org.junit.jupiter.api.Assumptions.assumeFalse("root".equals(System.getProperty("user.name")),
+                    "root searches any folder");
+            writeKitFile("solo.yml", "old-items");
+            KitServiceImpl service = failingFor(2);
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+            assertThat(service.saveKitToFile("solo", kit)).isFalse();
+            java.nio.file.Path kits = tempDir.toPath().resolve("kits");
+            java.nio.file.Files.setPosixFilePermissions(kits, java.nio.file.attribute.PosixFilePermissions.fromString("r--------"));
+            try {
+                assertThat(service.deleteKit("solo")).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+                assertThat(journals(tempDir.toPath())).containsExactly("solo.yml.journal");
+            } finally {
+                java.nio.file.Files.setPosixFilePermissions(kits, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+            }
+        }
+
+        /**
+         * A journal folder that is a symbolic link is set aside, not empty: deleting a kit is refused
+         * while it is, so a journal in it cannot bring the kit back once the folder is restored.
+         */
+        @Test
+        @DisplayName("deleting a kit while the journal folder is a link is refused, and the start replays nothing from it")
+        void journalFolderLinkRefusesTheDeleteAndIsNotReplayed() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            java.nio.file.Path elsewhere = tempDir.toPath().getParent().resolve(tempDir.getName() + "-elsewhere2");
+            java.nio.file.Files.createDirectories(elsewhere);
+            java.nio.file.Path parked = elsewhere.resolve("solo.yml.journal");
+            byte[] record = KitServiceImpl.journalRecord("solo.yml", false,
+                    "icon: CHEST\nitems: \"parked\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            java.nio.file.Files.write(parked, record);
+            java.nio.file.Files.createSymbolicLink(tempDir.toPath().resolve("kit-journal"), elsewhere);
+
+            service = createService();
+
+            assertThat(service.getKit("solo").getItems()).isEqualTo("old-items");
+            assertThat(java.nio.file.Files.readAllBytes(parked)).isEqualTo(record);
+            assertThat(service.deleteKit("solo")).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+            assertThat(new File(tempDir, "kits/solo.yml")).exists();
+        }
+
+        @Test
+        @DisplayName("a folder at a journal's name fails the save with a message that says so, and is left alone")
+        void folderAtAJournalNameFailsTheSaveTruthfully() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            java.nio.file.Path blocker = tempDir.toPath().resolve("kit-journal").resolve("solo.yml.journal");
+            java.nio.file.Files.createDirectories(blocker);
+            service = createService();
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(service.saveKitToFile("solo", kit)).isFalse();
+
+            assertThat(blocker).isDirectory();
+            verify(mockLogger, never()).error(ArgumentMatchers.<String>argThat(line -> line.contains("/kits reload")));
+        }
+
         @Test
         @DisplayName("a folder at a journal's name is not a pending write: the kit can still be deleted")
         void folderAtAJournalNameDoesNotBlockTheDelete() throws Exception {
