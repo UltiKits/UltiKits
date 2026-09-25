@@ -4902,6 +4902,30 @@ class KitServiceImplTest {
             assertThat(journals(tempDir.toPath())).isEmpty();
         }
 
+        /**
+         * The journals withdrawn on delete are every journal whose kit file loads as the kit - found in
+         * the journal folder, not from the kit files listed now - so one whose file was already removed
+         * by hand is withdrawn too.
+         */
+        @Test
+        @DisplayName("deleting a kit whose file is already gone still withdraws its pending journal")
+        void deleteWithdrawsTheJournalOfAnAbsentFile() throws Exception {
+            File file = writeKitFile("Gone.yml", "old-items");
+            service = createService();
+            assertThat(file.delete()).isTrue();
+            java.nio.file.Path folder = tempDir.toPath().resolve("kit-journal");
+            java.nio.file.Files.createDirectories(folder);
+            java.nio.file.Files.write(folder.resolve("Gone.yml.journal"),
+                    KitServiceImpl.journalRecord("Gone.yml", true, "items: \"back\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+            assertThat(service.deleteKit("gone")).isEqualTo(KitService.DeleteResult.DELETED);
+
+            KitServiceImpl restarted = createService();
+            assertThat(restarted.getKit("gone")).isNull();
+            assertThat(new File(tempDir, "kits").list()).isEmpty();
+            assertThat(journals(tempDir.toPath())).isEmpty();
+        }
+
         @Test
         @DisplayName("a kit whose pending journal cannot be withdrawn is not deleted")
         void deleteRefusedWhileThePendingJournalCannotBeWithdrawn() throws Exception {
