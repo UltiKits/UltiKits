@@ -1861,6 +1861,172 @@ class KitServiceImplTest {
     }
 
     // =========================================================================
+    // Over-sized stack tests (UltiKits/UltiKits#24)
+    // =========================================================================
+
+    /**
+     * A kit stack larger than its item's maximum stack size occupies more than one slot. The claim
+     * must count the slots the stacks really need, refuse before charging when they will not fit,
+     * and drop at the player's feet anything the inventory still cannot take - never destroy it
+     * (UltiKits/UltiKits#24). These run against a real MockBukkit player inventory, so the
+     * assertions read the inventory's contents, the balance and the world's dropped items.
+     */
+    @Nested
+    @DisplayName("Over-sized Stack Tests")
+    class OversizedStackTests {
+
+        private static final double PRICE = 100.0;
+        private final double[] balance = {500.0};
+        private org.mockbukkit.mockbukkit.ServerMock server;
+        private org.mockbukkit.mockbukkit.entity.PlayerMock player;
+
+        @BeforeEach
+        void setUp() {
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            Economy economy = setupMockEconomy(); // boots the shared MockBukkit server
+            when(economy.has(any(org.bukkit.OfflinePlayer.class), anyDouble()))
+                    .thenAnswer(inv -> balance[0] >= (Double) inv.getArgument(1));
+            when(economy.withdrawPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble())).thenAnswer(inv -> {
+                double amount = inv.getArgument(1);
+                balance[0] -= amount;
+                return new EconomyResponse(amount, balance[0], EconomyResponse.ResponseType.SUCCESS, "");
+            });
+            server = MockBukkit.getMock();
+            player = server.addPlayer();
+        }
+
+        /** A paid, re-buyable kit whose single stack is {@code stack}. */
+        private KitServiceImpl serviceWithKit(String name, ItemStack stack) throws Exception {
+            KitDefinition kit = createTestKit(name);
+            kit.setPrice(PRICE);
+            kit.setReBuyable(true);
+            kit.setItems("someBase64Data");
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+            doReturn(new ItemStack[]{stack}).when(spyService).deserializeItems("someBase64Data");
+            return spyService;
+        }
+
+        /** Fills every storage slot but the first {@code free} with a full stack of dirt. */
+        private void leaveFreeSlots(int free) {
+            ItemStack[] contents = new ItemStack[36];
+            for (int i = free; i < contents.length; i++) {
+                contents[i] = new ItemStack(Material.DIRT, 64);
+            }
+            player.getInventory().setStorageContents(contents);
+        }
+
+        private int count(Material material) {
+            int total = 0;
+            for (ItemStack stack : player.getInventory().getStorageContents()) {
+                if (stack != null && stack.getType() == material) {
+                    total += stack.getAmount();
+                }
+            }
+            return total;
+        }
+
+        @Test
+        @DisplayName("128 cobblestone needs two slots: with one free slot the claim is refused before any charge")
+        void oversizedStackRefusedBeforeCharging() throws Exception {
+            leaveFreeSlots(1);
+            ItemStack[] before = player.getInventory().getStorageContents().clone();
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 128));
+
+            KitService.ClaimResult result = spyService.claimKit(player, "bigstone");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.INVENTORY_FULL);
+            assertThat(balance[0]).isEqualTo(500.0);
+            assertThat(player.getInventory().getStorageContents()).containsExactly(before);
+            assertThat(count(Material.COBBLESTONE)).isZero();
+            verify(mockClaimOperator, never()).insert(any(KitClaimData.class));
+        }
+
+        @Test
+        @DisplayName("with the two slots it needs, the whole over-sized stack arrives and nothing is dropped")
+        void oversizedStackDeliveredInFull() throws Exception {
+            leaveFreeSlots(2);
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 128));
+
+            KitService.ClaimResult result = spyService.claimKit(player, "bigstone");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.SUCCESS);
+            assertThat(balance[0]).isEqualTo(400.0);
+            assertThat(count(Material.COBBLESTONE)).isEqualTo(128);
+            assertThat(player.getWorld().getEntitiesByClass(org.bukkit.entity.Item.class)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("the slot count uses the stack's own maximum, not its material's default")
+        void slotCountUsesTheStacksOwnMaximum() throws Exception {
+            ItemStack stack = new ItemStack(Material.COBBLESTONE, 32);
+            org.bukkit.inventory.meta.ItemMeta meta = stack.getItemMeta();
+            meta.setMaxStackSize(16);
+            stack.setItemMeta(meta);
+            // Pre-assertion: the component is what the stack reports, so a count by the material's
+            // default (64, one slot) and a count by the stack's own maximum (16, two slots) differ.
+            assertThat(stack.getMaxStackSize()).isEqualTo(16);
+            assertThat(Material.COBBLESTONE.getMaxStackSize()).isEqualTo(64);
+            leaveFreeSlots(1);
+            KitServiceImpl spyService = serviceWithKit("capped", stack);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "capped");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.INVENTORY_FULL);
+            assertThat(balance[0]).isEqualTo(500.0);
+        }
+
+        @Test
+        @DisplayName("control: ordinary stacks still need one slot each")
+        void ordinaryStacksNeedOneSlotEach() throws Exception {
+            leaveFreeSlots(1);
+            KitServiceImpl spyService = serviceWithKit("onestack", new ItemStack(Material.COBBLESTONE, 64));
+
+            assertThat(spyService.claimKit(player, "onestack")).isEqualTo(KitService.ClaimResult.SUCCESS);
+            assertThat(count(Material.COBBLESTONE)).isEqualTo(64);
+        }
+
+        /**
+         * The second line of defence: whatever {@code addItem} still hands back - an inventory another
+         * plugin filled between the check and the delivery - is dropped at the player's location,
+         * each leftover once, and the player is told. The inventory is a mock here only because
+         * MockBukkit's {@code addItem} does not report leftovers; the world is the real mock world,
+         * so the dropped items are read from it.
+         */
+        @Test
+        @DisplayName("anything addItem cannot place is dropped at the player's feet once, and the player is told")
+        void leftoversAreDroppedNotDestroyed() throws Exception {
+            org.bukkit.World world = player.getWorld();
+            org.bukkit.Location feet = new org.bukkit.Location(world, 10, 64, 10);
+            Player mocked = createMockPlayer();
+            when(mocked.getWorld()).thenReturn(world);
+            when(mocked.getLocation()).thenReturn(feet);
+            PlayerInventory inventory = mocked.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[36]);
+            ItemStack leftover = new ItemStack(Material.COBBLESTONE, 64);
+            HashMap<Integer, ItemStack> leftovers = new HashMap<>();
+            leftovers.put(0, leftover);
+            when(inventory.addItem(any(ItemStack.class))).thenReturn(leftovers);
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 128));
+
+            KitService.ClaimResult result = spyService.claimKit(mocked, "bigstone");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.SUCCESS);
+            List<org.bukkit.entity.Item> dropped =
+                    new ArrayList<>(world.getEntitiesByClass(org.bukkit.entity.Item.class));
+            assertThat(dropped).hasSize(1);
+            assertThat(dropped.get(0).getItemStack().getType()).isEqualTo(Material.COBBLESTONE);
+            assertThat(dropped.get(0).getItemStack().getAmount()).isEqualTo(64);
+            ArgumentCaptor<String> told = ArgumentCaptor.forClass(String.class);
+            verify(mocked, atLeastOnce()).sendMessage(told.capture());
+            assertThat(told.getAllValues())
+                    .anyMatch(line -> line.contains(CatalogueText.text("en", "kits.claim.leftovers_dropped")));
+        }
+    }
+
+    // =========================================================================
     // Cooldown Tests
     // =========================================================================
     @Nested
