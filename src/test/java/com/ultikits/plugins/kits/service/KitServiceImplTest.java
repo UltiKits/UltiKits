@@ -3200,6 +3200,105 @@ class KitServiceImplTest {
                     new File(tempDir, "kits").getAbsolutePath(), "vip", "VIP.yml, vip.yml", loadedFile));
         }
 
+        private boolean posix() {
+            return java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix");
+        }
+
+        private String mode(File file) throws IOException {
+            return java.nio.file.attribute.PosixFilePermissions.toString(
+                    java.nio.file.Files.getPosixFilePermissions(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS));
+        }
+
+        /**
+         * Replacing the file through a moved temporary file must keep what an in-place write kept: the
+         * file's permission bits, a symbolic link (the file it points to is the one written) and a
+         * read-only file's protection (the save fails and the file is unchanged).
+         */
+        @Test
+        @DisplayName("a save keeps the kit file's permission bits")
+        void saveKeepsPermissions() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
+            File file = writeKitFile("solo.yml", "old-items");
+            java.nio.file.Files.setPosixFilePermissions(file.toPath(),
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rw-r-----"));
+            service = createService();
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(service.saveKitToFile("solo", kit)).isTrue();
+
+            assertThat(mode(file)).isEqualTo("rw-r-----");
+            assertThat(YamlConfiguration.loadConfiguration(file).getString("items")).isEqualTo("new-items");
+        }
+
+        /**
+         * Discriminates only under a umask wider than {@code 077} (for example the usual {@code 022}):
+         * under {@code 077} every new file is {@code rw-------} anyway.
+         */
+        @Test
+        @DisplayName("a new kit file gets the same permission bits as any file the server creates there")
+        void newFileGetsTheDefaultMode() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
+            File folder = new File(tempDir, "kits");
+            folder.mkdirs();
+            File control = new File(folder, "control.txt");
+            new java.io.FileOutputStream(control).close();
+            service = createService();
+            KitDefinition kit = createTestKit("fresh");
+
+            assertThat(service.saveKitToFile("fresh", kit)).isTrue();
+
+            assertThat(mode(new File(folder, "fresh.yml"))).isEqualTo(mode(control));
+        }
+
+        @Test
+        @DisplayName("a kit file that is a symbolic link stays a link, and the file it points to is written")
+        void saveWritesThroughASymbolicLink() throws Exception {
+            File realFolder = new File(tempDir, "real");
+            realFolder.mkdirs();
+            File real = new File(realFolder, "linked.yml");
+            java.nio.file.Files.write(real.toPath(),
+                    "icon: CHEST\nitems: \"old-items\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            File folder = new File(tempDir, "kits");
+            folder.mkdirs();
+            File link = new File(folder, "linked.yml");
+            try {
+                java.nio.file.Files.createSymbolicLink(link.toPath(), real.toPath());
+            } catch (UnsupportedOperationException | IOException e) {
+                org.junit.jupiter.api.Assumptions.assumeTrue(false, "symbolic links not available: " + e);
+            }
+            service = createService();
+            KitDefinition kit = service.getKit("linked");
+            kit.setItems("new-items");
+
+            assertThat(service.saveKitToFile("linked", kit)).isTrue();
+
+            assertThat(java.nio.file.Files.isSymbolicLink(link.toPath())).isTrue();
+            assertThat(YamlConfiguration.loadConfiguration(real).getString("items")).isEqualTo("new-items");
+            assertThat(realFolder.list()).containsExactly("linked.yml");
+        }
+
+        @Test
+        @DisplayName("a read-only kit file is not replaced: the save fails and the file is unchanged")
+        void readOnlyFileIsNotReplaced() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
+            org.junit.jupiter.api.Assumptions.assumeFalse("root".equals(System.getProperty("user.name")),
+                    "root can write a read-only file");
+            File file = writeKitFile("solo.yml", "old-items");
+            byte[] before = bytes(file);
+            java.nio.file.Files.setPosixFilePermissions(file.toPath(),
+                    java.nio.file.attribute.PosixFilePermissions.fromString("r--r--r--"));
+            service = createService();
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(service.saveKitToFile("solo", kit)).isFalse();
+
+            assertThat(bytes(file)).isEqualTo(before);
+            assertThat(mode(file)).isEqualTo("r--r--r--");
+            assertThat(kitsFolderListing()).containsExactly("solo.yml");
+        }
+
         @Test
         @DisplayName("a kit with a single file has no conflicting files")
         void singleFileIsNoConflict() throws Exception {
