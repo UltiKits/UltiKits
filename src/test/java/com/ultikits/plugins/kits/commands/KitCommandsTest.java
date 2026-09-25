@@ -236,6 +236,57 @@ class KitCommandsTest {
         }
 
         @Test
+        @DisplayName("NOT_RECORDED tells the player nothing was charged or given (UltiKits/UltiKits#26)")
+        void notRecordedSendsItsOwnMessage() {
+            when(kitService.claimKit(player, "vip")).thenReturn(KitService.ClaimResult.NOT_RECORDED);
+
+            kitCommands.onClaim(player, "vip");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + CatalogueText.text("zh", "kits.claim.not_recorded"));
+        }
+
+        @Test
+        @DisplayName("NOT_RECORDED_REFUND_FAILED does not claim the payment was returned")
+        void notRecordedRefundFailedSendsItsOwnMessage() {
+            when(kitService.claimKit(player, "vip")).thenReturn(KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED);
+
+            kitCommands.onClaim(player, "vip");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + CatalogueText.text("zh", "kits.claim.not_recorded_refund_failed"));
+        }
+
+        /**
+         * Sweep by class: a result the switch forgets falls to {@code default:} and says "Error
+         * claiming kit", which is true of no result but {@code ERROR}. Every other result must have a
+         * reply of its own.
+         */
+        @Test
+        @DisplayName("every claim result other than ERROR has its own reply, never the generic error")
+        void everyResultHasItsOwnReply() {
+            String generic = CatalogueText.text("zh", "kits.claim.error");
+            lenient().when(kitService.getKit(anyString())).thenReturn(null);
+            for (KitService.ClaimResult result : KitService.ClaimResult.values()) {
+                if (result == KitService.ClaimResult.ERROR) {
+                    continue;
+                }
+                reset(player);
+                when(kitService.claimKit(player, "k")).thenReturn(result);
+
+                kitCommands.onClaim(player, "k");
+
+                ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+                verify(player, atLeastOnce()).sendMessage(captor.capture());
+                assertThat(captor.getAllValues()).as(result.name()).noneMatch(m -> m.contains(generic));
+            }
+        }
+
+        @Test
         @DisplayName("ERROR sends generic error message")
         void errorSendsMessage() {
             when(kitService.claimKit(player, "broken")).thenReturn(KitService.ClaimResult.ERROR);

@@ -1677,8 +1677,8 @@ class KitServiceImplTest {
         }
 
         @Test
-        @DisplayName("ordering: the money moves before the items and the claim record, so a refused payment cannot leave half a claim")
-        void withdrawalHappensBeforeDeliveryAndClaimRecord() throws Exception {
+        @DisplayName("ordering: the money moves first, then the claim record, then the items (UltiKits/UltiKits#26)")
+        void withdrawalHappensBeforeClaimRecordAndDelivery() throws Exception {
             Economy mockEconomy = statefulEconomy(true);
 
             KitServiceImpl spyService = paidKitService("ordered", true);
@@ -1686,8 +1686,8 @@ class KitServiceImplTest {
 
             InOrder order = inOrder(mockEconomy, inventory, mockClaimOperator);
             order.verify(mockEconomy).withdrawPlayer(player, PRICE);
-            order.verify(inventory).addItem(kitItem);
             order.verify(mockClaimOperator).insert(any(KitClaimData.class));
+            order.verify(inventory).addItem(kitItem);
         }
 
         /**
@@ -1836,8 +1836,8 @@ class KitServiceImplTest {
             assertThat(spyService.claimKit(player, "rewarded")).isEqualTo(KitService.ClaimResult.SUCCESS);
 
             InOrder order = inOrder(inventory, mockClaimOperator, player);
-            order.verify(inventory).addItem(kitItem);
             order.verify(mockClaimOperator).insert(any(KitClaimData.class));
+            order.verify(inventory).addItem(kitItem);
             order.verify(player).performCommand("warp vip");
         }
 
@@ -1857,6 +1857,245 @@ class KitServiceImplTest {
             assertThat(spyService.claimKit(player, "freebie")).isEqualTo(KitService.ClaimResult.SUCCESS);
             verify(inventory).addItem(kitItem);
             assertThat(balance[0]).isEqualTo(500.0);
+        }
+    }
+
+    // =========================================================================
+    // Claim record failure tests (UltiKits/UltiKits#26)
+    // =========================================================================
+
+    /**
+     * A one-time claim whose record cannot be written. The maintainer's answer of 2026-09-24 decides
+     * the behaviour: write the record before handing anything over, and refuse the claim when the
+     * write fails; a paid kit keeps the charge-first order - charge, write the record, give - and is
+     * refunded when the record cannot be written; if the refund also fails, an ERROR names the
+     * player, the kit and the amount (UltiKits/UltiKits#26).
+     * <p>
+     * Every assertion reads state: the balance, the items handed to the inventory, the commands run
+     * and the rows in a claim table that - like the relational backends - is read back on every
+     * claim. The fake table hands out copies, so an object the service mutates before a failed write
+     * does not count as stored.
+     */
+    @Nested
+    @DisplayName("Claim Record Failure Tests")
+    class ClaimRecordFailureTests {
+
+        private static final double PRICE = 100.0;
+
+        private final double[] balance = {500.0};
+        private final List<KitClaimData> rows = new ArrayList<>();
+        private final List<ItemStack> given = new ArrayList<>();
+        private final List<String> commandsRun = new ArrayList<>();
+        /** Thrown by the next claim-table write while non-null. */
+        private Exception writeFailure;
+        private boolean refundSucceeds = true;
+        /** The number of items handed over when the claim row was written, per write. */
+        private final List<Integer> givenAtWrite = new ArrayList<>();
+        /** The balance when the claim row was written, per write. */
+        private final List<Double> balanceAtWrite = new ArrayList<>();
+
+        private Player player;
+        private ItemStack kitItem;
+
+        @BeforeEach
+        void setUp() throws Exception {
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            player = createMockPlayer();
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[36]);
+            when(inventory.addItem(any(ItemStack.class))).thenAnswer(inv -> {
+                given.add(inv.getArgument(0));
+                return new HashMap<Integer, ItemStack>();
+            });
+            when(player.performCommand(anyString())).thenAnswer(inv -> {
+                commandsRun.add(inv.getArgument(0));
+                return true;
+            });
+            kitItem = mock(ItemStack.class);
+            when(kitItem.clone()).thenReturn(kitItem);
+
+            when(mockQuery.list()).thenAnswer(inv -> {
+                List<KitClaimData> copies = new ArrayList<>();
+                for (KitClaimData row : rows) {
+                    copies.add(copyOf(row));
+                }
+                return copies;
+            });
+            doAnswer(inv -> {
+                recordWriteAttempt();
+                rows.add(copyOf(inv.getArgument(0)));
+                return null;
+            }).when(mockClaimOperator).insert(any(KitClaimData.class));
+            doAnswer(inv -> {
+                recordWriteAttempt();
+                KitClaimData updated = inv.getArgument(0);
+                rows.removeIf(row -> row.getUuid().equals(updated.getUuid()));
+                rows.add(copyOf(updated));
+                return null;
+            }).when(mockClaimOperator).update(any(KitClaimData.class));
+
+            Economy economy = setupMockEconomy();
+            when(economy.has(any(org.bukkit.OfflinePlayer.class), anyDouble()))
+                    .thenAnswer(inv -> balance[0] >= (Double) inv.getArgument(1));
+            when(economy.withdrawPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble())).thenAnswer(inv -> {
+                double amount = inv.getArgument(1);
+                balance[0] -= amount;
+                return new EconomyResponse(amount, balance[0], EconomyResponse.ResponseType.SUCCESS, "");
+            });
+            when(economy.depositPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble())).thenAnswer(inv -> {
+                double amount = inv.getArgument(1);
+                if (!refundSucceeds) {
+                    return new EconomyResponse(amount, balance[0], EconomyResponse.ResponseType.FAILURE, "economy down");
+                }
+                balance[0] += amount;
+                return new EconomyResponse(amount, balance[0], EconomyResponse.ResponseType.SUCCESS, "");
+            });
+        }
+
+        private void recordWriteAttempt() throws Exception {
+            givenAtWrite.add(given.size());
+            balanceAtWrite.add(balance[0]);
+            if (writeFailure != null) {
+                throw writeFailure;
+            }
+        }
+
+        private KitClaimData copyOf(KitClaimData row) {
+            return KitClaimData.builder().uuid(row.getUuid()).playerUuid(row.getPlayerUuid())
+                    .kitName(row.getKitName()).lastClaim(row.getLastClaim()).claimCount(row.getClaimCount())
+                    .build();
+        }
+
+        private KitServiceImpl serviceWithKit(String name, double price, boolean oneTime) throws Exception {
+            KitDefinition kit = createTestKit(name);
+            kit.setPrice(price);
+            kit.setReBuyable(!oneTime);
+            kit.setItems("someBase64Data");
+            kit.setPlayerCommands(Collections.singletonList("reward " + name));
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+            doReturn(new ItemStack[]{kitItem}).when(spyService).deserializeItems("someBase64Data");
+            return spyService;
+        }
+
+        private List<String> errors() {
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeast(0)).error(captor.capture());
+            return captor.getAllValues();
+        }
+
+        @Test
+        @DisplayName("paid one-time kit, the new claim row cannot be inserted: refused, refunded, nothing given or run")
+        void insertFailureRefusesAndRefunds() throws Exception {
+            writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
+            KitServiceImpl spyService = serviceWithKit("vip", PRICE, true);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "vip");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
+            assertThat(balanceAtWrite).containsExactly(400.0); // charged before the record, as decided
+            assertThat(balance[0]).isEqualTo(500.0);          // and refunded after it failed
+            assertThat(given).isEmpty();
+            assertThat(commandsRun).isEmpty();
+            assertThat(rows).isEmpty();
+        }
+
+        @Test
+        @DisplayName("the one-time guarantee holds across a failure: refused, then claimed once, then ALREADY_CLAIMED")
+        void oneTimeKitIsHandedOverExactlyOnce() throws Exception {
+            KitServiceImpl spyService = serviceWithKit("vip", PRICE, true);
+
+            writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
+            assertThat(spyService.claimKit(player, "vip")).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
+            writeFailure = null;
+            assertThat(spyService.claimKit(player, "vip")).isEqualTo(KitService.ClaimResult.SUCCESS);
+            assertThat(spyService.claimKit(player, "vip")).isEqualTo(KitService.ClaimResult.ALREADY_CLAIMED);
+
+            assertThat(given).containsExactly(kitItem);
+            assertThat(commandsRun).containsExactly("reward vip");
+            assertThat(rows).hasSize(1);
+            assertThat(balance[0]).isEqualTo(400.0);
+        }
+
+        @Test
+        @DisplayName("the claim row is written before any item is handed over")
+        void recordIsWrittenBeforeDelivery() throws Exception {
+            KitServiceImpl spyService = serviceWithKit("vip", PRICE, true);
+
+            assertThat(spyService.claimKit(player, "vip")).isEqualTo(KitService.ClaimResult.SUCCESS);
+
+            assertThat(givenAtWrite).containsExactly(0);
+            assertThat(given).containsExactly(kitItem);
+        }
+
+        @Test
+        @DisplayName("repeat claim whose update throws the unchecked database exception: refused and refunded")
+        void uncheckedUpdateFailureRefusesAndRefunds() throws Exception {
+            KitServiceImpl spyService = serviceWithKit("daily", PRICE, false);
+            assertThat(spyService.claimKit(player, "daily")).isEqualTo(KitService.ClaimResult.SUCCESS);
+            long firstClaim = rows.get(0).getLastClaim();
+            given.clear();
+            commandsRun.clear();
+
+            writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
+            KitService.ClaimResult result = spyService.claimKit(player, "daily");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
+            assertThat(balance[0]).isEqualTo(400.0); // the first claim's charge only
+            assertThat(given).isEmpty();
+            assertThat(commandsRun).isEmpty();
+            assertThat(rows).hasSize(1);
+            assertThat(rows.get(0).getClaimCount()).isEqualTo(1);
+            assertThat(rows.get(0).getLastClaim()).isEqualTo(firstClaim);
+        }
+
+        @Test
+        @DisplayName("repeat claim whose update throws IllegalAccessException: refused and refunded")
+        void checkedUpdateFailureRefusesAndRefunds() throws Exception {
+            KitServiceImpl spyService = serviceWithKit("daily", PRICE, false);
+            assertThat(spyService.claimKit(player, "daily")).isEqualTo(KitService.ClaimResult.SUCCESS);
+            given.clear();
+
+            writeFailure = new IllegalAccessException("field not accessible");
+            KitService.ClaimResult result = spyService.claimKit(player, "daily");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
+            assertThat(balance[0]).isEqualTo(400.0);
+            assertThat(given).isEmpty();
+        }
+
+        @Test
+        @DisplayName("free kit, the record cannot be written: refused, nothing given, no money moves")
+        void freeKitRecordFailureRefuses() throws Exception {
+            writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
+            KitServiceImpl spyService = serviceWithKit("starter", 0, true);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "starter");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
+            assertThat(given).isEmpty();
+            assertThat(commandsRun).isEmpty();
+            assertThat(rows).isEmpty();
+            assertThat(balance[0]).isEqualTo(500.0);
+        }
+
+        @Test
+        @DisplayName("the refund also fails: its own result, and an ERROR naming the player, the kit and the amount")
+        void refundFailureIsLoggedWithPlayerKitAndAmount() throws Exception {
+            writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
+            refundSucceeds = false;
+            KitServiceImpl spyService = serviceWithKit("vipcrate", PRICE, true);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "vipcrate");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED);
+            assertThat(balance[0]).isEqualTo(400.0);
+            assertThat(given).isEmpty();
+            assertThat(commandsRun).isEmpty();
+            assertThat(errors()).anyMatch(line -> line.contains(player.getName())
+                    && line.contains("vipcrate") && line.contains(String.valueOf(PRICE)));
         }
     }
 
@@ -3528,6 +3767,8 @@ class KitServiceImplTest {
                     KitService.ClaimResult.EMPTY_KIT,
                     KitService.ClaimResult.PAYMENT_FAILED,
                     KitService.ClaimResult.SYSTEM_DISABLED,
+                    KitService.ClaimResult.NOT_RECORDED,
+                    KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED,
                     KitService.ClaimResult.ERROR
             );
         }
