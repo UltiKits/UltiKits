@@ -404,6 +404,29 @@ class KitCommandsTest {
             verify(player).sendMessage(captor.capture());
             assertThat(captor.getValue()).contains("不存在").contains("missing");
         }
+
+        /**
+         * An editor for a kit that more than one file defines could never be saved, so it is not
+         * opened: the admin is told which files conflict instead.
+         */
+        @Test
+        @DisplayName("a kit more than one file defines is not opened for editing, and the files are named")
+        void fileConflictIsNotOpened() {
+            when(player.hasPermission("ultikits.kits.admin")).thenReturn(true);
+            KitDefinition kit = new KitDefinition();
+            kit.setName("vip");
+            when(kitService.getKit("vip")).thenReturn(kit);
+            when(kitService.conflictingFiles("vip")).thenReturn(Arrays.asList("VIP.yml", "vip.yml"));
+
+            kitCommands.onEdit(player, "vip");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(
+                            CatalogueText.text("zh", "kits.conflict.not_changed"), "vip", "VIP.yml, vip.yml"));
+            verify(player, never()).openInventory(any(org.bukkit.inventory.Inventory.class));
+        }
     }
 
     @Nested
