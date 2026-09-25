@@ -4648,6 +4648,7 @@ class KitServiceImplTest {
         @Test
         @DisplayName("a journal whose name holds a backslash never writes outside the kits folder")
         void journalWithABackslashNameStaysInTheKitsFolder() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "a backslash in a file name");
             writeKitFile("solo.yml", "old-items");
             java.nio.file.Path folder = tempDir.toPath().resolve("kit-journal");
             java.nio.file.Files.createDirectories(folder);
@@ -4819,65 +4820,144 @@ class KitServiceImplTest {
         }
 
         /**
-         * At replay, a kit file that is now a symbolic link the interrupted write did not go through - a
-         * plain file replaced by a link, or a link pointed elsewhere - is not written: the journal is
-         * discarded and the linked file is untouched. A link the write did go through, still pointing to
-         * the same file, is completed as usual.
+         * Replay writes only a plain kit file and never follows a symbolic link. When the kit file is a
+         * link at replay - one put in place of the file after the crash, or the link the save itself went
+         * through - nothing is written and the journal, possibly the only whole copy, is kept and named on
+         * the console; once the link is replaced by a plain file, the next start completes the write.
          */
         @Test
-        @DisplayName("replay does not write through a link put in place of the kit file after the crash")
-        void replayDoesNotFollowANewLink() throws Exception {
+        @DisplayName("replay never writes through a link: the journal is kept until the kit file is a plain file")
+        void replayNeverWritesThroughALink() throws Exception {
             java.nio.file.Path image = savedWithCrashAt("mid-write");
             java.nio.file.Path victim = victim();
             byte[] before = java.nio.file.Files.readAllBytes(victim);
             java.nio.file.Path kitFile = image.resolve("kits").resolve("solo.yml");
+            byte[] partial = java.nio.file.Files.readAllBytes(kitFile);
             java.nio.file.Files.delete(kitFile);
             java.nio.file.Files.createSymbolicLink(kitFile, victim);
 
             startOn(image);
 
             assertThat(java.nio.file.Files.readAllBytes(victim)).isEqualTo(before);
-            assertThat(java.nio.file.Files.isSymbolicLink(kitFile)).isTrue();
-            assertThat(journals(image)).isEmpty();
+            assertThat(journals(image)).containsExactly("solo.yml.journal");
+            ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).error(error.capture());
+            assertThat(error.getAllValues()).anyMatch(line -> line.contains("solo.yml.journal"));
+
+            java.nio.file.Files.delete(kitFile);
+            java.nio.file.Files.write(kitFile, partial);
+            assertReplayedToTheNewContent(image);
+            assertThat(java.nio.file.Files.readAllBytes(victim)).isEqualTo(before);
         }
 
         @Test
-        @DisplayName("replay completes a write through the same link it went through, and not through a repointed one")
-        void replayFollowsOnlyTheSameLink() throws Exception {
-            for (boolean repointed : new boolean[] {false, true}) {
-                java.nio.file.Path realFolder = tempDir.toPath().resolve("real");
-                java.nio.file.Files.createDirectories(realFolder);
-                java.nio.file.Path real = realFolder.resolve("linked.yml");
-                java.nio.file.Files.write(real, "icon: CHEST\nitems: \"old-items\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                new File(tempDir, "kits").mkdirs();
-                java.nio.file.Path link = tempDir.toPath().resolve("kits").resolve("linked.yml");
-                java.nio.file.Files.deleteIfExists(link);
-                java.nio.file.Files.createSymbolicLink(link, java.nio.file.Paths.get("..", "real", "linked.yml"));
-                java.nio.file.Path[] image = new java.nio.file.Path[1];
-                KitServiceImpl crashing = crashingAt("mid-write", image);
-                KitDefinition kit = crashing.getKit("linked");
-                kit.setItems("new-items");
-                assertThat(crashing.saveKitToFile("linked", kit)).isTrue();
-                java.nio.file.Path imageLink = image[0].resolve("kits").resolve("linked.yml");
-                java.nio.file.Files.delete(imageLink);
-                java.nio.file.Path other = image[0].resolve("real").resolve("other.yml");
-                java.nio.file.Files.write(other, "icon: CHEST\nitems: \"other-items\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                java.nio.file.Files.createSymbolicLink(imageLink,
-                        java.nio.file.Paths.get("..", "real", repointed ? "other.yml" : "linked.yml"));
-                byte[] otherBefore = java.nio.file.Files.readAllBytes(other);
+        @DisplayName("a crash in a save through the kit file's own link is kept for the operator, not replayed through it")
+        void crashThroughTheSavesOwnLinkIsKept() throws Exception {
+            java.nio.file.Path realFolder = tempDir.toPath().resolve("real");
+            java.nio.file.Files.createDirectories(realFolder);
+            java.nio.file.Path real = realFolder.resolve("linked.yml");
+            java.nio.file.Files.write(real, "icon: CHEST\nitems: \"old-items\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            new File(tempDir, "kits").mkdirs();
+            java.nio.file.Files.createSymbolicLink(tempDir.toPath().resolve("kits").resolve("linked.yml"),
+                    java.nio.file.Paths.get("..", "real", "linked.yml"));
+            java.nio.file.Path[] image = new java.nio.file.Path[1];
+            KitServiceImpl crashing = crashingAt("mid-write", image);
+            KitDefinition kit = crashing.getKit("linked");
+            kit.setItems("new-items");
+            assertThat(crashing.saveKitToFile("linked", kit)).isTrue();
+            byte[] partial = java.nio.file.Files.readAllBytes(image[0].resolve("real").resolve("linked.yml"));
 
-                startOn(image[0]);
+            KitServiceImpl restarted = startOn(image[0]);
 
-                String realItems = itemsIn(image[0], "../real/linked.yml");
-                if (repointed) {
-                    assertThat(java.nio.file.Files.readAllBytes(other)).isEqualTo(otherBefore);
-                    assertThat(realItems).isNotEqualTo("new-items");
-                } else {
-                    assertThat(realItems).isEqualTo("new-items");
+            assertThat(java.nio.file.Files.readAllBytes(image[0].resolve("real").resolve("linked.yml"))).isEqualTo(partial);
+            assertThat(journals(image[0])).containsExactly("linked.yml.journal");
+            KitDefinition loaded = new KitDefinition();
+            loaded.setName("linked");
+            loaded.setItems("later-items");
+            assertThat(restarted.saveKitToFile("linked", loaded)).isFalse();
+            assertThat(journals(image[0])).containsExactly("linked.yml.journal");
+        }
+
+        /**
+         * Deleting a kit whose earlier write left a kept journal first completes that write, so the file
+         * is whole even when it then cannot be deleted; the journal is never withdrawn ahead of a delete
+         * that may fail.
+         */
+        @Test
+        @DisplayName("deleting a kit completes its kept journal first, so a failed delete leaves a whole file")
+        void deleteCompletesTheKeptJournalFirst() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            int[] calls = {0};
+            KitServiceImpl service = new KitServiceImpl(plugin, config) {
+                @Override
+                void writeInPlace(java.nio.channels.FileChannel channel, byte[] content) throws IOException {
+                    if (calls[0]++ < 2) {
+                        channel.write(java.nio.ByteBuffer.wrap(content, 0, content.length / 2));
+                        throw new IOException("disk full");
+                    }
+                    super.writeInPlace(channel, content);
                 }
-                assertThat(journals(image[0])).as("repointed=" + repointed).isEmpty();
-                when(plugin.getResourceFolderPath()).thenReturn(tempDir.getAbsolutePath());
-            }
+
+                @Override
+                void deleteKitFile(File kitFile) throws IOException {
+                    throw new java.nio.file.AccessDeniedException(kitFile.toString(), null, "in use");
+                }
+            };
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+            assertThat(service.saveKitToFile("solo", kit)).isFalse();
+
+            assertThat(service.deleteKit("solo")).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+
+            assertThat(itemsIn(tempDir.toPath(), "solo.yml")).isEqualTo("new-items");
+            assertThat(journals(tempDir.toPath())).isEmpty();
+        }
+
+        @Test
+        @DisplayName("a journal name that is a dangling link is never written through")
+        void danglingJournalLinkIsNeverWrittenThrough() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            java.nio.file.Path nowhere = tempDir.toPath().getParent().resolve(tempDir.getName() + "-nowhere");
+            java.nio.file.Path folder = tempDir.toPath().resolve("kit-journal");
+            java.nio.file.Files.createDirectories(folder);
+            service = createService();
+            java.nio.file.Files.createSymbolicLink(folder.resolve("solo.yml.journal"), nowhere);
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(service.saveKitToFile("solo", kit)).isTrue();
+
+            assertThat(nowhere).doesNotExist();
+            assertThat(itemsIn(tempDir.toPath(), "solo.yml")).isEqualTo("new-items");
+        }
+
+        @Test
+        @DisplayName("a journal folder that is a symbolic link is never written into")
+        void journalFolderLinkIsNeverWrittenInto() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            java.nio.file.Path elsewhere = tempDir.toPath().getParent().resolve(tempDir.getName() + "-elsewhere");
+            java.nio.file.Files.createDirectories(elsewhere);
+            java.nio.file.Files.createSymbolicLink(tempDir.toPath().resolve("kit-journal"), elsewhere);
+            service = createService();
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(service.saveKitToFile("solo", kit)).isFalse();
+
+            assertThat(elsewhere.toFile().list()).isEmpty();
+            assertThat(itemsIn(tempDir.toPath(), "solo.yml")).isEqualTo("old-items");
+        }
+
+        @Test
+        @DisplayName("a folder at a journal's name is not a pending write: the kit can still be deleted")
+        void folderAtAJournalNameDoesNotBlockTheDelete() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            java.nio.file.Path folder = tempDir.toPath().resolve("kit-journal");
+            java.nio.file.Files.createDirectories(folder.resolve("solo.yml.journal").resolve("inside"));
+            service = createService();
+            assertThat(service.getKit("solo")).isNotNull();
+
+            assertThat(service.deleteKit("solo")).isEqualTo(KitService.DeleteResult.DELETED);
         }
 
         /**
