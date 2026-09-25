@@ -21,6 +21,7 @@ import org.yaml.snakeyaml.external.biz.base64Coder.Base64Coder;
 
 import javax.annotation.Nullable;
 import java.io.*;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -305,6 +306,37 @@ public class KitServiceImpl implements KitService {
      */
     void deleteKitFile(File kitFile) throws IOException {
         Files.delete(kitFile.toPath());
+    }
+
+    /**
+     * Replaces {@code target} with {@code text} so that the file is either the old one or the whole
+     * new one: the text is written to a temporary file in the same folder (named so the kit loader,
+     * which reads only {@code .yml}, ignores it) and then moved over the target in one step. A file
+     * system that does not support an atomic move gets a plain replacing move of the complete file.
+     * The temporary file is removed whatever happens. Before, {@link YamlConfiguration#save} truncated
+     * the kit file and then wrote it, so a failure part-way left a cut-off file.
+     * <p>
+     * 先写同目录临时文件，再一次性移动覆盖礼包文件；失败时原文件不变，临时文件总会被清理。
+     */
+    private void writeAtomically(File target, String text) throws IOException {
+        Path targetPath = target.getAbsoluteFile().toPath();
+        Path folder = targetPath.getParent();
+        Files.createDirectories(folder);
+        Path temp = Files.createTempFile(folder, "." + target.getName() + ".", ".tmp");
+        try {
+            Files.write(temp, text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            try {
+                atomicMove(temp, targetPath);
+            } catch (AtomicMoveNotSupportedException unsupported) {
+                Files.move(temp, targetPath, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            try {
+                Files.deleteIfExists(temp);
+            } catch (IOException cleanup) {
+                logger.warn(String.format(plugin.i18n("kits.log.save_file_failed"), target.getName(), cleanup.getMessage()));
+            }
+        }
     }
 
     /**
@@ -855,10 +887,10 @@ public class KitServiceImpl implements KitService {
 
     boolean saveKitToFile(String name, KitDefinition kit) {
         try {
-            // Write every file the kit loads from (normally exactly one), so a save lands where the next
-            // reload reads it; a new kit gets "<name>.yml". A folder that cannot be listed gives no way
-            // to know which file that is, so the save fails rather than writing a second file beside
-            // the real one.
+            // Write the file the kit loads from, so a save lands where the next reload reads it; a new
+            // kit gets "<name>.yml". A folder that cannot be listed gives no way to know which file
+            // that is, and a kit that several files define has no single one, so both fail rather than
+            // writing a file beside the real one. The write itself is all-or-nothing (writeAtomically).
             List<File> targets = kitFilesOf(name);
             if (targets == null) {
                 logger.error(String.format(plugin.i18n("kits.log.kits_folder_unreadable_save"),
@@ -887,9 +919,7 @@ public class KitServiceImpl implements KitService {
             config.set("consoleCommands", kit.getConsoleCommands());
             config.set("items", kit.getItems());
 
-            for (File kitFile : targets) {
-                config.save(kitFile);
-            }
+            writeAtomically(targets.get(0), config.saveToString());
             return true;
         } catch (IOException e) {
             logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
