@@ -86,6 +86,9 @@ public class KitServiceImpl implements KitService {
             copyExampleKit(kitsFolder);
         }
 
+        // An interrupted write is completed (or discarded) before any kit file is read.
+        replayJournals(kitsFolder.toPath());
+
         File[] files = kitsFolder.listFiles((dir, name) -> name.endsWith(".yml"));
         if (files == null || files.length == 0) {
             logger.warn(plugin.i18n("kits.log.no_kit_files"));
@@ -500,6 +503,93 @@ public class KitServiceImpl implements KitService {
             // The kit file is complete; replaying this journal at the next start rewrites the same content.
             logger.warn(String.format(plugin.i18n("kits.log.journal_not_removed"), journal, e.getMessage()));
         }
+    }
+
+    /**
+     * Completes every kit file write a crash (or a failed write that could not be undone) left
+     * behind: an intact journal is written into its kit file in place - or creates it, for a new file -
+     * and deleted. A journal that is cut short, fails its checksum, names a file other than its own
+     * name or outside the kits folder, or whose existing kit file has gone, is logged and deleted
+     * without touching any kit file. A journal that cannot be applied is kept and retried at the next
+     * start.
+     * <p>
+     * 启动时在读取礼包之前补完被中断的写入；损坏或目标已不存在的日志只记录并丢弃，不改动任何礼包文件。
+     */
+    private void replayJournals(Path kitsFolder) {
+        Path folder = journalFolder();
+        if (!Files.isDirectory(folder)) {
+            return;
+        }
+        List<Path> journals = new ArrayList<>();
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(folder, "*.journal")) {
+            for (Path journal : stream) {
+                journals.add(journal);
+            }
+        } catch (IOException | DirectoryIteratorException e) {
+            logger.error(String.format(plugin.i18n("kits.log.journal_folder_unreadable"), folder, e.getMessage()));
+            return;
+        }
+        Collections.sort(journals);
+        for (Path journal : journals) {
+            replayJournal(journal, kitsFolder);
+        }
+    }
+
+    private void replayJournal(Path journal, Path kitsFolder) {
+        String journalName = journal.getFileName().toString();
+        String expectedTarget = journalName.substring(0, journalName.length() - ".journal".length());
+        boolean create;
+        String targetName;
+        byte[] content;
+        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(Files.readAllBytes(journal)))) {
+            if (in.readInt() != JOURNAL_MAGIC) {
+                throw new EOFException("not a kit write journal");
+            }
+            create = in.readBoolean();
+            targetName = in.readUTF();
+            int length = in.readInt();
+            long checksum = in.readLong();
+            if (length < 0 || in.available() != length) {
+                throw new EOFException("length does not match");
+            }
+            content = new byte[length];
+            in.readFully(content);
+            CRC32 crc = new CRC32();
+            crc.update(content, 0, content.length);
+            if (crc.getValue() != checksum || !targetName.equals(expectedTarget) || !isPlainKitFileName(targetName)) {
+                throw new EOFException("checksum or file name does not match");
+            }
+        } catch (IOException | RuntimeException damaged) {
+            logger.warn(String.format(plugin.i18n("kits.log.journal_damaged"), journal));
+            deleteJournal(journal);
+            return;
+        }
+        Path target = kitsFolder.resolve(targetName);
+        boolean exists = Files.exists(target);
+        if (!create && !exists) {
+            logger.warn(String.format(plugin.i18n("kits.log.journal_target_missing"), journal, target));
+            deleteJournal(journal);
+            return;
+        }
+        try (FileChannel channel = exists
+                ? FileChannel.open(target, StandardOpenOption.WRITE)
+                : FileChannel.open(target, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW)) {
+            channel.truncate(0);
+            channel.position(0);
+            writeInPlace(channel, content);
+            channel.force(true);
+        } catch (IOException | RuntimeException e) {
+            logger.error(String.format(plugin.i18n("kits.log.journal_replay_failed"), target, e.getMessage(), journal));
+            return;
+        }
+        deleteJournal(journal);
+        logger.info(String.format(plugin.i18n("kits.log.journal_replayed"), target));
+    }
+
+    /** A bare {@code .yml} file name: no folder part, not hidden, so it can only name a file in the kits folder. */
+    private static boolean isPlainKitFileName(String name) {
+        return name.endsWith(".yml") && !name.startsWith(".") && name.indexOf('/') < 0 && name.indexOf('\\') < 0
+                && name.indexOf(':') < 0 && name.indexOf('\0') < 0;
     }
 
     /** Flushes a folder's entries to disk where the platform allows opening a folder (not on Windows). */
