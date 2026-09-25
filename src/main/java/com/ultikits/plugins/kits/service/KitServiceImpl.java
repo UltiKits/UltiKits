@@ -24,6 +24,8 @@ import java.io.*;
 import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.*;
@@ -297,13 +299,13 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
-     * Whether a kit name holds a path: a separator ({@code /} or {@code \\}) or the step {@code ..}. The
+     * Whether a kit name holds a path: a separator ({@code /} or {@code \\}) or {@code ..} anywhere. The
      * rule a sender is told; the file writer's own check ({@link #kitFileFor}) is the authoritative one.
      * <p>
      * 礼包名是否包含路径（分隔符或 {@code ..}）。
      */
     static boolean nameHasPath(String name) {
-        return name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || "..".equals(name);
+        return name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.contains("..");
     }
 
     /**
@@ -314,7 +316,13 @@ public class KitServiceImpl implements KitService {
     @Nullable
     private File kitFileFor(String name) {
         Path folder = kitsFolder().getAbsoluteFile().toPath().normalize();
-        Path file = folder.resolve(name + ".yml").normalize();
+        Path file;
+        try {
+            file = folder.resolve(name + ".yml").normalize();
+        } catch (InvalidPathException notAPath) {
+            // A name the platform cannot make a path of (a NUL; * or ? on Windows).
+            return null;
+        }
         if (!folder.equals(file.getParent())) {
             return null;
         }
@@ -951,6 +959,17 @@ public class KitServiceImpl implements KitService {
             config.set("consoleCommands", kit.getConsoleCommands());
             config.set("items", kit.getItems());
 
+            if (newOnly) {
+                // A create claims its file exclusively before writing, so a file that appeared after the
+                // scan above fails the create instead of being written over.
+                File created = targets.get(0);
+                Files.createDirectories(created.getAbsoluteFile().toPath().getParent());
+                try {
+                    Files.createFile(created.toPath());
+                } catch (FileAlreadyExistsException appeared) {
+                    return false;
+                }
+            }
             for (File kitFile : targets) {
                 config.save(kitFile);
             }

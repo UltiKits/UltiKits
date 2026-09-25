@@ -3187,6 +3187,22 @@ class KitServiceImplTest {
         }
 
         @Test
+        @DisplayName("a create into a kits folder removed since the start recreates the folder")
+        void createRecreatesAMissingKitsFolder() throws Exception {
+            service = createService();
+            java.nio.file.Path kits = tempDir.toPath().resolve("kits");
+            try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(kits)) {
+                paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+            }
+            KitServiceImpl spyService = spy(service);
+            doReturn("admin-items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            assertThat(spyService.createKit(playerWithOneItem(), "again")).isEqualTo(KitService.CreateResult.SUCCESS);
+
+            assertThat(kits.resolve("again.yml")).isRegularFile();
+        }
+
+        @Test
         @DisplayName("a name with no file is still created (control)")
         void newNameIsCreated() throws Exception {
             new File(tempDir, "kits").mkdirs();
