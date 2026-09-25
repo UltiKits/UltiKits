@@ -55,22 +55,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the module's `kit-journal` folder, so a failed save puts the old content back, a failed `/kits
   create` leaves no partial file, and after a crash during a save the next start completes the write
   before the kits load (a damaged journal, or one whose kit file has gone, is logged and discarded
-  without changing anything); a save reported as failed whose old content was put back never takes
-  effect later (one whose old content could not be put back either, or whose journal could not be
-  removed, is completed at the next start or `/kits reload`, as the console says), a replay never
-  writes through a symbolic link (the journal is kept and the console says how to finish or drop the
-  write), deleting a kit first completes or withdraws a write of it still pending, and on POSIX
-  systems the journal is readable only by the server's account. `/kits create` now refuses a name that
-  is not a plain file name. The file itself is never replaced, so its permissions, owner,
-  access-control list, links and other attributes stay as they were; a kit file the server may not
-  write is refused before anything is written. The example kit is written the same way. When more than
-  one file defines the same kit (`VIP.yml` and `vip.yml` on a case-sensitive file system), `/kits
-  edit`, the editor's Save button, `/kits create` and `/kits delete` change nothing and name the
-  files; one of them still loads, so the kit can be claimed, and `/kits reload` names them on the
-  console (UltiKits/UltiKits#23).
+  without changing anything; a kit file changed by hand after the crash is never overwritten, and a
+  kit whose write is still pending is not loaded until it is resolved); a save reported as failed
+  whose old content was put back never takes effect later (one whose old content could not be put back
+  either, or whose journal could not be removed, is completed at the next start or `/kits reload`, as
+  the console says), a replay never writes through a symbolic link (the journal is kept and the
+  console says how to finish or drop the write), deleting a kit first completes or withdraws a write
+  of it still pending, and on POSIX systems the journal is readable only by the server's account.
+  `/kits create` now refuses a name that is not a plain file name. The file itself is never replaced,
+  so its permissions, owner, access-control list, links and other attributes stay as they were; a kit
+  file the server may not write is refused before anything is written. The example kit is written the
+  same way. When more than one file defines the same kit (`VIP.yml` and `vip.yml` on a case-sensitive
+  file system), `/kits edit`, the editor's Save button, `/kits create` and `/kits delete` change
+  nothing and name the files; one of them still loads, so the kit can be claimed, and `/kits reload`
+  names them on the console (UltiKits/UltiKits#23).
 - 修复：礼包文件删除失败（或礼包文件夹无法读取）时，`/kits delete` 不再报告删除成功。礼包会保持加载，执行者会被告知未删除，控制台会记录该文件或文件夹的路径，
   因此被告知已删除的礼包不会在下次 `/kits reload` 或重启后重新出现。删除和保存礼包现在使用礼包加载时的那个文件，因此文件名含大写字母的手放礼包文件（如 `VIP.yml`）
-  也能像其他礼包一样被删除，并能从编辑界面保存。编辑界面保存失败时不再改动已加载的礼包，领取时发放的仍是文件中的物品。礼包文件现在先把新内容写入模块的 `kit-journal` 文件夹中的写入日志，再原地改写礼包文件，因此保存失败时会写回旧内容，`/kits create` 失败时不会留下残缺文件；保存过程中崩服时，下次启动会在读取礼包之前补完这次写入（损坏的日志或礼包文件已不存在的日志只记录并丢弃，不做任何修改）；已写回旧内容的失败保存之后不会再生效（连旧内容也无法写回的，或日志无法删除的，会按控制台提示在下次启动或 /kits reload 时补完），补完时绝不经过任何符号链接写入（此时会保留日志，并由控制台说明如何补完或放弃这次写入），删除礼包时会先补完或撤销其尚未补完的写入，在 POSIX 系统上写入日志只有服务端自己的账号可以读取。`/kits create` 现在会拒绝不是普通文件名的礼包名。礼包文件本身从不被替换，因此其权限、属主、访问控制列表、链接及其他属性都保持不变；服务端无权写入的礼包文件在写入任何内容之前就会被拒绝。示例礼包也按同样方式写入。当多个文件定义同一礼包时（在区分大小写的文件系统上同时存在 `VIP.yml` 和 `vip.yml`），`/kits edit`、编辑界面的保存按钮、`/kits create` 和 `/kits delete` 不做任何修改并列出这些文件；其中一个仍会被加载，礼包照常可以领取，`/kits reload` 也会在控制台列出这些文件（UltiKits/UltiKits#23）。
+  也能像其他礼包一样被删除，并能从编辑界面保存。编辑界面保存失败时不再改动已加载的礼包，领取时发放的仍是文件中的物品。礼包文件现在先把新内容写入模块的 `kit-journal` 文件夹中的写入日志，再原地改写礼包文件，因此保存失败时会写回旧内容，`/kits create` 失败时不会留下残缺文件；保存过程中崩服时，下次启动会在读取礼包之前补完这次写入（损坏的日志或礼包文件已不存在的日志只记录并丢弃，不做任何修改；中断之后被手工改动过的礼包文件绝不会被覆盖，仍有写入待处理的礼包在处理完之前不会加载）；已写回旧内容的失败保存之后不会再生效（连旧内容也无法写回的，或日志无法删除的，会按控制台提示在下次启动或 /kits reload 时补完），补完时绝不经过任何符号链接写入（此时会保留日志，并由控制台说明如何补完或放弃这次写入），删除礼包时会先补完或撤销其尚未补完的写入，在 POSIX 系统上写入日志只有服务端自己的账号可以读取。`/kits create` 现在会拒绝不是普通文件名的礼包名。礼包文件本身从不被替换，因此其权限、属主、访问控制列表、链接及其他属性都保持不变；服务端无权写入的礼包文件在写入任何内容之前就会被拒绝。示例礼包也按同样方式写入。当多个文件定义同一礼包时（在区分大小写的文件系统上同时存在 `VIP.yml` 和 `vip.yml`），`/kits edit`、编辑界面的保存按钮、`/kits create` 和 `/kits delete` 不做任何修改并列出这些文件；其中一个仍会被加载，礼包照常可以领取，`/kits reload` 也会在控制台列出这些文件（UltiKits/UltiKits#23）。
 
 - `language: zh` now applies to the text that was fixed English: the kit editor's save-button lore
   (`Click to save kit contents`), the `/kits help` lines for `edit`, `create`, `delete` and `reload`,
