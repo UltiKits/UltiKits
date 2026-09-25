@@ -3156,6 +3156,28 @@ class KitServiceImplTest {
             assertThat(kitsFolderListing()).containsExactly("solo.yml");
         }
 
+        /**
+         * Loading is unchanged - one of the files loads, as before, so the kit can still be claimed -
+         * but the console now names the files and the one that was loaded, because the kit can no
+         * longer be edited or deleted until only one remains.
+         */
+        @Test
+        @DisplayName("loading a kit two files define warns once, naming both files and the one loaded")
+        void loadWarnsAboutDuplicateFiles() throws Exception {
+            twoFilesForOneKit();
+
+            service = createService();
+
+            KitDefinition loaded = service.getKit("vip");
+            assertThat(loaded).isNotNull();
+            String loadedFile = "upper-items".equals(loaded.getItems()) ? "VIP.yml" : "vip.yml";
+            ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(warning.capture());
+            assertThat(warning.getAllValues()).containsOnlyOnce(String.format(
+                    CatalogueText.text("zh", "kits.log.kit_file_conflict"),
+                    new File(tempDir, "kits").getAbsolutePath(), "vip", "VIP.yml, vip.yml", loadedFile));
+        }
+
         @Test
         @DisplayName("a kit with a single file has no conflicting files")
         void singleFileIsNoConflict() throws Exception {
