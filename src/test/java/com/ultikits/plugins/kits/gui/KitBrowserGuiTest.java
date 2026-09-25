@@ -1484,7 +1484,7 @@ class KitBrowserGuiTest {
     }
 
     // -----------------------------------------------------------------------
-    // A page index that no longer exists (UltiKits/UltiKits#13, Codex P2)
+    // A page index that no longer exists (UltiKits/UltiKits#13)
     // -----------------------------------------------------------------------
 
     /**
