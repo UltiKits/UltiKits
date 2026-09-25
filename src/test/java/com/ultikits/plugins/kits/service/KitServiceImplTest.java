@@ -2286,6 +2286,53 @@ class KitServiceImplTest {
             assertThat(balance[0]).isEqualTo(500.0);
         }
 
+        /**
+         * Codex round 1 (P2): {@code addItem} tops up matching partial stacks before it takes an empty
+         * slot, so the check must count that room too - counting only empty slots refused a claim that
+         * fits. 65 cobblestone fit a matching 63-stack (1 more) plus one empty slot (64).
+         */
+        @Test
+        @DisplayName("room left in a matching partial stack counts towards the fit")
+        void mergeIntoAPartialStackCountsTowardsTheFit() throws Exception {
+            leaveFreeSlots(1);
+            player.getInventory().setItem(1, new ItemStack(Material.COBBLESTONE, 63));
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 65));
+
+            KitService.ClaimResult result = spyService.claimKit(player, "bigstone");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.SUCCESS);
+            assertThat(balance[0]).isEqualTo(400.0);
+            assertThat(count(Material.COBBLESTONE)).isEqualTo(128);
+        }
+
+        @Test
+        @DisplayName("a partial stack of a different item is no room at all")
+        void aDissimilarPartialStackIsNoRoom() throws Exception {
+            leaveFreeSlots(1);
+            player.getInventory().setItem(1, new ItemStack(Material.STONE, 63));
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 65));
+
+            assertThat(spyService.claimKit(player, "bigstone")).isEqualTo(KitService.ClaimResult.INVENTORY_FULL);
+            assertThat(balance[0]).isEqualTo(500.0);
+        }
+
+        @Test
+        @DisplayName("two kit stacks of one item share the slot the first of them starts")
+        void kitStacksShareTheSlotAnEarlierOneStarts() throws Exception {
+            leaveFreeSlots(1);
+            KitDefinition kit = createTestKit("halves");
+            kit.setPrice(PRICE);
+            kit.setReBuyable(true);
+            kit.setItems("someBase64Data");
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+            doReturn(new ItemStack[]{new ItemStack(Material.COBBLESTONE, 32), new ItemStack(Material.COBBLESTONE, 32)})
+                    .when(spyService).deserializeItems("someBase64Data");
+
+            assertThat(spyService.claimKit(player, "halves")).isEqualTo(KitService.ClaimResult.SUCCESS);
+            assertThat(count(Material.COBBLESTONE)).isEqualTo(64);
+        }
+
         @Test
         @DisplayName("control: ordinary stacks still need one slot each")
         void ordinaryStacksNeedOneSlotEach() throws Exception {
