@@ -52,6 +52,7 @@
   "kits.log.journal_folder_unreadable": "Could not read the kit write journal folder %s (%s). Interrupted kit writes in it are completed once it can be read.",
   "kits.log.delete_file_failed": "Could not delete the kit file %s - the kit stays loaded until this file can be removed.",
   "kits.log.delete_journal_pending": "Kit file %s was not deleted: a write of it is still pending in %s, which could not be withdrawn, and would bring it back.",
+  "kits.log.delete_journal_folder_unreadable": "Kit %s was not deleted: the kit write journal folder %s could not be read, and a write of the kit pending there could bring it back.",
   "kits.log.kits_folder_unreadable": "Could not read the kits folder %s, so kit %s was not deleted and stays loaded.",
   "kits.log.kits_folder_unreadable_save": "Could not read the kits folder %s, so kit %s was not saved.",
   "kits.create.already_exists": "Kit name already exists: %s",

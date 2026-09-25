@@ -243,15 +243,19 @@ public class KitServiceImpl implements KitService {
             // time, so none is removed until only one file defines the kit.
             return DeleteResult.FILE_CONFLICT;
         }
-        for (File kitFile : kitFiles) {
-            // A write still pending for the file would bring it back at the next start or reload.
-            Path journal = journalFolder().resolve(kitFile.getName() + ".journal");
+        // A write still pending for any file that loads as this kit - listed now or already removed by
+        // hand - would bring it back at the next start or reload, so every such journal is withdrawn.
+        List<Path> journals = journalsOf(normalizedName);
+        if (journals == null) {
+            logger.warn(String.format(plugin.i18n("kits.log.delete_journal_folder_unreadable"), normalizedName, journalFolder()));
+            return DeleteResult.FILE_NOT_DELETED;
+        }
+        for (Path journal : journals) {
+            Path kitFile = kitsFolder().toPath().resolve(journalTargetName(journal));
+            withdrawJournal(journal, kitFile);
             if (hasContent(journal)) {
-                withdrawJournal(journal, kitFile.toPath());
-                if (hasContent(journal)) {
-                    logger.warn(String.format(plugin.i18n("kits.log.delete_journal_pending"), kitFile.getAbsolutePath(), journal));
-                    return DeleteResult.FILE_NOT_DELETED;
-                }
+                logger.warn(String.format(plugin.i18n("kits.log.delete_journal_pending"), kitFile, journal));
+                return DeleteResult.FILE_NOT_DELETED;
             }
         }
         boolean survived = false;
@@ -791,6 +795,36 @@ public class KitServiceImpl implements KitService {
     private static boolean isPlainKitFileName(String name) {
         return name.endsWith(".yml") && !name.startsWith(".") && name.indexOf('/') < 0 && name.indexOf('\\') < 0
                 && name.indexOf(':') < 0 && name.indexOf('\0') < 0;
+    }
+
+    /**
+     * Every journal in the journal folder whose kit file loads as {@code kitName} (by the same mapping
+     * as the loader), whether or not that file exists; empty when there is no journal folder, and
+     * {@code null} when it cannot be listed.
+     */
+    @Nullable
+    private List<Path> journalsOf(String kitName) {
+        Path folder = journalFolder();
+        List<Path> matches = new ArrayList<>();
+        if (!Files.isDirectory(folder, LinkOption.NOFOLLOW_LINKS)) {
+            return matches;
+        }
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(folder, "*.journal")) {
+            for (Path journal : stream) {
+                if (kitNameOf(new File(journalTargetName(journal))).equals(kitName)) {
+                    matches.add(journal);
+                }
+            }
+        } catch (IOException | DirectoryIteratorException e) {
+            return null;
+        }
+        return matches;
+    }
+
+    /** The kit file name a journal is for: its own file name without {@code .journal}. */
+    private static String journalTargetName(Path journal) {
+        String name = journal.getFileName().toString();
+        return name.substring(0, name.length() - ".journal".length());
     }
 
     /** The whole content of an open file, read from its start. */

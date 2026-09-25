@@ -52,6 +52,7 @@
   "kits.log.journal_folder_unreadable": "无法读取礼包写入日志文件夹 %s（%s）。其中被中断的写入会在该文件夹可读后补完。",
   "kits.log.delete_file_failed": "无法删除礼包文件 %s，该礼包会保持加载，直到此文件可以被删除。",
   "kits.log.delete_journal_pending": "礼包文件 %s 未被删除：其一次写入仍在 %s 中等待补完，且该日志无法撤销，会让文件重新出现。",
+  "kits.log.delete_journal_folder_unreadable": "礼包 %s 未被删除：无法读取礼包写入日志文件夹 %s，其中尚未补完的写入可能让礼包重新出现。",
   "kits.log.kits_folder_unreadable": "无法读取礼包文件夹 %s，因此礼包 %s 未被删除，会保持加载。",
   "kits.log.kits_folder_unreadable_save": "无法读取礼包文件夹 %s，因此礼包 %s 未被保存。",
   "kits.create.already_exists": "礼包名已存在: %s",
