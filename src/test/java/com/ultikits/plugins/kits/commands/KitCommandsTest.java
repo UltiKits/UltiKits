@@ -489,6 +489,21 @@ class KitCommandsTest {
         }
 
         @Test
+        @DisplayName("FILE_EXISTS names the file that already exists")
+        void fileExistsNamesTheFile() {
+            when(player.hasPermission("ultikits.kits.admin")).thenReturn(true);
+            when(kitService.createKit(player, "vip")).thenReturn(KitService.CreateResult.FILE_EXISTS);
+            when(kitService.kitFileNames("vip")).thenReturn(Collections.singletonList("VIP.yml"));
+
+            kitCommands.onCreate(player, "vip");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(CatalogueText.text("zh", "kits.create.file_exists"), "vip", "VIP.yml"));
+        }
+
+        @Test
         @DisplayName("NAME_HAS_PATH says a kit name cannot contain a path")
         void nameHasPathSaysWhy() {
             when(player.hasPermission("ultikits.kits.admin")).thenReturn(true);

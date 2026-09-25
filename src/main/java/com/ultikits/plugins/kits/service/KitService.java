@@ -66,7 +66,12 @@ public interface KitService {
          * The name holds a path separator ({@code /} or {@code \\}) or {@code ..}, or would resolve outside
          * the kits folder; nothing was written.
          */
-        NAME_HAS_PATH
+        NAME_HAS_PATH,
+        /**
+         * A file in the kits folder already loads as this name, loaded or not (placed by hand without a
+         * reload, or unreadable); it was not touched. {@link #kitFileNames(String)} names it.
+         */
+        FILE_EXISTS
     }
 
     /**
@@ -147,6 +152,17 @@ public interface KitService {
      * @return the conflicting file names, never null / 冲突的文件名，不为 null
      */
     List<String> conflictingFiles(String kitName);
+
+    /**
+     * The names of every file in the kits folder that loads as {@code kitName}, sorted; empty when
+     * there is none or the folder cannot be listed.
+     * <p>
+     * 礼包文件夹中加载为该礼包的全部文件名（已排序）。
+     *
+     * @param kitName the kit / 礼包名
+     * @return the file names, never null / 文件名，不为 null
+     */
+    List<String> kitFileNames(String kitName);
 
     ClaimResult claimKit(Player player, String kitName);
 

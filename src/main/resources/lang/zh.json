@@ -46,6 +46,7 @@
   "kits.create.already_exists": "礼包名已存在: %s",
   "kits.create.invalid_name": "无效的礼包名",
   "kits.create.name_has_path": "无效的礼包名 %s：礼包名不能包含 /、\\ 或 ..",
+  "kits.create.file_exists": "未创建礼包 %s：礼包文件夹中已有它的文件（%s）。请用 /kits reload 加载它，或先移除该文件。",
   "kits.create.empty_inventory": "物品栏为空",
   "kits.cooldown.hours": "%d小时",
   "kits.cooldown.minutes": "%d分钟",

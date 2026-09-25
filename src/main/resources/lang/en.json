@@ -46,6 +46,7 @@
   "kits.create.already_exists": "Kit name already exists: %s",
   "kits.create.invalid_name": "Invalid kit name",
   "kits.create.name_has_path": "Invalid kit name %s: a kit name cannot contain /, \\ or ..",
+  "kits.create.file_exists": "Kit %s was not created: a file for it already exists in the kits folder (%s). Load it with /kits reload, or remove it first.",
   "kits.create.empty_inventory": "Inventory is empty",
   "kits.cooldown.hours": "%dh",
   "kits.cooldown.minutes": "%dm",

@@ -3052,6 +3052,100 @@ class KitServiceImplTest {
     }
 
     // =========================================================================
+    // /kits create over an existing file
+    // =========================================================================
+
+    /**
+     * {@code /kits create} only ever creates a kit file. A file that already loads as the name - one
+     * placed by hand without a reload, an unreadable one, a case variant such as {@code VIP.yml} for
+     * {@code vip}, or one that appears while the command runs - is refused, named, and left untouched.
+     */
+    @Nested
+    @DisplayName("/kits create over an existing file")
+    class CreateOverExistingFileTests {
+
+        private Player playerWithOneItem() {
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[]{stone});
+            return player;
+        }
+
+        private byte[] write(String fileName, String content) throws IOException {
+            File folder = new File(tempDir, "kits");
+            folder.mkdirs();
+            byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            java.nio.file.Files.write(new File(folder, fileName).toPath(), bytes);
+            return bytes;
+        }
+
+        @Test
+        @DisplayName("a hand-placed file not yet reloaded is not overwritten, and is named")
+        void unloadedFileIsNotOverwritten() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl spyService = spy(createService());
+            doReturn("admin-items").when(spyService).serializeItems(any(ItemStack[].class));
+            byte[] operator = write("fresh.yml", "icon: CHEST\nitems: \"operator-items\"\n");
+
+            assertThat(spyService.createKit(playerWithOneItem(), "fresh")).isEqualTo(KitService.CreateResult.FILE_EXISTS);
+
+            assertThat(java.nio.file.Files.readAllBytes(new File(tempDir, "kits/fresh.yml").toPath())).isEqualTo(operator);
+            assertThat(spyService.kitFileNames("fresh")).containsExactly("fresh.yml");
+            assertThat(spyService.getKit("fresh")).isNull();
+        }
+
+        @Test
+        @DisplayName("an unreadable case-variant file (VIP.yml for vip) is not overwritten")
+        void unreadableCaseVariantIsNotOverwritten() throws Exception {
+            byte[] broken = write("VIP.yml", "icon: [unclosed");
+            KitServiceImpl spyService = spy(createService());
+            doReturn("admin-items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            assertThat(spyService.createKit(playerWithOneItem(), "vip")).isEqualTo(KitService.CreateResult.FILE_EXISTS);
+
+            assertThat(java.nio.file.Files.readAllBytes(new File(tempDir, "kits/VIP.yml").toPath())).isEqualTo(broken);
+            assertThat(new File(tempDir, "kits").list()).containsExactly("VIP.yml");
+            assertThat(spyService.kitFileNames("vip")).containsExactly("VIP.yml");
+        }
+
+        @Test
+        @DisplayName("a file that appears while the kit is being created is not overwritten")
+        void fileAppearingMeanwhileIsNotOverwritten() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            java.nio.file.Path appeared = tempDir.toPath().resolve("kits").resolve("race.yml");
+            byte[] operator = "icon: CHEST\nitems: \"operator-items\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            KitServiceImpl racing = new KitServiceImpl(plugin, config) {
+                @Override
+                public String serializeItems(ItemStack[] items) {
+                    try {
+                        java.nio.file.Files.write(appeared, operator);
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                    return "admin-items";
+                }
+            };
+
+            assertThat(racing.createKit(playerWithOneItem(), "race")).isEqualTo(KitService.CreateResult.FILE_EXISTS);
+
+            assertThat(java.nio.file.Files.readAllBytes(appeared)).isEqualTo(operator);
+        }
+
+        @Test
+        @DisplayName("a name with no file is still created (control)")
+        void newNameIsCreated() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl spyService = spy(createService());
+            doReturn("admin-items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            assertThat(spyService.createKit(playerWithOneItem(), "brand")).isEqualTo(KitService.CreateResult.SUCCESS);
+
+            assertThat(new File(tempDir, "kits/brand.yml")).isFile();
+        }
+    }
+
+    // =========================================================================
     // Duplicate kit files
     // =========================================================================
 
@@ -4328,7 +4422,8 @@ class KitServiceImplTest {
                     KitService.CreateResult.EMPTY_INVENTORY,
                     KitService.CreateResult.ERROR,
                     KitService.CreateResult.FILE_CONFLICT,
-                    KitService.CreateResult.NAME_HAS_PATH
+                    KitService.CreateResult.NAME_HAS_PATH,
+                    KitService.CreateResult.FILE_EXISTS
             );
         }
     }

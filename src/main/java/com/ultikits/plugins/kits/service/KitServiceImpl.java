@@ -417,6 +417,11 @@ public class KitServiceImpl implements KitService {
         return fileNames(files);
     }
 
+    @Override
+    public List<String> kitFileNames(String kitName) {
+        return Collections.emptyList();
+    }
+
     private static List<String> fileNames(List<File> files) {
         List<String> names = new ArrayList<>();
         for (File file : files) {
