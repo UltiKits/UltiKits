@@ -914,9 +914,9 @@ class KitServiceImplTest {
         }
 
         /**
-         * Codex round 2 (P2): a kits folder that cannot be listed ({@code File#listFiles} returns null on
-         * an I/O or permission error) is not "no file": the kit's file may still be there to come back on
-         * the next reload, so the deletion is reported as failed and the kit stays loaded. The failure is
+         * A kits folder that cannot be listed ({@code File#listFiles} returns null on an I/O or
+         * permission error) is not "no file": the kit's file may still be there to come back on the
+         * next reload, so the deletion is reported as failed and the kit stays loaded. The failure is
          * injected through the listing seam, not through permissions, for the same reason as the delete
          * seam.
          */
@@ -944,11 +944,11 @@ class KitServiceImplTest {
         }
 
         /**
-         * Codex round 3 (P2): a deletion the file system refused is a failure, whatever a later
-         * existence check says - in a folder the server may list but not search, {@code File#exists}
-         * answers false for a file that is still there. The delete reports its own reason
-         * ({@code Files#delete}), so no existence check is consulted: here the refusal is reported
-         * while the file has gone, and the result is still "not deleted".
+         * A deletion the file system refused is a failure, whatever a later existence check says -
+         * in a folder the server may list but not search, {@code File#exists} answers false for a
+         * file that is still there. The delete reports its own reason ({@code Files#delete}), so
+         * no existence check is consulted: here the refusal is reported while the file has gone,
+         * and the result is still "not deleted".
          */
         @Test
         @DisplayName("a refused deletion is a failure even when the file no longer appears to exist")
@@ -2357,9 +2357,9 @@ class KitServiceImplTest {
         }
 
         /**
-         * Codex round 1 (P2): {@code addItem} tops up matching partial stacks before it takes an empty
-         * slot, so the check must count that room too - counting only empty slots refused a claim that
-         * fits. 65 cobblestone fit a matching 63-stack (1 more) plus one empty slot (64).
+         * {@code addItem} tops up matching partial stacks before it takes an empty slot, so the check
+         * must count that room too - counting only empty slots refused a claim that fits. 65
+         * cobblestone fit a matching 63-stack (1 more) plus one empty slot (64).
          */
         @Test
         @DisplayName("room left in a matching partial stack counts towards the fit")
@@ -2840,10 +2840,10 @@ class KitServiceImplTest {
         }
 
         /**
-         * Codex round 4 (P2): a kits folder that cannot be listed gives no way to know which file the
-         * kit loads from, so the save fails rather than writing a second file beside the real one - in a
-         * folder the server may write to but not list, that second file would win or lose against the
-         * stale one in directory order after the next reload.
+         * A kits folder that cannot be listed gives no way to know which file the kit loads from, so
+         * the save fails rather than writing a second file beside the real one - in a folder the
+         * server may write to but not list, that second file would win or lose against the stale one
+         * in directory order after the next reload.
          */
         @Test
         @DisplayName("a save fails, writing nothing, when the kits folder cannot be listed")

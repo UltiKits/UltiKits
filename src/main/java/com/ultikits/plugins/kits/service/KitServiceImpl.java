@@ -199,7 +199,7 @@ public class KitServiceImpl implements KitService {
         List<File> kitFiles = kitFilesOf(normalizedName);
         if (kitFiles == null) {
             // The folder could not be listed, which is not the same as "no file": the kit's file may
-            // still be there and load again on the next reload (Codex review round 2).
+            // still be there and load again on the next reload.
             logger.warn(String.format(plugin.i18n("kits.log.kits_folder_unreadable"), kitsFolder().getAbsolutePath(),
                     normalizedName));
             return DeleteResult.FILE_NOT_DELETED;
@@ -213,7 +213,7 @@ public class KitServiceImpl implements KitService {
             } catch (IOException e) {
                 // Any other reason is a failure. The delete reports it; no existence check is asked
                 // afterwards, because in a folder the server may list but not search File#exists
-                // answers false for a file that is still there (Codex review round 3).
+                // answers false for a file that is still there.
                 logger.warn(String.format(plugin.i18n("kits.log.delete_file_failed"), kitFile.getAbsolutePath()));
                 survived = true;
             }
@@ -264,8 +264,8 @@ public class KitServiceImpl implements KitService {
      * Lists the kit files in a folder: empty when the folder does not exist, {@code null} when it exists
      * but cannot be listed. Read through {@link Files#newDirectoryStream}, which says why a listing
      * failed, because {@link File#listFiles} answers {@code null} for both - and a missing folder holds
-     * no file, while an unreadable one may (Codex review rounds 2 and 4). A seam, package-private so a
-     * test can make the listing fail without depending on file permissions.
+     * no file, while an unreadable one may. A seam, package-private so a test can make the listing fail
+     * without depending on file permissions.
      * <p>
      * 列出文件夹中的礼包文件：文件夹不存在时为空，存在但无法读取时为 {@code null}。包级可见，供测试模拟读取失败。
      */
@@ -449,9 +449,9 @@ public class KitServiceImpl implements KitService {
      * a component, can put into an inventory that {@code /kits create} then captures - is split across
      * several slots, so 128 cobblestone needs two; counting one let the claim pass, and {@code addItem}'s
      * leftovers were then discarded after the player had paid (UltiKits/UltiKits#24). Counting only
-     * empty slots over-reserved instead, refusing a claim that fits into room left in a partial stack
-     * (Codex review round 1). Anything this still gets wrong is dropped at the player's feet by
-     * {@link #giveOrDrop}, never destroyed.
+     * empty slots over-reserved instead, refusing a claim that fits into room left in a partial stack.
+     * Anything this still gets wrong is dropped at the player's feet by {@link #giveOrDrop}, never
+     * destroyed.
      * <p>
      * 按背包实际的放置方式判断能否放下：先补满相同物品的未满堆，再占用空格，每格上限为物品堆自身的最大堆叠数。
      */
@@ -807,7 +807,7 @@ public class KitServiceImpl implements KitService {
             // Write every file the kit loads from (normally exactly one), so a save lands where the next
             // reload reads it; a new kit gets "<name>.yml". A folder that cannot be listed gives no way
             // to know which file that is, so the save fails rather than writing a second file beside
-            // the real one (Codex review round 4).
+            // the real one.
             List<File> targets = kitFilesOf(name);
             if (targets == null) {
                 logger.error(String.format(plugin.i18n("kits.log.kits_folder_unreadable_save"),
