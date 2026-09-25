@@ -4985,8 +4985,8 @@ class KitServiceImplTest {
             writeKitFile("solo.yml", "old-items");
             java.nio.file.Path elsewhere = tempDir.toPath().getParent().resolve(tempDir.getName() + "-elsewhere2");
             java.nio.file.Files.createDirectories(elsewhere);
-            java.nio.file.Path parked = elsewhere.resolve("solo.yml.journal");
-            byte[] record = KitServiceImpl.journalRecord("solo.yml", false,
+            java.nio.file.Path parked = elsewhere.resolve("other.yml.journal");
+            byte[] record = KitServiceImpl.journalRecord("other.yml", false,
                     "icon: CHEST\nitems: \"parked\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
             java.nio.file.Files.write(parked, record);
             java.nio.file.Files.createSymbolicLink(tempDir.toPath().resolve("kit-journal"), elsewhere);

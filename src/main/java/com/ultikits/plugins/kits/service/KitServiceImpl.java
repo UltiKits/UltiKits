@@ -175,6 +175,12 @@ public class KitServiceImpl implements KitService {
         if (kits.get(normalizedName) != null) {
             return CreateResult.ALREADY_EXISTS;
         }
+        // A kit file on disk that is not in the catalogue (its write is pending, or it was placed by hand
+        // without a reload) is never rewritten by a create.
+        List<File> onDisk = kitFilesOf(normalizedName);
+        if (onDisk != null && onDisk.size() == 1) {
+            return CreateResult.ALREADY_EXISTS;
+        }
         // Files that load as this name but did not parse still decide which one the next reload
         // reads, so a name several of them share is refused like a save.
         if (!conflictingFiles(normalizedName).isEmpty()) {
@@ -903,12 +909,15 @@ public class KitServiceImpl implements KitService {
     private Set<String> pendingKitFileNames() {
         Set<String> names = new HashSet<>();
         Path folder = journalFolder();
-        if (Files.isSymbolicLink(folder) || !Files.isDirectory(folder, LinkOption.NOFOLLOW_LINKS)) {
+        if (!Files.isDirectory(folder)) {
             return names;
         }
+        // A folder that is a symbolic link is never written or replayed from, but its names are read,
+        // which only makes loading more careful.
+        boolean linked = Files.isSymbolicLink(folder);
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(folder, "*.journal")) {
             for (Path journal : stream) {
-                if (hasContent(journal)) {
+                if (linked || hasContent(journal)) {
                     names.add(journalTargetName(journal));
                 }
             }
