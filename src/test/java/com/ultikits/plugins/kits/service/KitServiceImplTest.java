@@ -3020,17 +3020,37 @@ class KitServiceImplTest {
             verify(spyService, never()).saveKitToFile(anyString(), any(KitDefinition.class), anyBoolean());
         }
 
-        /** Two dots inside a name are no path: {@code a..b} is an ordinary kit name. */
+        /**
+         * The rule a sender is told is "no /, \\ or .." and it holds literally: {@code a..b} is refused too,
+         * while a single dot is an ordinary character.
+         */
         @Test
-        @DisplayName("a name with dots that are not a path step is accepted")
-        void dotsThatAreNoPathAreAccepted() throws Exception {
+        @DisplayName("a name holding .. anywhere is refused, a single dot is accepted")
+        void dotDotAnywhereIsRefused() throws Exception {
             new File(tempDir, "kits").mkdirs();
             KitServiceImpl spyService = spy(createService());
             doReturn("items").when(spyService).serializeItems(any(ItemStack[].class));
 
-            assertThat(spyService.createKit(playerWithOneItem(), "a..b")).isEqualTo(KitService.CreateResult.SUCCESS);
+            assertThat(spyService.createKit(playerWithOneItem(), "a..b")).isEqualTo(KitService.CreateResult.NAME_HAS_PATH);
+            assertThat(spyService.createKit(playerWithOneItem(), "a.b")).isEqualTo(KitService.CreateResult.SUCCESS);
 
-            assertThat(new File(tempDir, "kits/a..b.yml")).isFile();
+            assertThat(new File(tempDir, "kits").list()).containsExactly("a.b.yml");
+        }
+
+        /**
+         * A name the platform cannot turn into a path at all (a NUL here; {@code *} or {@code ?} on
+         * Windows) is a failed create, not an exception escaping the command.
+         */
+        @Test
+        @DisplayName("a name the platform cannot make a path of fails the create without an exception")
+        void nameThatIsNoPathFailsCleanly() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl spyService = spy(createService());
+            doReturn("items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            assertThat(spyService.createKit(playerWithOneItem(), "a\u0000b")).isEqualTo(KitService.CreateResult.ERROR);
+
+            assertThat(new File(tempDir, "kits").list()).isEmpty();
         }
 
         /**
@@ -3128,6 +3148,40 @@ class KitServiceImplTest {
             };
 
             assertThat(racing.createKit(playerWithOneItem(), "race")).isEqualTo(KitService.CreateResult.FILE_EXISTS);
+
+            assertThat(java.nio.file.Files.readAllBytes(appeared)).isEqualTo(operator);
+        }
+
+        /**
+         * The file is created exclusively, so one that appears after the writer's own scan - the last
+         * moment a listing can see it - is not overwritten either.
+         */
+        @Test
+        @DisplayName("a file that appears after the writer's own scan is not overwritten")
+        void fileAppearingAfterTheLastScanIsNotOverwritten() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            java.nio.file.Path appeared = tempDir.toPath().resolve("kits").resolve("late.yml");
+            byte[] operator = "icon: CHEST\nitems: \"operator-items\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            int[] listings = {0};
+            KitServiceImpl racing = spy(new KitServiceImpl(plugin, config) {
+                @Override
+                File[] listKitFiles(File folder) {
+                    File[] listed = super.listKitFiles(folder);
+                    // The create lists the folder three times: two checks, then the writer's own scan.
+                    if (++listings[0] == 3) {
+                        try {
+                            java.nio.file.Files.write(appeared, operator);
+                        } catch (IOException e) {
+                            throw new java.io.UncheckedIOException(e);
+                        }
+                    }
+                    return listed;
+                }
+            });
+            listings[0] = 0;
+            doReturn("admin-items").when(racing).serializeItems(any(ItemStack[].class));
+
+            assertThat(racing.createKit(playerWithOneItem(), "late")).isEqualTo(KitService.CreateResult.FILE_EXISTS);
 
             assertThat(java.nio.file.Files.readAllBytes(appeared)).isEqualTo(operator);
         }
