@@ -549,6 +549,22 @@ class KitCommandsTest {
         }
 
         @Test
+        @DisplayName("a kit more than one file defines is not deleted, and the reply names the files")
+        void fileConflictNamesTheFiles() {
+            when(consoleSender.hasPermission("ultikits.kits.admin")).thenReturn(true);
+            when(kitService.deleteKit("vip")).thenReturn(KitService.DeleteResult.FILE_CONFLICT);
+            when(kitService.conflictingFiles("vip")).thenReturn(Arrays.asList("VIP.yml", "vip.yml"));
+
+            kitCommands.onDelete(consoleSender, "vip");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(consoleSender).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(
+                            CatalogueText.text("zh", "kits.conflict.not_changed"), "vip", "VIP.yml, vip.yml"));
+        }
+
+        @Test
         @DisplayName("each delete outcome has its own reply, in both languages")
         void everyOutcomeHasADistinctReply() {
             for (String code : new String[] {"en", "zh"}) {

@@ -3024,6 +3024,22 @@ class KitServiceImplTest {
         }
 
         @Test
+        @DisplayName("a kit two files map to is not deleted: both files stay and the kit stays loaded")
+        void deleteRefusedForDuplicateFiles() throws Exception {
+            twoFilesForOneKit();
+            byte[] upperBefore = bytes(upper);
+            byte[] lowerBefore = bytes(lower);
+            service = createService();
+
+            KitService.DeleteResult result = service.deleteKit("vip");
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_CONFLICT);
+            assertThat(bytes(upper)).isEqualTo(upperBefore);
+            assertThat(bytes(lower)).isEqualTo(lowerBefore);
+            assertThat(service.getKit("vip")).isNotNull();
+        }
+
+        @Test
         @DisplayName("a kit with a single file has no conflicting files")
         void singleFileIsNoConflict() throws Exception {
             writeKitFile("solo.yml", "solo-items");

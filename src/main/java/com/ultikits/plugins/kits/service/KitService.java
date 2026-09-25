@@ -99,7 +99,12 @@ public interface KitService {
          * The kit's file exists and could not be deleted, so the kit stays loaded - the catalogue
          * keeps matching what {@code /kits reload} would read back from disk.
          */
-        FILE_NOT_DELETED
+        FILE_NOT_DELETED,
+        /**
+         * More than one file in the kits folder loads as this kit; none was deleted and the kit stays
+         * loaded. {@link #conflictingFiles(String)} names them.
+         */
+        FILE_CONFLICT
     }
 
     void loadKits();
