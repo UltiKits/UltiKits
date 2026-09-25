@@ -26,6 +26,7 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -304,6 +305,21 @@ public class KitServiceImpl implements KitService {
      */
     void deleteKitFile(File kitFile) throws IOException {
         Files.delete(kitFile.toPath());
+    }
+
+    /**
+     * Moves a fully written temporary file over a kit file in one step ({@link StandardCopyOption#ATOMIC_MOVE}).
+     * A seam, package-private so a test can make the move fail, or report that the file system does
+     * not support an atomic move.
+     * <p>
+     * 以原子方式把写好的临时文件移动到礼包文件；包级可见，供测试模拟移动失败。
+     *
+     * @param source the written temporary file / 已写好的临时文件
+     * @param target the kit file / 礼包文件
+     * @throws IOException when the move failed / 移动失败时抛出
+     */
+    void atomicMove(Path source, Path target) throws IOException {
+        Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
     }
 
     /**

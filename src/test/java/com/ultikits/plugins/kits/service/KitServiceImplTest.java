@@ -3044,6 +3044,92 @@ class KitServiceImplTest {
             assertThat(service.getKit("vip")).isNotNull();
         }
 
+        /** A service whose final move of a written temporary file throws {@code failure}. */
+        private KitServiceImpl serviceWhoseMoveFails(IOException failure) {
+            return new KitServiceImpl(plugin, config) {
+                @Override
+                void atomicMove(java.nio.file.Path source, java.nio.file.Path target) throws IOException {
+                    throw failure;
+                }
+            };
+        }
+
+        private String[] kitsFolderListing() {
+            String[] names = new File(tempDir, "kits").list();
+            Arrays.sort(names);
+            return names;
+        }
+
+        @Test
+        @DisplayName("a save whose write fails leaves the kit file byte-for-byte as it was, with no temporary file")
+        void failedSaveLeavesTheFileUnchanged() throws Exception {
+            File file = writeKitFile("solo.yml", "old-items");
+            byte[] before = bytes(file);
+            KitServiceImpl failing = serviceWhoseMoveFails(new IOException("disk full"));
+            KitDefinition kit = failing.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(failing.saveKitToFile("solo", kit)).isFalse();
+
+            assertThat(bytes(file)).isEqualTo(before);
+            assertThat(kitsFolderListing()).containsExactly("solo.yml");
+        }
+
+        @Test
+        @DisplayName("a new kit whose first write fails leaves no file behind and is not loaded")
+        void failedCreateLeavesNoFile() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl failing = spy(serviceWhoseMoveFails(new IOException("disk full")));
+            doReturn("items").when(failing).serializeItems(any(ItemStack[].class));
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[]{stone});
+
+            KitService.CreateResult result = failing.createKit(player, "fresh");
+
+            assertThat(result).isEqualTo(KitService.CreateResult.ERROR);
+            assertThat(new File(tempDir, "kits").list()).isEmpty();
+            assertThat(failing.getKit("fresh")).isNull();
+        }
+
+        @Test
+        @DisplayName("a file system that refuses an atomic move still gets the whole new file")
+        void atomicMoveNotSupportedFallsBackToAReplacingMove() throws Exception {
+            File file = writeKitFile("solo.yml", "old-items");
+            KitServiceImpl noAtomic = serviceWhoseMoveFails(
+                    new java.nio.file.AtomicMoveNotSupportedException("a", "b", "not supported"));
+            KitDefinition kit = noAtomic.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(noAtomic.saveKitToFile("solo", kit)).isTrue();
+
+            assertThat(YamlConfiguration.loadConfiguration(file).getString("items")).isEqualTo("new-items");
+            assertThat(kitsFolderListing()).containsExactly("solo.yml");
+        }
+
+        @Test
+        @DisplayName("a save replaces the existing kit file through the atomic move and leaves no temporary file")
+        void saveReplacesTheExistingFile() throws Exception {
+            File file = writeKitFile("solo.yml", "old-items");
+            java.util.List<java.nio.file.Path> moved = new java.util.ArrayList<>();
+            KitServiceImpl recording = new KitServiceImpl(plugin, config) {
+                @Override
+                void atomicMove(java.nio.file.Path source, java.nio.file.Path target) throws IOException {
+                    moved.add(target);
+                    super.atomicMove(source, target);
+                }
+            };
+            KitDefinition kit = recording.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(recording.saveKitToFile("solo", kit)).isTrue();
+
+            assertThat(moved).containsExactly(file.toPath());
+            assertThat(YamlConfiguration.loadConfiguration(file).getString("items")).isEqualTo("new-items");
+            assertThat(kitsFolderListing()).containsExactly("solo.yml");
+        }
+
         @Test
         @DisplayName("a kit with a single file has no conflicting files")
         void singleFileIsNoConflict() throws Exception {
