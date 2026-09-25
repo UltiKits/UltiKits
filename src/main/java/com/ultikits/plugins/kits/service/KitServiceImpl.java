@@ -90,13 +90,27 @@ public class KitServiceImpl implements KitService {
         }
 
         int loadedCount = 0;
+        Map<String, List<File>> filesByKit = new LinkedHashMap<>();
+        Map<String, File> loadedFrom = new HashMap<>();
         for (File file : files) {
+            String kitName = kitNameOf(file);
+            filesByKit.computeIfAbsent(kitName, name -> new ArrayList<>()).add(file);
             KitDefinition kit = parseKitFile(file);
             if (kit != null) {
-                String kitName = kitNameOf(file);
                 kit.setName(kitName);
                 kits.put(kitName, kit);
+                loadedFrom.put(kitName, file);
                 loadedCount++;
+            }
+        }
+        // Loading is unchanged when several files define one kit (the last one listed wins, as
+        // before), but that kit is no longer saved or deleted, so the console names the files.
+        for (Map.Entry<String, List<File>> entry : filesByKit.entrySet()) {
+            File loaded = loadedFrom.get(entry.getKey());
+            if (entry.getValue().size() > 1 && loaded != null) {
+                logger.warn(String.format(plugin.i18n("kits.log.kit_file_conflict"),
+                        kitsFolder.getAbsolutePath(), entry.getKey(),
+                        String.join(", ", fileNames(entry.getValue())), loaded.getName()));
             }
         }
 
