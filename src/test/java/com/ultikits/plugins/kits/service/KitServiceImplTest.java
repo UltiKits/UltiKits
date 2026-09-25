@@ -5015,6 +5015,70 @@ class KitServiceImplTest {
             verify(mockLogger, never()).error(ArgumentMatchers.<String>argThat(line -> line.contains("/kits reload")));
         }
 
+        /**
+         * Replay completes a kit file only while it holds something the interrupted write itself could
+         * have left there - its old content or part of either content. A file changed after the crash (a
+         * hand-placed file at a new kit's name, a hand edit of an existing one) is not overwritten: the
+         * journal is kept and named on the console.
+         */
+        @Test
+        @DisplayName("replay does not overwrite a file placed at a new kit's name after the crash")
+        void createJournalOverAnOperatorFileIsKept() throws Exception {
+            java.nio.file.Path[] image = new java.nio.file.Path[1];
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl crashing = crashingAt("journal-written", image);
+            KitDefinition kit = createTestKit("fresh");
+            assertThat(crashing.saveKitToFile("fresh", kit)).isTrue();
+            java.nio.file.Path placed = image[0].resolve("kits").resolve("fresh.yml");
+            byte[] operator = "icon: CHEST\nitems: \"operator-items\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            java.nio.file.Files.write(placed, operator);
+
+            startOn(image[0]);
+
+            assertThat(java.nio.file.Files.readAllBytes(placed)).isEqualTo(operator);
+            assertThat(journals(image[0])).containsExactly("fresh.yml.journal");
+        }
+
+        @Test
+        @DisplayName("replay does not overwrite a kit file edited by hand after the crash")
+        void rewriteJournalOverAHandEditIsKept() throws Exception {
+            java.nio.file.Path image = savedWithCrashAt("mid-write");
+            java.nio.file.Path kitFile = image.resolve("kits").resolve("solo.yml");
+            byte[] edited = "icon: CHEST\nitems: \"hand-edit\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            java.nio.file.Files.write(kitFile, edited);
+
+            startOn(image);
+
+            assertThat(java.nio.file.Files.readAllBytes(kitFile)).isEqualTo(edited);
+            assertThat(journals(image)).containsExactly("solo.yml.journal");
+        }
+
+        /**
+         * A kit file whose write is still pending after the start's replay (the replay failed, or the
+         * journal is kept for the operator) holds a part-written file or one the journal may still
+         * overwrite, so it is not loaded until the write is resolved.
+         */
+        @Test
+        @DisplayName("a kit file whose write is still pending after replay is not loaded")
+        void kitWithAPendingWriteIsNotLoaded() throws Exception {
+            java.nio.file.Path image = savedWithCrashAt("mid-write");
+            when(plugin.getResourceFolderPath()).thenReturn(image.toString());
+            int[] calls = {0};
+            KitServiceImpl restarted = new KitServiceImpl(plugin, config) {
+                @Override
+                void writeInPlace(java.nio.channels.FileChannel channel, byte[] content) throws IOException {
+                    if (calls[0]++ == 0) {
+                        channel.write(java.nio.ByteBuffer.wrap(content, 0, content.length / 3));
+                        throw new IOException("disk full");
+                    }
+                    super.writeInPlace(channel, content);
+                }
+            };
+
+            assertThat(restarted.getKit("solo")).isNull();
+            assertThat(journals(image)).containsExactly("solo.yml.journal");
+        }
+
         @Test
         @DisplayName("a folder at a journal's name is not a pending write: the kit can still be deleted")
         void folderAtAJournalNameDoesNotBlockTheDelete() throws Exception {
