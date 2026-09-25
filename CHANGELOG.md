@@ -38,10 +38,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   记录无法写入时不发放任何物品、不执行奖励命令，并提示玩家重试。若退款也失败，会如实告知玩家，并在控制台记录包含玩家、礼包和金额的错误（UltiKits/UltiKits#26）。
 
 - A kit containing a stack larger than its item's maximum stack size is refused before payment when
-  it will not fit — the claim now counts the slots each stack really needs, split at the stack's own
-  maximum — and anything that still does not fit is dropped at the player's feet with a message
+  it will not fit — the claim now works out the fit the way the inventory fills, topping up matching
+  partial stacks first and splitting each stack at its own maximum — and anything that still does not fit is dropped at the player's feet with a message
   instead of being destroyed (UltiKits/UltiKits#24).
-- 修复：超出最大堆叠数的物品不再在领取时被销毁。领取前按每个物品堆自身的最大堆叠数计算所需格数，放不下时先拒绝领取且不扣款；
+- 修复：超出最大堆叠数的物品不再在领取时被销毁。领取前按背包实际的放置方式判断能否放下（先补满相同物品的未满堆，每个物品堆按自身的最大堆叠数拆分），放不下时先拒绝领取且不扣款；
   仍放不下的部分会掉落在玩家脚下并提示（UltiKits/UltiKits#24）。
 
 - `/kits delete` no longer reports a kit as deleted when its file could not be removed. The kit now

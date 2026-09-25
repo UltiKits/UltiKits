@@ -329,7 +329,7 @@ public class KitServiceImpl implements KitService {
             return ClaimResult.EMPTY_KIT;
         }
 
-        if (countEmptySlots(player) < countSlotsNeeded(player, items)) {
+        if (!fitsInStorage(player, items)) {
             return ClaimResult.INVENTORY_FULL;
         }
 
@@ -383,33 +383,36 @@ public class KitServiceImpl implements KitService {
         return getRemainingCooldown(player, kit) > 0 ? ClaimResult.ON_COOLDOWN : null;
     }
 
-    private int countEmptySlots(Player player) {
-        int count = 0;
-        for (ItemStack slot : player.getInventory().getStorageContents()) {
-            if (slot == null || slot.getType() == Material.AIR) {
-                count++;
+    /**
+     * Whether the kit's stacks fit the player's storage slots, worked out the way {@code addItem} fills
+     * them: each stack first tops up matching partial stacks ({@link ItemStack#isSimilar}) - those the
+     * player holds and those an earlier stack of this kit started - and then takes empty slots, every
+     * slot holding at most the stack's <b>own</b> maximum stack size ({@link ItemStack#getMaxStackSize()},
+     * which reads a {@code max_stack_size} component), capped by the inventory's maximum when that is
+     * lower.
+     * <p>
+     * One slot per stack was not the answer: a stack larger than its maximum - which another plugin, or
+     * a component, can put into an inventory that {@code /kits create} then captures - is split across
+     * several slots, so 128 cobblestone needs two; counting one let the claim pass, and {@code addItem}'s
+     * leftovers were then discarded after the player had paid (UltiKits/UltiKits#24). Counting only
+     * empty slots over-reserved instead, refusing a claim that fits into room left in a partial stack
+     * (Codex review round 1). Anything this still gets wrong is dropped at the player's feet by
+     * {@link #giveOrDrop}, never destroyed.
+     * <p>
+     * 按背包实际的放置方式判断能否放下：先补满相同物品的未满堆，再占用空格，每格上限为物品堆自身的最大堆叠数。
+     */
+    private boolean fitsInStorage(Player player, ItemStack[] items) {
+        ItemStack[] contents = player.getInventory().getStorageContents();
+        int inventoryMax = player.getInventory().getMaxStackSize();
+        ItemStack[] slots = new ItemStack[contents.length];
+        int[] amounts = new int[contents.length];
+        for (int i = 0; i < contents.length; i++) {
+            ItemStack stack = contents[i];
+            if (stack != null && stack.getType() != Material.AIR) {
+                slots[i] = stack;
+                amounts[i] = stack.getAmount();
             }
         }
-        return count;
-    }
-
-    /**
-     * The empty storage slots a kit's stacks will occupy once {@code addItem} has split them.
-     * <p>
-     * One slot per stack is not the answer: a stack larger than its own maximum stack size - which
-     * another plugin, or a {@code max_stack_size} component, can put into an inventory that
-     * {@code /kits create} then captures - is split across several slots, so 128 cobblestone needs
-     * two. Counting one slot per stack let such a kit pass this check, and {@code addItem}'s
-     * leftovers were then discarded after the player had paid (UltiKits/UltiKits#24). Each stack is
-     * split at its <b>own</b> maximum ({@link ItemStack#getMaxStackSize()}, which reads the
-     * component), capped by the inventory's own maximum when that is lower. Merging into partial
-     * stacks already in the inventory is not counted, so the check can only over-reserve.
-     * <p>
-     * 计算礼包物品实际需要的空格数：按每个物品堆自身的最大堆叠数拆分，而不是一堆算一格。
-     */
-    private int countSlotsNeeded(Player player, ItemStack[] items) {
-        int inventoryMax = player.getInventory().getMaxStackSize();
-        int slots = 0;
         for (ItemStack item : items) {
             if (item == null) {
                 continue;
@@ -418,9 +421,26 @@ public class KitServiceImpl implements KitService {
             if (inventoryMax > 0) {
                 perSlot = Math.min(perSlot, inventoryMax);
             }
-            slots += Math.max(1, (item.getAmount() + perSlot - 1) / perSlot);
+            int remaining = Math.max(1, item.getAmount());
+            for (int i = 0; i < slots.length && remaining > 0; i++) {
+                if (slots[i] != null && amounts[i] < perSlot && slots[i].isSimilar(item)) {
+                    int moved = Math.min(perSlot - amounts[i], remaining);
+                    amounts[i] += moved;
+                    remaining -= moved;
+                }
+            }
+            for (int i = 0; i < slots.length && remaining > 0; i++) {
+                if (slots[i] == null) {
+                    slots[i] = item;
+                    amounts[i] = Math.min(perSlot, remaining);
+                    remaining -= amounts[i];
+                }
+            }
+            if (remaining > 0) {
+                return false;
+            }
         }
-        return slots;
+        return true;
     }
 
     /**
@@ -443,7 +463,7 @@ public class KitServiceImpl implements KitService {
      * <p>
      * Then the items: every stack lands in the inventory or is dropped at the player's feet, never
      * discarded - {@link #claimKit} refuses before charging unless the slots each stack really needs
-     * are free ({@link #countSlotsNeeded}), and {@code addItem}'s leftovers are dropped
+     * are free ({@link #fitsInStorage}), and {@code addItem}'s leftovers are dropped
      * (UltiKits/UltiKits#24). The reward commands run last, after the record, because they are the
      * step most likely to throw ({@code player.performCommand} propagates a third-party executor's
      * {@code CommandException}).
