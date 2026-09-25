@@ -977,6 +977,18 @@ public class KitServiceImpl implements KitService {
                 } catch (FileAlreadyExistsException appeared) {
                     return false;
                 }
+                boolean written = false;
+                try {
+                    config.save(created);
+                    written = true;
+                } finally {
+                    if (!written) {
+                        // The file this create claimed is removed again, so the failure is not read as
+                        // "a file already exists" and a retry can succeed.
+                        Files.deleteIfExists(created.toPath());
+                    }
+                }
+                return true;
             }
             for (File kitFile : targets) {
                 config.save(kitFile);
