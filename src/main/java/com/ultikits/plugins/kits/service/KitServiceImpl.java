@@ -366,12 +366,16 @@ public class KitServiceImpl implements KitService {
         Path temp = createTempSibling(folder, targetPath.getFileName().toString());
         try {
             try (FileChannel channel = FileChannel.open(temp, StandardOpenOption.WRITE)) {
+                // The replaced file's permissions, list and owner go on while the file is still empty,
+                // so the content is never readable by anyone the kit file does not let read it. The
+                // channel is opened first so a permission set that leaves the server only group access
+                // still lets it write.
+                copyFileIdentity(targetPath, temp);
                 writeContent(temp, channel, content);
                 // On disk before the move, so a power loss cannot leave the moved name pointing at an
                 // empty file.
                 channel.force(true);
             }
-            copyFileIdentity(targetPath, temp);
             try {
                 atomicMove(temp, targetPath);
             } catch (AtomicMoveNotSupportedException unsupported) {
