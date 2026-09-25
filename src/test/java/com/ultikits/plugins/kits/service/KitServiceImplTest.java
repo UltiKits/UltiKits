@@ -970,6 +970,20 @@ class KitServiceImplTest {
         }
 
         @Test
+        @DisplayName("the kit-file listing tells a missing folder, a failed listing and a readable folder apart")
+        void theListingHasThreeAnswers() throws Exception {
+            File kits = new File(tempDir, "kits");
+            File yml = createSimpleKitFile("alpha");
+            new File(kits, "notes.txt").createNewFile();
+            File plainFile = new File(tempDir, "not-a-folder");
+            plainFile.createNewFile();
+
+            assertThat(service.listKitFiles(new File(tempDir, "missing"))).isEmpty();
+            assertThat(service.listKitFiles(plainFile)).isNull();
+            assertThat(service.listKitFiles(kits)).containsExactly(yml);
+        }
+
+        @Test
         @DisplayName("deleteKit returns NOT_FOUND for nonexistent kit")
         void deleteKitNotFound() {
             KitService.DeleteResult result = service.deleteKit("nosuchkit");
