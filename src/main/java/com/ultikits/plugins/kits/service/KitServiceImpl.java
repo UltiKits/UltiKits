@@ -577,10 +577,11 @@ public class KitServiceImpl implements KitService {
     /**
      * Completes every kit file write a crash (or a failed write that could not be undone) left
      * behind: an intact journal is written into its kit file in place - or creates it, for a new file -
-     * and withdrawn. A journal that is cut short, fails its checksum, names a file other than its own
-     * name or outside the kits folder, or whose existing kit file has gone, is logged and withdrawn
-     * without touching any kit file; an emptied (withdrawn) journal changes nothing. A journal whose kit
-     * file cannot be checked or written is kept and retried at the next start or {@code /kits reload}.
+     * and withdrawn. A journal that was read and is cut short, fails its checksum, or names a file other
+     * than its own name or outside the kits folder; one whose existing kit file has gone; and a new-file
+     * journal whose name is now a symbolic link, are logged and withdrawn without touching any file; an
+     * emptied (withdrawn) journal changes nothing. A journal that cannot be read, or whose kit file cannot
+     * be checked or written, is kept and retried at the next start or {@code /kits reload}.
      * <p>
      * 启动时在读取礼包之前补完被中断的写入；损坏或目标已不存在的日志只记录并丢弃，不改动任何礼包文件。
      */
@@ -617,10 +618,20 @@ public class KitServiceImpl implements KitService {
         } catch (IOException unreadable) {
             // Read below, which reports it.
         }
+        byte[] record;
+        try {
+            record = Files.readAllBytes(journal);
+        } catch (NoSuchFileException gone) {
+            return;
+        } catch (IOException | RuntimeException unreadable) {
+            // Not read is not damaged: the journal may be the only whole copy, so it is kept.
+            logger.error(String.format(plugin.i18n("kits.log.journal_unreadable"), journal, unreadable.getMessage()));
+            return;
+        }
         boolean create;
         String targetName;
         byte[] content;
-        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(Files.readAllBytes(journal)))) {
+        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(record))) {
             if (in.readInt() != JOURNAL_MAGIC) {
                 throw new EOFException("not a kit write journal");
             }
@@ -644,6 +655,13 @@ public class KitServiceImpl implements KitService {
             return;
         }
         Path target = kitsFolder.resolve(targetName);
+        if (create && Files.isSymbolicLink(target)) {
+            // A new-file journal only ever creates a plain file; a link at its name was put there by
+            // someone else, and is never written through.
+            logger.warn(String.format(plugin.i18n("kits.log.journal_target_is_link"), journal, target));
+            withdrawJournal(journal, target);
+            return;
+        }
         boolean exists;
         try {
             Files.readAttributes(target, BasicFileAttributes.class);
@@ -656,8 +674,8 @@ public class KitServiceImpl implements KitService {
             logger.error(String.format(plugin.i18n("kits.log.journal_replay_failed"), target, unknown.getMessage(), journal));
             return;
         }
-        if (!exists && (!create || Files.isSymbolicLink(target))) {
-            // An existing kit file has gone, or a new one's name is now a link to a missing file.
+        if (!exists && !create) {
+            // The kit file this journal rewrites has gone.
             logger.warn(String.format(plugin.i18n("kits.log.journal_target_missing"), journal, target));
             withdrawJournal(journal, target);
             return;

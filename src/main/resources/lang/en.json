@@ -44,6 +44,8 @@
   "kits.log.journal_replayed": "Completed an interrupted write of kit file %s.",
   "kits.log.journal_damaged": "Discarded the damaged kit write journal %s; no kit file was changed.",
   "kits.log.journal_target_missing": "Discarded the kit write journal %s: its kit file %s no longer exists, so nothing was changed.",
+  "kits.log.journal_unreadable": "Could not read the kit write journal %s (%s). It is kept and tried again at the next start or /kits reload.",
+  "kits.log.journal_target_is_link": "Discarded the kit write journal %s: the new kit file %s is now a symbolic link, which this write never created, so nothing was changed.",
   "kits.log.journal_replay_failed": "Could not complete the interrupted write of kit file %s (%s). The journal %s is kept and tried again at the next start or /kits reload.",
   "kits.log.journal_folder_unreadable": "Could not read the kit write journal folder %s (%s). Interrupted kit writes in it are completed once it can be read.",
   "kits.log.delete_file_failed": "Could not delete the kit file %s - the kit stays loaded until this file can be removed.",
