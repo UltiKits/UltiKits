@@ -337,7 +337,7 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
-     * Replaces {@code target} with {@code text} so that the file is either the old one or the whole
+     * Replaces {@code target} with {@code content} so that the file is either the old one or the whole
      * new one: the text is written to a temporary file in the same folder (named so the kit loader,
      * which reads only {@code .yml}, ignores it) and then moved over the target in one step. A file
      * system that does not support an atomic move gets a plain replacing move of the complete file.
@@ -346,7 +346,7 @@ public class KitServiceImpl implements KitService {
      * <p>
      * 先写同目录临时文件，再一次性移动覆盖礼包文件；失败时原文件不变，临时文件总会被清理。
      */
-    private void writeAtomically(File target, String text) throws IOException {
+    private void writeAtomically(File target, byte[] content) throws IOException {
         Path targetPath = target.getAbsoluteFile().toPath();
         if (Files.exists(targetPath)) {
             // Replace what an in-place write would have written: the file a symbolic link points to,
@@ -361,7 +361,7 @@ public class KitServiceImpl implements KitService {
         Path temp = createTempSibling(folder, targetPath.getFileName().toString());
         try {
             try (FileChannel channel = FileChannel.open(temp, StandardOpenOption.WRITE)) {
-                ByteBuffer buffer = ByteBuffer.wrap(text.getBytes(StandardCharsets.UTF_8));
+                ByteBuffer buffer = ByteBuffer.wrap(content);
                 while (buffer.hasRemaining()) {
                     channel.write(buffer);
                 }
@@ -1016,7 +1016,7 @@ public class KitServiceImpl implements KitService {
             config.set("consoleCommands", kit.getConsoleCommands());
             config.set("items", kit.getItems());
 
-            writeAtomically(targets.get(0), config.saveToString());
+            writeAtomically(targets.get(0), config.saveToString().getBytes(StandardCharsets.UTF_8));
             return true;
         } catch (IOException | RuntimeException e) {
             // A refused write is a failed save whatever its exception type; the callers answer false.
@@ -1029,9 +1029,16 @@ public class KitServiceImpl implements KitService {
         try (InputStream is = plugin.getClass().getClassLoader().getResourceAsStream("kits/starter.yml")) {
             File exampleFile = new File(folder, "starter.yml");
             if (is != null && !exampleFile.exists()) {
-                Files.copy(is, exampleFile.toPath());
+                // Written like any kit file, so a copy that fails part-way leaves no cut-off
+                // starter.yml, which would stop every later start from copying it again.
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                byte[] chunk = new byte[8192];
+                for (int read = is.read(chunk); read != -1; read = is.read(chunk)) {
+                    bytes.write(chunk, 0, read);
+                }
+                writeAtomically(exampleFile, bytes.toByteArray());
             }
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             logger.warn(String.format(plugin.i18n("kits.log.example_copy_failed"), e.getMessage()));
         }
     }
