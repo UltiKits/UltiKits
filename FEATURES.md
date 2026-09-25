@@ -184,7 +184,7 @@ module's GUI classes excluded from the coverage gate.
 
 ## Data Persistence
 
-Per this plan's own instruction, a kit's CONTENTS and a player's CLAIM COOLDOWN are two
+By design, a kit's CONTENTS and a player's CLAIM COOLDOWN are two
 independently-persisted things, given their own rows rather than folded into one.
 
 | ID | Feature | Kind | How to reach | Permission | Target | Tier | Manual | Source |
