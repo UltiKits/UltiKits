@@ -409,19 +409,32 @@ public class KitServiceImpl implements KitService {
      * that has one (Windows); nothing when either view is absent.
      */
     static void copyAcl(@Nullable AclFileAttributeView from, @Nullable AclFileAttributeView to) throws IOException {
+        if (from == null || to == null) {
+            return;
+        }
+        to.setAcl(from.getAcl());
     }
 
     /**
-     * Gives {@code temp} the permission bits, and where the server may set them the owner and group,
-     * of the file it replaces; nothing when there is no such file or the file system has no POSIX
-     * attributes. An owner or group the server may not assign is left as the server's.
+     * Gives {@code temp} what an in-place write would have kept of the file it replaces: its
+     * access-control list where the file system has one (Windows), its permission bits, and where the
+     * server may set them its owner and group. Nothing when there is no such file. A list or permission
+     * bits that cannot be copied fail the save (the file stays as it was) rather than leave a file with
+     * wider access; an owner or group the server may not assign is left as the server's. Not kept, as
+     * with any replace-by-rename: hard links, extended attributes, and on Linux the entries of an
+     * extended (setfacl) access-control list beyond the permission bits.
      */
     private static void copyFileIdentity(Path target, Path temp) throws IOException {
-        if (!Files.exists(target)
-                || !Files.getFileStore(target).supportsFileAttributeView(PosixFileAttributeView.class)) {
+        if (!Files.exists(target)) {
             return;
         }
-        PosixFileAttributes attributes = Files.readAttributes(target, PosixFileAttributes.class);
+        copyAcl(Files.getFileAttributeView(target, AclFileAttributeView.class),
+                Files.getFileAttributeView(temp, AclFileAttributeView.class));
+        PosixFileAttributeView targetView = Files.getFileAttributeView(target, PosixFileAttributeView.class);
+        if (targetView == null) {
+            return;
+        }
+        PosixFileAttributes attributes = targetView.readAttributes();
         Files.setPosixFilePermissions(temp, attributes.permissions());
         PosixFileAttributeView view = Files.getFileAttributeView(temp, PosixFileAttributeView.class);
         try {
