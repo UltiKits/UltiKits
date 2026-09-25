@@ -3367,6 +3367,66 @@ class KitServiceImplTest {
         }
 
         @Test
+        @DisplayName("the replacement file gets the replaced file's owner, whichever owner view there is")
+        void ownerIsCopied() throws Exception {
+            java.nio.file.attribute.FileOwnerAttributeView from = mock(java.nio.file.attribute.FileOwnerAttributeView.class);
+            java.nio.file.attribute.FileOwnerAttributeView to = mock(java.nio.file.attribute.FileOwnerAttributeView.class);
+            java.nio.file.attribute.UserPrincipal owner = mock(java.nio.file.attribute.UserPrincipal.class);
+            when(from.getOwner()).thenReturn(owner);
+
+            KitServiceImpl.copyOwner(from, to);
+
+            verify(to).setOwner(owner);
+        }
+
+        @Test
+        @DisplayName("an owner the server may not assign leaves the save going")
+        void ownerThatCannotBeSetIsLeft() throws Exception {
+            java.nio.file.attribute.FileOwnerAttributeView from = mock(java.nio.file.attribute.FileOwnerAttributeView.class);
+            java.nio.file.attribute.FileOwnerAttributeView to = mock(java.nio.file.attribute.FileOwnerAttributeView.class);
+            java.nio.file.attribute.UserPrincipal owner = mock(java.nio.file.attribute.UserPrincipal.class);
+            when(from.getOwner()).thenReturn(owner);
+            doThrow(new java.nio.file.AccessDeniedException("temp")).when(to).setOwner(owner);
+
+            KitServiceImpl.copyOwner(from, to);
+
+            verify(to).setOwner(owner);
+        }
+
+        @Test
+        @DisplayName("the replacement file gets the replaced file's hidden, system and archive flags")
+        void dosFlagsAreCopied() throws Exception {
+            java.nio.file.attribute.DosFileAttributeView from = mock(java.nio.file.attribute.DosFileAttributeView.class);
+            java.nio.file.attribute.DosFileAttributeView to = mock(java.nio.file.attribute.DosFileAttributeView.class);
+            java.nio.file.attribute.DosFileAttributes attributes = mock(java.nio.file.attribute.DosFileAttributes.class);
+            when(from.readAttributes()).thenReturn(attributes);
+            when(attributes.isHidden()).thenReturn(true);
+            when(attributes.isSystem()).thenReturn(false);
+            when(attributes.isArchive()).thenReturn(true);
+
+            KitServiceImpl.copyDosFlags(from, to);
+
+            verify(to).setHidden(true);
+            verify(to).setSystem(false);
+            verify(to).setArchive(true);
+        }
+
+        @Test
+        @DisplayName("the replacement file gets the replaced file's creation time")
+        void creationTimeIsCopied() throws Exception {
+            java.nio.file.attribute.BasicFileAttributeView from = mock(java.nio.file.attribute.BasicFileAttributeView.class);
+            java.nio.file.attribute.BasicFileAttributeView to = mock(java.nio.file.attribute.BasicFileAttributeView.class);
+            java.nio.file.attribute.BasicFileAttributes attributes = mock(java.nio.file.attribute.BasicFileAttributes.class);
+            java.nio.file.attribute.FileTime created = java.nio.file.attribute.FileTime.fromMillis(1_000_000L);
+            when(from.readAttributes()).thenReturn(attributes);
+            when(attributes.creationTime()).thenReturn(created);
+
+            KitServiceImpl.copyCreationTime(from, to);
+
+            verify(to).setTimes(null, null, created);
+        }
+
+        @Test
         @DisplayName("without an access-control list on either side nothing is copied")
         void noAclNoCopy() throws Exception {
             java.nio.file.attribute.AclFileAttributeView view = mock(java.nio.file.attribute.AclFileAttributeView.class);

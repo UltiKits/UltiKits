@@ -35,6 +35,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.AclFileAttributeView;
+import java.nio.file.attribute.BasicFileAttributeView;
+import java.nio.file.attribute.DosFileAttributeView;
+import java.nio.file.attribute.FileOwnerAttributeView;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFileAttributes;
 import java.util.*;
@@ -413,6 +416,28 @@ public class KitServiceImpl implements KitService {
             return;
         }
         to.setAcl(from.getAcl());
+    }
+
+    /**
+     * Gives the replacement file the owner of the file it replaces, through whichever owner view the
+     * file system has (POSIX or ACL); left as the server's when it may not be assigned.
+     */
+    static void copyOwner(@Nullable FileOwnerAttributeView from, @Nullable FileOwnerAttributeView to) {
+    }
+
+    /**
+     * Gives the replacement file the hidden, system and archive flags of the file it replaces, on a
+     * file system that has them (Windows); a flag that cannot be set is left as it is. The read-only
+     * flag needs no copy: a read-only kit file is never replaced.
+     */
+    static void copyDosFlags(@Nullable DosFileAttributeView from, @Nullable DosFileAttributeView to) {
+    }
+
+    /**
+     * Gives the replacement file the creation time of the file it replaces, where the file system
+     * records one; left as it is when it cannot be set.
+     */
+    static void copyCreationTime(@Nullable BasicFileAttributeView from, @Nullable BasicFileAttributeView to) {
     }
 
     /**
