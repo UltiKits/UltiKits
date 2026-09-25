@@ -353,6 +353,10 @@ public class KitServiceImpl implements KitService {
      */
     private void writeAtomically(File target, byte[] content) throws IOException {
         Path targetPath = target.getAbsoluteFile().toPath();
+        if (Files.isSymbolicLink(targetPath) && !Files.exists(targetPath)) {
+            // A link whose target has gone: replacing it would destroy the operator's link.
+            throw new NoSuchFileException(targetPath.toString(), null, "kit file is a symbolic link to a missing file");
+        }
         if (Files.exists(targetPath)) {
             // Replace what an in-place write would have written: the file a symbolic link points to,
             // and never a file the server may not write (a rename needs only the folder's permission).
