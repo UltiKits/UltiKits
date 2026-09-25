@@ -3309,6 +3309,38 @@ class KitServiceImplTest {
             assertThat(realFolder.list()).containsExactly("linked.yml");
         }
 
+        /**
+         * A kit file that is a symbolic link whose target has gone is not turned into a plain file: the
+         * save fails and the link stays, so the operator can restore what it points to.
+         */
+        @Test
+        @DisplayName("a kit file that is a dangling symbolic link is not replaced: the save fails and the link stays")
+        void danglingSymbolicLinkIsNotReplaced() throws Exception {
+            File realFolder = new File(tempDir, "real");
+            realFolder.mkdirs();
+            File real = new File(realFolder, "linked.yml");
+            java.nio.file.Files.write(real.toPath(),
+                    "icon: CHEST\nitems: \"old-items\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            File folder = new File(tempDir, "kits");
+            folder.mkdirs();
+            File link = new File(folder, "linked.yml");
+            try {
+                java.nio.file.Files.createSymbolicLink(link.toPath(), real.toPath());
+            } catch (UnsupportedOperationException | IOException e) {
+                org.junit.jupiter.api.Assumptions.assumeTrue(false, "symbolic links not available: " + e);
+            }
+            service = createService();
+            KitDefinition kit = service.getKit("linked");
+            kit.setItems("new-items");
+            assertThat(real.delete()).isTrue();
+
+            assertThat(service.saveKitToFile("linked", kit)).isFalse();
+
+            assertThat(java.nio.file.Files.isSymbolicLink(link.toPath())).isTrue();
+            assertThat(real).doesNotExist();
+            assertThat(kitsFolderListing()).containsExactly("linked.yml");
+        }
+
         @Test
         @DisplayName("a read-only kit file is not replaced: the save fails and the file is unchanged")
         void readOnlyFileIsNotReplaced() throws Exception {
