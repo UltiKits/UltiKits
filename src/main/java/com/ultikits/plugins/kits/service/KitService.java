@@ -35,7 +35,24 @@ public interface KitService {
          * callers holds only for the callers someone remembered (UltiKits/UltiKits#13).
          * 礼包系统总开关已关闭。该结果由 claimKit 自身返回，而不是由每个调用方各自检查。
          */
-        SYSTEM_DISABLED, ERROR
+        SYSTEM_DISABLED,
+        /**
+         * The claim record could not be written, so the claim was refused: nothing was handed over,
+         * no command ran, and a paid kit's price was refunded. Without this refusal a one-time kit
+         * whose record failed was claimable again at once, because the record is re-read from
+         * storage on every claim (UltiKits/UltiKits#26).
+         * 领取记录无法写入，领取被拒绝：未发放任何物品，付费礼包已退款。
+         */
+        NOT_RECORDED,
+        /**
+         * As {@link #NOT_RECORDED}, but the refund of a paid kit's price failed too: the player has
+         * paid and received nothing, and the console carries an ERROR naming the player, the kit and
+         * the amount for an operator to refund by hand. Separate so the player is never told the
+         * money came back when it did not.
+         * 同上，但退款也失败了：玩家已付款且未收到物品，控制台记录了需要手动退款的错误。
+         */
+        NOT_RECORDED_REFUND_FAILED,
+        ERROR
     }
 
     enum CreateResult {

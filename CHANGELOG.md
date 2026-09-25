@@ -29,6 +29,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- When a kit claim cannot be recorded, the claim is refused and any payment refunded, so a one-time
+  kit can no longer be claimed twice after a storage failure. A claim is now charged, then recorded,
+  then handed over; if the record cannot be written, nothing is given, no reward command runs and
+  the player is told to try again. If the refund fails as well, the player is told so and the console
+  logs an error naming the player, the kit and the amount (UltiKits/UltiKits#26).
+- 修复：领取记录写入失败时拒绝领取并退款，一次性礼包不会因存储故障被重复领取。领取顺序改为先扣款、再写入记录、再发放；
+  记录无法写入时不发放任何物品、不执行奖励命令，并提示玩家重试。若退款也失败，会如实告知玩家，并在控制台记录包含玩家、礼包和金额的错误（UltiKits/UltiKits#26）。
+
 - A kit containing a stack larger than its item's maximum stack size is refused before payment when
   it will not fit — the claim now counts the slots each stack really needs, split at the stack's own
   maximum — and anything that still does not fit is dropped at the player's feet with a message

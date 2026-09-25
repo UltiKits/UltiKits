@@ -5,6 +5,7 @@ import com.ultikits.plugins.kits.entity.KitClaimData;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
 import com.ultikits.ultitools.annotations.Service;
+import com.ultikits.ultitools.exceptions.DataAccessException;
 import com.ultikits.ultitools.interfaces.DataOperator;
 import com.ultikits.ultitools.interfaces.impl.logger.PluginLogger;
 import com.ultikits.ultitools.utils.EconomyUtils;
@@ -391,35 +392,43 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
-     * Charges for the kit, then delivers it. The order is the load-bearing part.
+     * Charges for the kit, records the claim, then delivers it. The order is the load-bearing part.
      * <p>
      * The price is taken <b>first</b> and its result checked, so a refused payment leaves nothing
-     * half-applied - no items, no reward commands, no claim record. Paying after delivery was
+     * half-applied - no claim record, no items, no reward commands. Paying after delivery was
      * rejected: undoing a delivery means reclaiming items the player may already have moved,
-     * equipped or traded, which is not a compensation anyone can trust.
+     * equipped or traded, which is not a compensation anyone can trust (UltiKits/UltiKits#20).
      * <p>
-     * After the money moves, the claim record is written <b>before</b> the reward commands, because
-     * those commands are the step most likely to fail: {@code player.performCommand} propagates
-     * {@code CommandException} out of any third-party executor that throws, and a kit pointing at a
-     * broken command would otherwise take the money, hand over the items and never record the
-     * claim - silently making a one-time kit claimable again, which is the whole product of a
-     * one-time kit. No <em>reordering</em> here can produce "recorded but not delivered", because the
-     * record is written after the items have been handed over, and every item is handed over:
-     * {@link #claimKit} refuses before charging unless the slots each stack really needs are free
-     * ({@link #countSlotsNeeded}), and anything {@code addItem} still cannot place - an inventory
-     * another plugin filled in between - is dropped at the player's feet, once, with a message,
-     * never discarded (UltiKits/UltiKits#24).
+     * The claim record is written <b>second</b>, before anything is handed over, and a record that
+     * cannot be written refuses the claim: the price is refunded, nothing is given, no command runs,
+     * and the player is told to try again. This is the maintainer's decision of 2026-09-24 for a
+     * one-time claim whose record cannot be written - write the record first, refuse on a failed
+     * write, and for a paid kit keep the charge-first order and refund (UltiKits/UltiKits#26). The
+     * previous order handed the items over first, and because {@link #getClaimData} re-reads the
+     * table on every claim, a write that failed made a one-time kit claimable again at once. Both
+     * write failures are caught: the checked {@code IllegalAccessException} {@code update} declares
+     * and the unchecked {@code DataAccessException} the relational backends throw on any SQL error.
      * <p>
-     * The cost of putting the record first, stated rather than left implicit: a storage fault in
-     * {@code updateClaimData} now also skips the reward commands, where the previous order would
-     * have run them. That is the favourable side of the trade - a claim that goes unrecorded now
-     * duplicates fewer effects when it is made again - but it is a real change, and what to do
-     * about the unguarded write itself is owned by UltiKits/UltiKits#26, not decided here.
+     * Then the items: every stack lands in the inventory or is dropped at the player's feet, never
+     * discarded - {@link #claimKit} refuses before charging unless the slots each stack really needs
+     * are free ({@link #countSlotsNeeded}), and {@code addItem}'s leftovers are dropped
+     * (UltiKits/UltiKits#24). The reward commands run last, after the record, because they are the
+     * step most likely to throw ({@code player.performCommand} propagates a third-party executor's
+     * {@code CommandException}).
      * <p>
-     * 顺序：先扣款并检查结果，再发放物品，随后写入领取记录，最后执行奖励命令。
+     * What this order costs, as the decision accepted it: while the claim table cannot be written,
+     * nobody can claim a kit; and if the refund fails too, the player has paid for nothing until an
+     * operator refunds them by hand - the result says so to the player, never "nothing was charged",
+     * and an ERROR names the player, the kit and the amount. A reward command that fails after the
+     * record is not retried. On the JSON storage backend a write only reaches an in-memory cache that
+     * a timer flushes to disk, so a disk failure there cannot be seen at claim time; that is the
+     * framework's storage contract and is not changed here.
+     * <p>
+     * 顺序：先扣款并检查结果，再写入领取记录（写入失败则退款并拒绝领取），然后发放物品，最后执行奖励命令。
      *
-     * @return {@link ClaimResult#PAYMENT_FAILED} when the price could not be withdrawn, otherwise
-     *         {@link ClaimResult#SUCCESS}
+     * @return {@link ClaimResult#PAYMENT_FAILED} when the price could not be withdrawn,
+     *         {@link ClaimResult#NOT_RECORDED} or {@link ClaimResult#NOT_RECORDED_REFUND_FAILED} when
+     *         the claim record could not be written, otherwise {@link ClaimResult#SUCCESS}
      */
     private ClaimResult deliverKit(Player player, KitDefinition kit, ItemStack[] items) {
         // No isAvailable() term here on purpose: it would short-circuit this whole condition to
@@ -434,11 +443,39 @@ public class KitServiceImpl implements KitService {
             warnRefusedWithdrawalOnce(player, kit);
             return ClaimResult.PAYMENT_FAILED;
         }
+        if (!updateClaimData(player.getUniqueId(), kit.getName())) {
+            return refuseUnrecordedClaim(player, kit);
+        }
         giveOrDrop(player, items);
-        updateClaimData(player.getUniqueId(), kit.getName());
         executePlayerCommands(player, kit.getPlayerCommands());
         executeConsoleCommands(player, kit.getConsoleCommands());
         return ClaimResult.SUCCESS;
+    }
+
+    /**
+     * Refuses a claim whose record could not be written, after the price - if any - was taken:
+     * refunds it, and when the refund fails as well, logs an ERROR naming the player, the kit and
+     * the amount so an operator can refund by hand, and returns a result whose reply does not claim
+     * the money came back (UltiKits/UltiKits#26).
+     * <p>
+     * 领取记录写入失败时拒绝领取：退款；退款也失败时记录包含玩家、礼包和金额的错误日志。
+     */
+    private ClaimResult refuseUnrecordedClaim(Player player, KitDefinition kit) {
+        if (kit.isFree() || refund(player, kit.getPrice())) {
+            return ClaimResult.NOT_RECORDED;
+        }
+        logger.error(String.format(plugin.i18n("kits.log.refund_failed"), player.getName(), kit.getName(),
+                kit.getPrice()));
+        return ClaimResult.NOT_RECORDED_REFUND_FAILED;
+    }
+
+    /** Returns the price to the player; an economy that throws counts as a failed refund. */
+    private boolean refund(Player player, double amount) {
+        try {
+            return EconomyUtils.deposit(player, amount);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /**
@@ -452,6 +489,10 @@ public class KitServiceImpl implements KitService {
     private void giveOrDrop(Player player, ItemStack[] items) {
         boolean dropped = false;
         for (ItemStack item : items) {
+            if (item == null) {
+                // The claim is already recorded, so nothing here may throw half-way through.
+                continue;
+            }
             Map<Integer, ItemStack> leftovers = player.getInventory().addItem(item.clone());
             if (leftovers == null) {
                 continue;
@@ -577,26 +618,42 @@ public class KitServiceImpl implements KitService {
                 .orElse(null);
     }
 
-    void updateClaimData(UUID playerUuid, String kitName) {
-        KitClaimData existing = getClaimData(playerUuid, kitName);
+    /**
+     * Writes a claim: a new row on the first claim, the existing row's time and count after that.
+     * <p>
+     * Returns whether the write happened, and never throws for a storage failure: the relational
+     * backends throw the unchecked {@link DataAccessException} on any SQL error - from {@code insert},
+     * {@code update} or the read before them - and {@code update} also declares
+     * {@code IllegalAccessException}. The caller refuses the claim on {@code false}
+     * (UltiKits/UltiKits#26); before, the {@code insert} was unguarded and only the checked exception
+     * was caught, so a database error escaped after the kit had been handed over.
+     * <p>
+     * 写入领取记录；返回是否写入成功，存储失败时不抛出异常。
+     *
+     * @return {@code true} when the row was written / 写入成功时为 {@code true}
+     */
+    boolean updateClaimData(UUID playerUuid, String kitName) {
+        try {
+            KitClaimData existing = getClaimData(playerUuid, kitName);
 
-        if (existing != null) {
-            existing.setLastClaim(System.currentTimeMillis());
-            existing.setClaimCount(existing.getClaimCount() + 1);
-            try {
+            if (existing != null) {
+                existing.setLastClaim(System.currentTimeMillis());
+                existing.setClaimCount(existing.getClaimCount() + 1);
                 claimOperator.update(existing);
-            } catch (IllegalAccessException e) {
-                logger.error(String.format(plugin.i18n("kits.log.claim_update_failed"), e.getMessage()));
+            } else {
+                KitClaimData claim = KitClaimData.builder()
+                        .uuid(UUID.randomUUID().toString())
+                        .playerUuid(playerUuid.toString())
+                        .kitName(kitName)
+                        .lastClaim(System.currentTimeMillis())
+                        .claimCount(1)
+                        .build();
+                claimOperator.insert(claim);
             }
-        } else {
-            KitClaimData claim = KitClaimData.builder()
-                    .uuid(UUID.randomUUID().toString())
-                    .playerUuid(playerUuid.toString())
-                    .kitName(kitName)
-                    .lastClaim(System.currentTimeMillis())
-                    .claimCount(1)
-                    .build();
-            claimOperator.insert(claim);
+            return true;
+        } catch (IllegalAccessException | DataAccessException e) {
+            logger.error(String.format(plugin.i18n("kits.log.claim_update_failed"), e.getMessage()));
+            return false;
         }
     }
 

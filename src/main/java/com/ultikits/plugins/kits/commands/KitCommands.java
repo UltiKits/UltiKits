@@ -311,6 +311,12 @@ public class KitCommands extends BaseCommandExecutor {
             case EMPTY_KIT:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.empty_kit"));
                 break;
+            case NOT_RECORDED:
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.not_recorded"));
+                break;
+            case NOT_RECORDED_REFUND_FAILED:
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.not_recorded_refund_failed"));
+                break;
             case SYSTEM_DISABLED:
                 // Not reached from /kits claim, which refuses at refusedAsDisabled before the
                 // service is called. It is here because this method is the module's shared renderer
