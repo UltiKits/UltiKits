@@ -4596,12 +4596,29 @@ class KitServiceImplTest {
         @DisplayName("the journal and its folder are readable only by the server's own account")
         void journalIsPrivate() throws Exception {
             org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
-            java.nio.file.Path image = savedWithCrashAt("journal-written");
+            writeKitFile("solo.yml", "old-items");
+            List<String> modes = new ArrayList<>();
+            KitServiceImpl observing = new KitServiceImpl(plugin, config) {
+                @Override
+                void checkpoint(String point) {
+                    if ("journal-written".equals(point)) {
+                        try {
+                            modes.add(java.nio.file.attribute.PosixFilePermissions.toString(
+                                    java.nio.file.Files.getPosixFilePermissions(journalFolder())));
+                            modes.add(java.nio.file.attribute.PosixFilePermissions.toString(
+                                    java.nio.file.Files.getPosixFilePermissions(journalFolder().resolve("solo.yml.journal"))));
+                        } catch (IOException e) {
+                            throw new java.io.UncheckedIOException(e);
+                        }
+                    }
+                }
+            };
+            KitDefinition kit = observing.getKit("solo");
+            kit.setItems("new-items");
 
-            assertThat(java.nio.file.attribute.PosixFilePermissions.toString(
-                    java.nio.file.Files.getPosixFilePermissions(image.resolve("kit-journal")))).isEqualTo("rwx------");
-            assertThat(java.nio.file.attribute.PosixFilePermissions.toString(java.nio.file.Files.getPosixFilePermissions(
-                    image.resolve("kit-journal").resolve("solo.yml.journal")))).isEqualTo("rw-------");
+            assertThat(observing.saveKitToFile("solo", kit)).isTrue();
+
+            assertThat(modes).containsExactly("rwx------", "rw-------");
         }
 
         @Test

@@ -30,6 +30,9 @@ import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.nio.file.attribute.FileAttribute;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.CRC32;
@@ -154,7 +157,8 @@ public class KitServiceImpl implements KitService {
     @Override
     public CreateResult createKit(Player player, String name) {
         String normalizedName = name.toLowerCase().trim();
-        if (normalizedName.isEmpty() || normalizedName.length() > 32) {
+        if (normalizedName.isEmpty() || normalizedName.length() > 32 || !isPlainKitFileName(normalizedName + ".yml")) {
+            // A name with a folder part would write a file outside the kits folder.
             return CreateResult.INVALID_NAME;
         }
 
@@ -396,6 +400,14 @@ public class KitServiceImpl implements KitService {
     private void writeKitFile(File target, byte[] content, boolean create) throws IOException {
         Path targetPath = target.getAbsoluteFile().toPath();
         Path journal = journalFolder().resolve(target.getName() + ".journal");
+        if (hasContent(journal)) {
+            // An earlier write of this file could not be undone and its journal is the only whole copy:
+            // complete it first, so this write starts from a whole file and never truncates that copy.
+            replayJournal(journal, targetPath.getParent());
+            if (hasContent(journal)) {
+                throw new IOException("an earlier write of " + target.getName() + " is still pending in " + journal);
+            }
+        }
         FileChannel channel = null;
         try {
             byte[] previous = null;
@@ -408,7 +420,7 @@ public class KitServiceImpl implements KitService {
             try {
                 writeJournal(journal, journalRecord(target.getName(), create, content));
             } catch (IOException | RuntimeException journalFailure) {
-                deleteJournal(journal);
+                withdrawJournal(journal, targetPath);
                 throw journalFailure;
             }
             checkpoint("journal-written");
@@ -417,7 +429,7 @@ public class KitServiceImpl implements KitService {
                     channel = FileChannel.open(targetPath, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW);
                 } catch (IOException | RuntimeException createFailure) {
                     // Nothing was created, so the journal must not create it at the next start.
-                    deleteJournal(journal);
+                    withdrawJournal(journal, targetPath);
                     throw createFailure;
                 }
             }
@@ -426,12 +438,15 @@ public class KitServiceImpl implements KitService {
                 channel.position(0);
                 writeInPlace(channel, content);
                 channel.force(true);
+                if (create) {
+                    syncFolder(targetPath.getParent());
+                }
             } catch (IOException | RuntimeException writeFailure) {
                 undoPartialWrite(targetPath, channel, previous, journal, writeFailure);
                 throw writeFailure;
             }
             checkpoint("target-written");
-            deleteJournal(journal);
+            withdrawJournal(journal, targetPath);
         } finally {
             if (channel != null && channel.isOpen()) {
                 try {
@@ -445,8 +460,9 @@ public class KitServiceImpl implements KitService {
 
     /**
      * After a write that stopped part-way: puts the old content back (or removes a new file) and
-     * deletes the journal, so the kit file is as it was; when that fails too, keeps the journal - it
-     * holds the whole new content - for the next start to complete, and says so.
+     * withdraws the journal, so the kit file is as it was and the failed write never takes effect;
+     * when that fails too, keeps the journal - it holds the whole new content - for the next start or
+     * {@code /kits reload} to complete, and says so.
      */
     private void undoPartialWrite(Path target, FileChannel channel, @Nullable byte[] previous,
                                   Path journal, Throwable writeFailure) {
@@ -460,14 +476,16 @@ public class KitServiceImpl implements KitService {
                 writeInPlace(channel, previous);
                 channel.force(true);
             }
-            deleteJournal(journal);
         } catch (IOException | RuntimeException undoFailure) {
             if (undoFailure != writeFailure) {
                 writeFailure.addSuppressed(undoFailure);
             }
             logger.error(String.format(plugin.i18n("kits.log.write_left_pending"),
                     target, writeFailure.getMessage(), journal));
+            return;
         }
+        // The file is as it was: the journal must never apply the write that was just reported failed.
+        withdrawJournal(journal, target);
     }
 
     /** The journal of one kit file write: magic, new-file flag, file name, length, CRC32, content. */
@@ -491,9 +509,26 @@ public class KitServiceImpl implements KitService {
     }
 
     private void writeJournal(Path journal, byte[] record) throws IOException {
-        Files.createDirectories(journal.getParent());
-        try (FileChannel out = FileChannel.open(journal, StandardOpenOption.WRITE, StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING)) {
+        Path folder = journal.getParent();
+        boolean posix = folder.getFileSystem().supportedFileAttributeViews().contains("posix");
+        if (!Files.isDirectory(folder)) {
+            // The journal holds a kit's whole content: its folder is private to the server's account.
+            if (posix) {
+                Files.createDirectories(folder, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+            } else {
+                Files.createDirectories(folder);
+            }
+            syncFolder(folder.getParent());
+        }
+        if (posix) {
+            Files.setPosixFilePermissions(folder, PosixFilePermissions.fromString("rwx------"));
+        }
+        Set<StandardOpenOption> options = EnumSet.of(StandardOpenOption.WRITE, StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING);
+        FileAttribute<?>[] attributes = posix
+                ? new FileAttribute<?>[] {PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))}
+                : new FileAttribute<?>[0];
+        try (FileChannel out = FileChannel.open(journal, options, attributes)) {
             ByteBuffer buffer = ByteBuffer.wrap(record);
             while (buffer.hasRemaining()) {
                 out.write(buffer);
@@ -503,23 +538,49 @@ public class KitServiceImpl implements KitService {
         syncFolder(journal.getParent());
     }
 
-    private void deleteJournal(Path journal) {
+    /**
+     * Makes a journal change nothing any more: deletes it or, when it cannot be deleted (a Windows
+     * process holding it open), empties it - an empty journal is ignored and removed later. When it can
+     * be neither, says that its content for {@code target} is written at the next start or
+     * {@code /kits reload}.
+     */
+    private void withdrawJournal(Path journal, Path target) {
         try {
-            Files.deleteIfExists(journal);
+            deleteJournalFile(journal);
             syncFolder(journal.getParent());
-        } catch (IOException e) {
-            // The kit file is complete; replaying this journal at the next start rewrites the same content.
-            logger.warn(String.format(plugin.i18n("kits.log.journal_not_removed"), journal, e.getMessage()));
+            return;
+        } catch (NoSuchFileException gone) {
+            return;
+        } catch (IOException | RuntimeException deleteFailure) {
+            try (FileChannel emptied = FileChannel.open(journal, StandardOpenOption.WRITE)) {
+                emptied.truncate(0);
+                emptied.force(true);
+                return;
+            } catch (NoSuchFileException gone) {
+                return;
+            } catch (IOException | RuntimeException emptyFailure) {
+                logger.error(String.format(plugin.i18n("kits.log.journal_not_withdrawn"),
+                        journal, deleteFailure.getMessage(), target));
+            }
+        }
+    }
+
+    /** Whether a journal exists with content (an emptied journal has been withdrawn). */
+    private static boolean hasContent(Path journal) {
+        try {
+            return Files.size(journal) > 0;
+        } catch (IOException missingOrUnreadable) {
+            return Files.exists(journal);
         }
     }
 
     /**
      * Completes every kit file write a crash (or a failed write that could not be undone) left
      * behind: an intact journal is written into its kit file in place - or creates it, for a new file -
-     * and deleted. A journal that is cut short, fails its checksum, names a file other than its own
-     * name or outside the kits folder, or whose existing kit file has gone, is logged and deleted
-     * without touching any kit file. A journal that cannot be applied is kept and retried at the next
-     * start.
+     * and withdrawn. A journal that is cut short, fails its checksum, names a file other than its own
+     * name or outside the kits folder, or whose existing kit file has gone, is logged and withdrawn
+     * without touching any kit file; an emptied (withdrawn) journal changes nothing. A journal whose kit
+     * file cannot be checked or written is kept and retried at the next start or {@code /kits reload}.
      * <p>
      * 启动时在读取礼包之前补完被中断的写入；损坏或目标已不存在的日志只记录并丢弃，不改动任何礼包文件。
      */
@@ -546,6 +607,16 @@ public class KitServiceImpl implements KitService {
     private void replayJournal(Path journal, Path kitsFolder) {
         String journalName = journal.getFileName().toString();
         String expectedTarget = journalName.substring(0, journalName.length() - ".journal".length());
+        Path withdrawnTarget = kitsFolder.resolve(expectedTarget);
+        try {
+            if (Files.size(journal) == 0) {
+                // A withdrawn journal: it changes nothing.
+                withdrawJournal(journal, withdrawnTarget);
+                return;
+            }
+        } catch (IOException unreadable) {
+            // Read below, which reports it.
+        }
         boolean create;
         String targetName;
         byte[] content;
@@ -569,14 +640,26 @@ public class KitServiceImpl implements KitService {
             }
         } catch (IOException | RuntimeException damaged) {
             logger.warn(String.format(plugin.i18n("kits.log.journal_damaged"), journal));
-            deleteJournal(journal);
+            withdrawJournal(journal, withdrawnTarget);
             return;
         }
         Path target = kitsFolder.resolve(targetName);
-        boolean exists = Files.exists(target);
-        if (!create && !exists) {
+        boolean exists;
+        try {
+            Files.readAttributes(target, BasicFileAttributes.class);
+            exists = true;
+        } catch (NoSuchFileException missing) {
+            exists = false;
+        } catch (IOException | RuntimeException unknown) {
+            // Not known to be missing (its folder cannot be searched): the journal may be the only whole
+            // copy, so it is kept for a later start.
+            logger.error(String.format(plugin.i18n("kits.log.journal_replay_failed"), target, unknown.getMessage(), journal));
+            return;
+        }
+        if (!exists && (!create || Files.isSymbolicLink(target))) {
+            // An existing kit file has gone, or a new one's name is now a link to a missing file.
             logger.warn(String.format(plugin.i18n("kits.log.journal_target_missing"), journal, target));
-            deleteJournal(journal);
+            withdrawJournal(journal, target);
             return;
         }
         try (FileChannel channel = exists
@@ -586,11 +669,14 @@ public class KitServiceImpl implements KitService {
             channel.position(0);
             writeInPlace(channel, content);
             channel.force(true);
+            if (!exists) {
+                syncFolder(kitsFolder);
+            }
         } catch (IOException | RuntimeException e) {
             logger.error(String.format(plugin.i18n("kits.log.journal_replay_failed"), target, e.getMessage(), journal));
             return;
         }
-        deleteJournal(journal);
+        withdrawJournal(journal, target);
         logger.info(String.format(plugin.i18n("kits.log.journal_replayed"), target));
     }
 
