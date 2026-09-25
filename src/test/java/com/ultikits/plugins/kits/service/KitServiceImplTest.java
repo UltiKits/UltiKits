@@ -4659,6 +4659,7 @@ class KitServiceImplTest {
             assertThat(tempDir.toPath().resolve("evil.yml")).doesNotExist();
             assertThat(tempDir.toPath().getParent().resolve("evil.yml")).doesNotExist();
             assertThat(folder.toFile().list()).isEmpty();
+            assertThat(itemsIn(tempDir.toPath(), "..\\evil.yml")).isEqualTo("evil");
         }
 
         /**
@@ -4744,6 +4745,7 @@ class KitServiceImplTest {
         @Test
         @DisplayName("an interrupted write of a hand-placed kit file with an unusual name is completed")
         void unusualKitFileNamesAreReplayed() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "file names with a colon or backslash");
             for (String fileName : new String[] {".vip.yml", "vip:gold.yml", "a\\b.yml"}) {
                 writeKitFile(fileName, "old-items");
                 String kitName = fileName.substring(0, fileName.length() - ".yml".length()).toLowerCase();
@@ -4761,6 +4763,191 @@ class KitServiceImplTest {
                 when(plugin.getResourceFolderPath()).thenReturn(tempDir.getAbsolutePath());
                 new File(new File(tempDir, "kits"), fileName).delete();
             }
+        }
+
+        private java.nio.file.Path victim() throws IOException {
+            java.nio.file.Path victim = tempDir.toPath().getParent().resolve(tempDir.getName() + "-victim.properties");
+            java.nio.file.Files.write(victim, "motd=untouched\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return victim;
+        }
+
+        /**
+         * A journal is only ever a plain file the module wrote. A symbolic link at a journal's name (put
+         * there by another account that can write the folder) is never written, emptied or read through:
+         * it is removed as not a journal, and the save goes on.
+         */
+        @Test
+        @DisplayName("a journal name that is a symbolic link is never written through")
+        void journalLinkIsNeverWrittenThrough() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            java.nio.file.Path victim = victim();
+            byte[] before = java.nio.file.Files.readAllBytes(victim);
+            java.nio.file.Path folder = tempDir.toPath().resolve("kit-journal");
+            java.nio.file.Files.createDirectories(folder);
+            service = createService();
+            java.nio.file.Files.createSymbolicLink(folder.resolve("solo.yml.journal"), victim);
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(service.saveKitToFile("solo", kit)).isTrue();
+
+            assertThat(java.nio.file.Files.readAllBytes(victim)).isEqualTo(before);
+            assertThat(itemsIn(tempDir.toPath(), "solo.yml")).isEqualTo("new-items");
+            assertThat(journals(tempDir.toPath())).isEmpty();
+        }
+
+        @Test
+        @DisplayName("a journal that becomes a symbolic link before it is withdrawn is not emptied through the link")
+        void journalLinkIsNeverEmptiedThrough() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            java.nio.file.Path victim = victim();
+            byte[] before = java.nio.file.Files.readAllBytes(victim);
+            KitServiceImpl service = new KitServiceImpl(plugin, config) {
+                @Override
+                void deleteJournalFile(java.nio.file.Path journal) throws IOException {
+                    java.nio.file.Files.delete(journal);
+                    java.nio.file.Files.createSymbolicLink(journal, victim);
+                    throw new java.nio.file.AccessDeniedException(journal.toString(), null, "in use");
+                }
+            };
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+
+            service.saveKitToFile("solo", kit);
+
+            assertThat(java.nio.file.Files.readAllBytes(victim)).isEqualTo(before);
+        }
+
+        /**
+         * At replay, a kit file that is now a symbolic link the interrupted write did not go through - a
+         * plain file replaced by a link, or a link pointed elsewhere - is not written: the journal is
+         * discarded and the linked file is untouched. A link the write did go through, still pointing to
+         * the same file, is completed as usual.
+         */
+        @Test
+        @DisplayName("replay does not write through a link put in place of the kit file after the crash")
+        void replayDoesNotFollowANewLink() throws Exception {
+            java.nio.file.Path image = savedWithCrashAt("mid-write");
+            java.nio.file.Path victim = victim();
+            byte[] before = java.nio.file.Files.readAllBytes(victim);
+            java.nio.file.Path kitFile = image.resolve("kits").resolve("solo.yml");
+            java.nio.file.Files.delete(kitFile);
+            java.nio.file.Files.createSymbolicLink(kitFile, victim);
+
+            startOn(image);
+
+            assertThat(java.nio.file.Files.readAllBytes(victim)).isEqualTo(before);
+            assertThat(java.nio.file.Files.isSymbolicLink(kitFile)).isTrue();
+            assertThat(journals(image)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("replay completes a write through the same link it went through, and not through a repointed one")
+        void replayFollowsOnlyTheSameLink() throws Exception {
+            for (boolean repointed : new boolean[] {false, true}) {
+                java.nio.file.Path realFolder = tempDir.toPath().resolve("real");
+                java.nio.file.Files.createDirectories(realFolder);
+                java.nio.file.Path real = realFolder.resolve("linked.yml");
+                java.nio.file.Files.write(real, "icon: CHEST\nitems: \"old-items\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                new File(tempDir, "kits").mkdirs();
+                java.nio.file.Path link = tempDir.toPath().resolve("kits").resolve("linked.yml");
+                java.nio.file.Files.deleteIfExists(link);
+                java.nio.file.Files.createSymbolicLink(link, java.nio.file.Paths.get("..", "real", "linked.yml"));
+                java.nio.file.Path[] image = new java.nio.file.Path[1];
+                KitServiceImpl crashing = crashingAt("mid-write", image);
+                KitDefinition kit = crashing.getKit("linked");
+                kit.setItems("new-items");
+                assertThat(crashing.saveKitToFile("linked", kit)).isTrue();
+                java.nio.file.Path imageLink = image[0].resolve("kits").resolve("linked.yml");
+                java.nio.file.Files.delete(imageLink);
+                java.nio.file.Path other = image[0].resolve("real").resolve("other.yml");
+                java.nio.file.Files.write(other, "icon: CHEST\nitems: \"other-items\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                java.nio.file.Files.createSymbolicLink(imageLink,
+                        java.nio.file.Paths.get("..", "real", repointed ? "other.yml" : "linked.yml"));
+                byte[] otherBefore = java.nio.file.Files.readAllBytes(other);
+
+                startOn(image[0]);
+
+                String realItems = itemsIn(image[0], "../real/linked.yml");
+                if (repointed) {
+                    assertThat(java.nio.file.Files.readAllBytes(other)).isEqualTo(otherBefore);
+                    assertThat(realItems).isNotEqualTo("new-items");
+                } else {
+                    assertThat(realItems).isEqualTo("new-items");
+                }
+                assertThat(journals(image[0])).as("repointed=" + repointed).isEmpty();
+                when(plugin.getResourceFolderPath()).thenReturn(tempDir.getAbsolutePath());
+            }
+        }
+
+        /**
+         * Deleting a kit also withdraws a journal still pending for its file, so the next start or reload
+         * cannot bring the file back; when that journal cannot be withdrawn, the kit is not deleted.
+         */
+        @Test
+        @DisplayName("deleting a kit withdraws its pending journal, so the kit does not come back")
+        void deleteWithdrawsThePendingJournal() throws Exception {
+            writeKitFile("gone.yml", "old-items");
+            service = createService();
+            java.nio.file.Path folder = tempDir.toPath().resolve("kit-journal");
+            java.nio.file.Files.createDirectories(folder);
+            java.nio.file.Files.write(folder.resolve("gone.yml.journal"),
+                    KitServiceImpl.journalRecord("gone.yml", true, "items: \"back\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+            assertThat(service.deleteKit("gone")).isEqualTo(KitService.DeleteResult.DELETED);
+
+            KitServiceImpl restarted = createService();
+            assertThat(restarted.getKit("gone")).isNull();
+            assertThat(new File(tempDir, "kits/gone.yml")).doesNotExist();
+            assertThat(journals(tempDir.toPath())).isEmpty();
+        }
+
+        @Test
+        @DisplayName("a kit whose pending journal cannot be withdrawn is not deleted")
+        void deleteRefusedWhileThePendingJournalCannotBeWithdrawn() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
+            org.junit.jupiter.api.Assumptions.assumeFalse("root".equals(System.getProperty("user.name")),
+                    "root writes a read-only file");
+            File file = writeKitFile("gone.yml", "old-items");
+            service = new KitServiceImpl(plugin, config) {
+                @Override
+                void deleteJournalFile(java.nio.file.Path journal) throws IOException {
+                    throw new java.nio.file.AccessDeniedException(journal.toString(), null, "in use");
+                }
+            };
+            java.nio.file.Path folder = tempDir.toPath().resolve("kit-journal");
+            java.nio.file.Files.createDirectories(folder);
+            java.nio.file.Path journal = folder.resolve("gone.yml.journal");
+            java.nio.file.Files.write(journal,
+                    KitServiceImpl.journalRecord("gone.yml", true, "items: \"back\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            java.nio.file.Files.setPosixFilePermissions(journal, java.nio.file.attribute.PosixFilePermissions.fromString("r--------"));
+
+            assertThat(service.deleteKit("gone")).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+
+            assertThat(file).exists();
+            assertThat(service.getKit("gone")).isNotNull();
+        }
+
+        @Test
+        @DisplayName("a journal folder that cannot be made private is reported once, not at every save")
+        void journalFolderWarningIsGivenOnce() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
+            writeKitFile("solo.yml", "old-items");
+            KitServiceImpl service = new KitServiceImpl(plugin, config) {
+                @Override
+                void restrictJournalFolder(java.nio.file.Path folder) throws IOException {
+                    throw new java.nio.file.AccessDeniedException(folder.toString(), null, "not the owner");
+                }
+            };
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("a-items");
+            assertThat(service.saveKitToFile("solo", kit)).isTrue();
+            kit.setItems("b-items");
+            assertThat(service.saveKitToFile("solo", kit)).isTrue();
+
+            ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(warning.capture());
+            assertThat(warning.getAllValues().stream().filter(line -> line.contains("kit-journal")).count()).isEqualTo(1);
         }
 
         @Test
