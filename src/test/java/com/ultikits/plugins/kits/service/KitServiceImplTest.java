@@ -777,9 +777,9 @@ class KitServiceImplTest {
         private KitServiceImpl createServiceWhoseFileDeleteFails(AtomicInteger attempts) {
             return new KitServiceImpl(plugin, config) {
                 @Override
-                boolean deleteKitFile(File kitFile) {
+                void deleteKitFile(File kitFile) throws IOException {
                     attempts.incrementAndGet();
-                    return false;
+                    throw new java.nio.file.AccessDeniedException(kitFile.getPath());
                 }
             };
         }
@@ -845,14 +845,14 @@ class KitServiceImplTest {
         }
 
         @Test
-        @DisplayName("a file that is gone after a delete reported as failed counts as deleted")
-        void deleteKitFileGoneDespiteFailureIsDeleted() throws Exception {
+        @DisplayName("a file another process removed before the delete ran counts as deleted")
+        void deleteKitFileAlreadyGoneIsDeleted() throws Exception {
             File kitFile = createSimpleKitFile("racy");
             service = new KitServiceImpl(plugin, config) {
                 @Override
-                boolean deleteKitFile(File file) {
+                void deleteKitFile(File file) throws IOException {
                     file.delete(); // NOPMD - another process removed it first
-                    return false;
+                    throw new java.nio.file.NoSuchFileException(file.getPath());
                 }
             };
 
@@ -941,6 +941,32 @@ class KitServiceImplTest {
             verify(mockLogger, atLeastOnce()).warn(warning.capture());
             assertThat(warning.getAllValues())
                     .anyMatch(line -> line.contains(kitFile.getParentFile().getAbsolutePath()));
+        }
+
+        /**
+         * Codex round 3 (P2): a deletion the file system refused is a failure, whatever a later
+         * existence check says - in a folder the server may list but not search, {@code File#exists}
+         * answers false for a file that is still there. The delete reports its own reason
+         * ({@code Files#delete}), so no existence check is consulted: here the refusal is reported
+         * while the file has gone, and the result is still "not deleted".
+         */
+        @Test
+        @DisplayName("a refused deletion is a failure even when the file no longer appears to exist")
+        void aRefusedDeletionIsAFailureWhateverExistsSays() throws Exception {
+            File kitFile = createSimpleKitFile("premium");
+            service = new KitServiceImpl(plugin, config) {
+                @Override
+                void deleteKitFile(File file) throws IOException {
+                    file.delete(); // NOPMD - makes File#exists answer false, as an unsearchable folder does
+                    throw new java.nio.file.AccessDeniedException(file.getPath());
+                }
+            };
+
+            KitService.DeleteResult result = service.deleteKit("premium");
+
+            assertThat(kitFile).doesNotExist();
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+            assertThat(service.getKit("premium")).isNotNull();
         }
 
         @Test
