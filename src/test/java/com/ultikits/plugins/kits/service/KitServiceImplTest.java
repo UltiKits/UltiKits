@@ -3017,7 +3017,7 @@ class KitServiceImplTest {
 
             assertThat(filesUnder(tempDir.toPath())).isEqualTo(before);
             assertThat(tempDir.toPath().getParent().resolve("y.yml")).doesNotExist();
-            verify(spyService, never()).saveKitToFile(anyString(), any(KitDefinition.class));
+            verify(spyService, never()).saveKitToFile(anyString(), any(KitDefinition.class), anyBoolean());
         }
 
         /** Two dots inside a name are no path: {@code a..b} is an ordinary kit name. */
@@ -3321,7 +3321,9 @@ class KitServiceImplTest {
             java.nio.file.Files.write(new File(folder, "VIP.yml").toPath(), "icon: [unclosed".getBytes(java.nio.charset.StandardCharsets.UTF_8));
             java.nio.file.Files.write(new File(folder, "vip.yml").toPath(), "icon: [unclosed".getBytes(java.nio.charset.StandardCharsets.UTF_8));
             KitServiceImpl spyService = spy(createService());
+            // Both early checks miss the files (they appear after them); the writer must still refuse.
             doReturn(Collections.emptyList()).doCallRealMethod().when(spyService).conflictingFiles("vip");
+            doReturn(Collections.emptyList()).when(spyService).kitFileNames("vip");
             doReturn("items").when(spyService).serializeItems(any(ItemStack[].class));
             Player player = createMockPlayer();
             ItemStack stone = mockItemStack(Material.STONE);
@@ -4137,7 +4139,7 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("data").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(false).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+            doReturn(false).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
 
             KitService.CreateResult result = spyService.createKit(player, "savefail");
             assertThat(result).isEqualTo(KitService.CreateResult.ERROR);
@@ -4155,13 +4157,13 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("serialized").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
 
             KitService.CreateResult result = spyService.createKit(player, "icontest");
             assertThat(result).isEqualTo(KitService.CreateResult.SUCCESS);
 
             ArgumentCaptor<KitDefinition> captor = ArgumentCaptor.forClass(KitDefinition.class);
-            verify(spyService).saveKitToFile(eq("icontest"), captor.capture());
+            verify(spyService).saveKitToFile(eq("icontest"), captor.capture(), eq(true));
             assertThat(captor.getValue().getIcon()).isEqualTo("DIAMOND_SWORD");
         }
 
@@ -4175,12 +4177,12 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("serialized").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
 
             spyService.createKit(player, "MyNewKit");
 
             ArgumentCaptor<KitDefinition> captor = ArgumentCaptor.forClass(KitDefinition.class);
-            verify(spyService).saveKitToFile(eq("mynewkit"), captor.capture());
+            verify(spyService).saveKitToFile(eq("mynewkit"), captor.capture(), eq(true));
             assertThat(captor.getValue().getDisplayName()).isEqualTo("&fMyNewKit");
         }
 
@@ -4194,7 +4196,7 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("serialized").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
 
             KitService.CreateResult result = spyService.createKit(player, "added");
             assertThat(result).isEqualTo(KitService.CreateResult.SUCCESS);
@@ -4213,7 +4215,7 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("data").when(spyService).serializeItems(argThat(arr -> arr.length == 1));
-            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
 
             KitService.CreateResult result = spyService.createKit(player, "filtered");
             assertThat(result).isEqualTo(KitService.CreateResult.SUCCESS);

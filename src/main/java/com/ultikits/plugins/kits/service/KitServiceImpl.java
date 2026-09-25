@@ -162,6 +162,11 @@ public class KitServiceImpl implements KitService {
         if (!conflictingFiles(normalizedName).isEmpty()) {
             return CreateResult.FILE_CONFLICT;
         }
+        // A create only ever creates: a file that already loads as this name (placed by hand without a
+        // reload, or unreadable) is left as it is.
+        if (!kitFileNames(normalizedName).isEmpty()) {
+            return CreateResult.FILE_EXISTS;
+        }
 
         // Filter out air and null items from player inventory
         ItemStack[] validItems = Arrays.stream(player.getInventory().getStorageContents())
@@ -184,10 +189,12 @@ public class KitServiceImpl implements KitService {
         kit.setIcon(validItems[0].getType().name());
         kit.setItems(serializedItems);
 
-        // Save to YAML
-        if (!saveKitToFile(normalizedName, kit)) {
-            // The writer also refuses a second file that appeared after the check above.
-            return conflictingFiles(normalizedName).isEmpty() ? CreateResult.ERROR : CreateResult.FILE_CONFLICT;
+        // Save to YAML; the writer refuses a file that appeared after the checks above.
+        if (!saveKitToFile(normalizedName, kit, true)) {
+            if (!conflictingFiles(normalizedName).isEmpty()) {
+                return CreateResult.FILE_CONFLICT;
+            }
+            return kitFileNames(normalizedName).isEmpty() ? CreateResult.ERROR : CreateResult.FILE_EXISTS;
         }
 
         kits.put(normalizedName, kit);
@@ -419,7 +426,8 @@ public class KitServiceImpl implements KitService {
 
     @Override
     public List<String> kitFileNames(String kitName) {
-        return Collections.emptyList();
+        List<File> files = kitFilesOf(kitName.toLowerCase().trim());
+        return files == null ? Collections.emptyList() : fileNames(files);
     }
 
     private static List<String> fileNames(List<File> files) {
@@ -893,6 +901,14 @@ public class KitServiceImpl implements KitService {
     }
 
     boolean saveKitToFile(String name, KitDefinition kit) {
+        return saveKitToFile(name, kit, false);
+    }
+
+    /**
+     * Writes a kit's file; with {@code newOnly} (a create), a file that already loads as the name is
+     * never written - it fails instead - so a create never overwrites an existing file.
+     */
+    boolean saveKitToFile(String name, KitDefinition kit, boolean newOnly) {
         try {
             // Write the file the kit loads from, so a save lands where the next reload reads it; a new
             // kit gets "<name>.yml". A folder that cannot be listed gives no way to know which file that
@@ -906,6 +922,9 @@ public class KitServiceImpl implements KitService {
             }
             if (targets.size() > 1) {
                 // Never write one of several files a kit loads from (see conflictingFiles).
+                return false;
+            }
+            if (newOnly && !targets.isEmpty()) {
                 return false;
             }
             if (targets.isEmpty()) {
