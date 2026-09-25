@@ -156,6 +156,14 @@ public class KitCommands extends BaseCommandExecutor {
             player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.kit.not_found"), name));
             return;
         }
+        // An editor for a kit that several files define could never be saved (the save gateway
+        // refuses it), so say why now instead of after the edit.
+        List<String> conflicting = kitService.conflictingFiles(kit.getName());
+        if (!conflicting.isEmpty()) {
+            player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.conflict.not_changed"),
+                    kit.getName(), String.join(", ", conflicting)));
+            return;
+        }
 
         new KitEditorGui(player, plugin, kitService, kit).open();
     }
