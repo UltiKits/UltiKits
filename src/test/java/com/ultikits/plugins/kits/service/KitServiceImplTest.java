@@ -3144,6 +3144,8 @@ class KitServiceImplTest {
         @Test
         @DisplayName("a save rewrites the kit file in place: a hard link to it sees the new content")
         void saveRewritesTheFileInPlace() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(
+                    java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("unix"), "unix inode");
             File file = writeKitFile("solo.yml", "old-items");
             File outside = new File(tempDir, "outside");
             outside.mkdirs();
@@ -3354,6 +3356,7 @@ class KitServiceImplTest {
             assertThat(java.nio.file.Files.isSymbolicLink(link.toPath())).isTrue();
             assertThat(real).doesNotExist();
             assertThat(kitsFolderListing()).containsExactly("linked.yml");
+            assertThat(journalListing()).isEmpty();
         }
 
         @Test
@@ -3375,6 +3378,7 @@ class KitServiceImplTest {
             assertThat(bytes(file)).isEqualTo(before);
             assertThat(mode(file)).isEqualTo("r--r--r--");
             assertThat(kitsFolderListing()).containsExactly("solo.yml");
+            assertThat(journalListing()).isEmpty();
         }
 
         @Test
@@ -4360,6 +4364,277 @@ class KitServiceImplTest {
 
             assertThat(tempDir.toPath().resolve("evil.yml")).doesNotExist();
             assertThat(restarted.getKit("solo").getItems()).isEqualTo("old-items");
+            assertThat(folder.toFile().list()).isEmpty();
+        }
+
+        /** A service whose in-place writes fail (half written) for the first {@code failing} calls. */
+        private KitServiceImpl failingFor(int failing) {
+            int[] calls = {0};
+            return new KitServiceImpl(plugin, config) {
+                @Override
+                void writeInPlace(java.nio.channels.FileChannel channel, byte[] content) throws IOException {
+                    if (calls[0]++ < failing) {
+                        channel.write(java.nio.ByteBuffer.wrap(content, 0, content.length / 2));
+                        throw new IOException("disk full");
+                    }
+                    super.writeInPlace(channel, content);
+                }
+            };
+        }
+
+        private byte[] journalContent(java.nio.file.Path image) throws IOException {
+            return java.nio.file.Files.readAllBytes(image.resolve("kit-journal").resolve("solo.yml.journal"));
+        }
+
+        private boolean contains(byte[] haystack, String needle) {
+            return new String(haystack, java.nio.charset.StandardCharsets.ISO_8859_1).contains(needle);
+        }
+
+        /**
+         * A write that could not be undone leaves the kit file part-written and its journal as the only
+         * whole copy. A later save of the same kit first completes that journal - so it starts from a
+         * whole file and never truncates the only whole copy - and then writes its own content.
+         */
+        @Test
+        @DisplayName("a save of a kit with a kept journal completes that journal first")
+        void keptJournalIsCompletedBeforeTheNextSave() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            String[] atJournal = new String[1];
+            int[] calls = {0};
+            KitServiceImpl service = new KitServiceImpl(plugin, config) {
+                @Override
+                void writeInPlace(java.nio.channels.FileChannel channel, byte[] content) throws IOException {
+                    if (calls[0]++ < 2) {
+                        channel.write(java.nio.ByteBuffer.wrap(content, 0, content.length / 2));
+                        throw new IOException("disk full");
+                    }
+                    super.writeInPlace(channel, content);
+                }
+
+                @Override
+                void checkpoint(String point) {
+                    if ("journal-written".equals(point) && calls[0] >= 2) {
+                        atJournal[0] = itemsIn(tempDir.toPath(), "solo.yml");
+                    }
+                }
+            };
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("a-items");
+            assertThat(service.saveKitToFile("solo", kit)).isFalse();
+            kit.setItems("b-items");
+
+            assertThat(service.saveKitToFile("solo", kit)).isTrue();
+
+            assertThat(atJournal[0]).isEqualTo("a-items");
+            assertThat(itemsIn(tempDir.toPath(), "solo.yml")).isEqualTo("b-items");
+            assertThat(journals(tempDir.toPath())).isEmpty();
+        }
+
+        @Test
+        @DisplayName("a save of a kit whose kept journal cannot be completed is refused and keeps that journal")
+        void keptJournalThatCannotBeCompletedRefusesTheSave() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            KitServiceImpl service = failingFor(3);
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("a-items");
+            assertThat(service.saveKitToFile("solo", kit)).isFalse();
+            kit.setItems("b-items");
+
+            assertThat(service.saveKitToFile("solo", kit)).isFalse();
+
+            byte[] journal = journalContent(tempDir.toPath());
+            assertThat(contains(journal, "a-items")).isTrue();
+            assertThat(contains(journal, "b-items")).isFalse();
+        }
+
+        /** A service whose deletion of a journal file fails, as a file held open by another process can. */
+        private KitServiceImpl journalDeleteFails(int failing) {
+            int[] calls = {0};
+            return new KitServiceImpl(plugin, config) {
+                @Override
+                void writeInPlace(java.nio.channels.FileChannel channel, byte[] content) throws IOException {
+                    if (calls[0]++ < failing) {
+                        channel.write(java.nio.ByteBuffer.wrap(content, 0, content.length / 2));
+                        throw new IOException("disk full");
+                    }
+                    super.writeInPlace(channel, content);
+                }
+
+                @Override
+                void deleteJournalFile(java.nio.file.Path journal) throws IOException {
+                    throw new java.nio.file.AccessDeniedException(journal.toString(), null, "in use");
+                }
+            };
+        }
+
+        /**
+         * A save reported as failed must never take effect later: when its journal cannot be deleted
+         * after the old content was put back, the journal is emptied instead, and an empty journal
+         * changes nothing at the next start.
+         */
+        @Test
+        @DisplayName("a failed save whose journal cannot be deleted does not take effect at the next start")
+        void rolledBackSaveIsNotReplayedLater() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            KitServiceImpl service = journalDeleteFails(1);
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+            assertThat(service.saveKitToFile("solo", kit)).isFalse();
+            assertThat(itemsIn(tempDir.toPath(), "solo.yml")).isEqualTo("old-items");
+
+            KitServiceImpl restarted = startOn(crashImage());
+
+            assertThat(restarted.getKit("solo").getItems()).isEqualTo("old-items");
+        }
+
+        /**
+         * After a successful save whose journal cannot be deleted, a later hand edit of the kit file is
+         * not overwritten at the next start by the old journal.
+         */
+        @Test
+        @DisplayName("a successful save whose journal cannot be deleted does not overwrite later edits")
+        void leftoverJournalAfterSuccessChangesNothing() throws Exception {
+            File file = writeKitFile("solo.yml", "old-items");
+            KitServiceImpl service = journalDeleteFails(0);
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+            assertThat(service.saveKitToFile("solo", kit)).isTrue();
+            java.nio.file.Files.write(file.toPath(),
+                    "icon: CHEST\nitems: \"hand-edited\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            KitServiceImpl restarted = startOn(crashImage());
+
+            assertThat(restarted.getKit("solo").getItems()).isEqualTo("hand-edited");
+        }
+
+        @Test
+        @DisplayName("a journal that can be neither deleted nor emptied is reported as taking effect later")
+        void journalThatCannotBeWithdrawnIsReported() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
+            org.junit.jupiter.api.Assumptions.assumeFalse("root".equals(System.getProperty("user.name")),
+                    "root writes a read-only file");
+            writeKitFile("solo.yml", "old-items");
+            KitServiceImpl service = new KitServiceImpl(plugin, config) {
+                @Override
+                void writeInPlace(java.nio.channels.FileChannel channel, byte[] content) throws IOException {
+                    java.nio.file.Path journal = journalFolder().resolve("solo.yml.journal");
+                    if (java.nio.file.Files.exists(journal) && java.nio.file.Files.isWritable(journal)) {
+                        java.nio.file.Files.setPosixFilePermissions(journal,
+                                java.nio.file.attribute.PosixFilePermissions.fromString("r--------"));
+                        channel.write(java.nio.ByteBuffer.wrap(content, 0, content.length / 2));
+                        throw new IOException("disk full");
+                    }
+                    super.writeInPlace(channel, content);
+                }
+
+                @Override
+                void deleteJournalFile(java.nio.file.Path journal) throws IOException {
+                    throw new java.nio.file.AccessDeniedException(journal.toString(), null, "in use");
+                }
+            };
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(service.saveKitToFile("solo", kit)).isFalse();
+
+            ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).error(error.capture());
+            assertThat(error.getAllValues()).anyMatch(line -> line.contains("solo.yml.journal") && line.contains("/kits reload"));
+        }
+
+        private boolean posix() {
+            return java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix");
+        }
+
+        /**
+         * A kit file whose existence cannot be determined (its folder cannot be searched) is not a
+         * missing file: the journal - possibly the only whole copy - is kept for a later start.
+         */
+        @Test
+        @DisplayName("a journal whose kit file cannot be checked is kept, and completed once it can")
+        void journalIsKeptWhileItsFileCannotBeChecked() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
+            org.junit.jupiter.api.Assumptions.assumeFalse("root".equals(System.getProperty("user.name")),
+                    "root searches any folder");
+            java.nio.file.Path image = savedWithCrashAt("mid-write");
+            java.nio.file.Path kits = image.resolve("kits");
+            java.nio.file.Files.setPosixFilePermissions(kits, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+            try {
+                startOn(image);
+                assertThat(journals(image)).containsExactly("solo.yml.journal");
+            } finally {
+                java.nio.file.Files.setPosixFilePermissions(kits, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+            }
+
+            assertReplayedToTheNewContent(image);
+        }
+
+        @Test
+        @DisplayName("a new-file journal whose file is now a dangling symbolic link is discarded and the link left alone")
+        void createJournalOverADanglingLinkIsDiscarded() throws Exception {
+            java.nio.file.Path[] image = new java.nio.file.Path[1];
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl crashing = crashingAt("journal-written", image);
+            KitDefinition kit = createTestKit("fresh");
+            assertThat(crashing.saveKitToFile("fresh", kit)).isTrue();
+            java.nio.file.Path link = image[0].resolve("kits").resolve("fresh.yml");
+            java.nio.file.Files.createSymbolicLink(link, image[0].resolve("nowhere.yml"));
+
+            startOn(image[0]);
+
+            assertThat(java.nio.file.Files.isSymbolicLink(link)).isTrue();
+            assertThat(image[0].resolve("nowhere.yml")).doesNotExist();
+            assertThat(journals(image[0])).isEmpty();
+        }
+
+        /**
+         * The journal holds a kit's whole content, so it is readable only by the server's own account,
+         * whatever the umask: the folder is {@code rwx------} and the journal {@code rw-------}.
+         * Discriminates only under a umask wider than {@code 077}.
+         */
+        @Test
+        @DisplayName("the journal and its folder are readable only by the server's own account")
+        void journalIsPrivate() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
+            java.nio.file.Path image = savedWithCrashAt("journal-written");
+
+            assertThat(java.nio.file.attribute.PosixFilePermissions.toString(
+                    java.nio.file.Files.getPosixFilePermissions(image.resolve("kit-journal")))).isEqualTo("rwx------");
+            assertThat(java.nio.file.attribute.PosixFilePermissions.toString(java.nio.file.Files.getPosixFilePermissions(
+                    image.resolve("kit-journal").resolve("solo.yml.journal")))).isEqualTo("rw-------");
+        }
+
+        @Test
+        @DisplayName("a kit name that is not a plain file name is refused, so its file and journal are the same file")
+        void kitNamesWithAPathAreRefused() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl service = spy(createService());
+            doReturn("items").when(service).serializeItems(any(ItemStack[].class));
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[]{stone});
+
+            for (String name : new String[] {"../escape", "a/b", "a\\b", ".hidden", "c:d"}) {
+                assertThat(service.createKit(player, name)).as(name).isEqualTo(KitService.CreateResult.INVALID_NAME);
+            }
+            assertThat(tempDir.toPath().resolve("escape.yml")).doesNotExist();
+            assertThat(new File(tempDir, "kits").list()).isEmpty();
+            assertThat(service.createKit(player, "plain")).isEqualTo(KitService.CreateResult.SUCCESS);
+        }
+
+        @Test
+        @DisplayName("a journal whose own name holds a backslash path is discarded without creating anything")
+        void journalWithABackslashNameIsDiscarded() throws Exception {
+            writeKitFile("solo.yml", "old-items");
+            java.nio.file.Path folder = tempDir.toPath().resolve("kit-journal");
+            java.nio.file.Files.createDirectories(folder);
+            java.nio.file.Files.write(folder.resolve("..\\evil.yml.journal"),
+                    KitServiceImpl.journalRecord("..\\evil.yml", true, "items: \"evil\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+            createService();
+
+            assertThat(new File(tempDir, "kits").list()).containsExactly("solo.yml");
             assertThat(folder.toFile().list()).isEmpty();
         }
 

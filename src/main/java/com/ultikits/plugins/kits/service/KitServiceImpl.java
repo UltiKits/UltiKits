@@ -350,6 +350,14 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
+     * Deletes a journal file. A seam, package-private so a test can make the deletion fail, as a
+     * journal held open by another process (a virus scanner on Windows) can.
+     */
+    void deleteJournalFile(Path journal) throws IOException {
+        Files.delete(journal);
+    }
+
+    /**
      * Writes the whole of {@code content} at the channel's position. A seam, package-private so a test
      * can stop a write part-way.
      */
