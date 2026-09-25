@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  * Reopen guard for the test-time server bootstrap. Every assertion here depends on a live
  * server-backed value, never a bare registry constant -- a bare constant resolves via
  * ServiceLoader from the classpath alone and would stay green even if the bootstrap were
- * silently deleted from this module (see 14-VALIDATION.md's Sentinel Design Constraint).
+ * silently deleted from this module (the sentinel is designed to fail in exactly that case).
  * <p>
  * Deliberately bootstraps through {@link MockBukkitSupport#bootstrap()} /
  * {@link MockBukkitSupport#shutdown()} -- the same shared entry point every other bootstrapped

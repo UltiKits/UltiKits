@@ -359,9 +359,9 @@ public class KitServiceImpl implements KitService {
     private ClaimResult deliverKit(Player player, KitDefinition kit, ItemStack[] items) {
         // No isAvailable() term here on purpose: it would short-circuit this whole condition to
         // false if the Vault provider were deregistered after checkPrerequisites ran, delivering
-        // the paid kit free - the very outcome this guard exists to stop (UltiKits/UltiKits#20,
-        // gate-1 WR-01). The framework's bridge already returns false when no provider is
-        // registered, so the term bought nothing and could only turn a refusal into a giveaway.
+        // the paid kit free - the very outcome this guard exists to stop (UltiKits/UltiKits#20).
+        // The framework's bridge already returns false when no provider is registered, so the
+        // term bought nothing and could only turn a refusal into a giveaway.
         if (!kit.isFree() && !EconomyUtils.withdraw(player, kit.getPrice())) {
             // checkPrerequisites saw the player could afford this, so reaching here means the
             // balance moved in between, the economy rejected the transaction, or the provider went

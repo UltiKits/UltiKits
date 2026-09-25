@@ -929,7 +929,7 @@ class KitBrowserGuiTest {
          * Regression guard, NOT evidence: this passes with and without the fix, because before it
          * PAYMENT_FAILED fell to the default branch, which also does not close the inventory. It
          * earns its place because the sibling {@code nonSuccessNoClose} drives only
-         * INSUFFICIENT_FUNDS despite its name, so nothing else pins this branch (gate-1 IN-02).
+         * INSUFFICIENT_FUNDS despite its name, so nothing else pins this branch.
          */
         @Test
         @DisplayName("PAYMENT_FAILED does not close the inventory (guard, passes either way)")
