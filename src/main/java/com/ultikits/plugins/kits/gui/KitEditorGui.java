@@ -65,8 +65,8 @@ public class KitEditorGui extends Gui {
         ItemStack saveItem = new ItemStack(Material.EMERALD);
         ItemMeta saveMeta = saveItem.getItemMeta();
         if (saveMeta != null) {
-            saveMeta.setDisplayName(ChatColor.GREEN + plugin.i18n("保存"));
-            saveMeta.setLore(Collections.singletonList(ChatColor.GRAY + "Click to save kit contents"));
+            saveMeta.setDisplayName(ChatColor.GREEN + plugin.i18n("kits.editor.save"));
+            saveMeta.setLore(Collections.singletonList(ChatColor.GRAY + plugin.i18n("kits.editor.save_hint")));
             saveItem.setItemMeta(saveMeta);
         }
         Icon saveIcon = new Icon(saveItem);
@@ -97,7 +97,7 @@ public class KitEditorGui extends Gui {
         ItemStack cancelItem = new ItemStack(Material.BARRIER);
         ItemMeta cancelMeta = cancelItem.getItemMeta();
         if (cancelMeta != null) {
-            cancelMeta.setDisplayName(ChatColor.RED + plugin.i18n("取消"));
+            cancelMeta.setDisplayName(ChatColor.RED + plugin.i18n("kits.editor.cancel"));
             cancelItem.setItemMeta(cancelMeta);
         }
         Icon cancelIcon = new Icon(cancelItem);
@@ -138,17 +138,17 @@ public class KitEditorGui extends Gui {
 
         switch (result) {
             case SUCCESS:
-                player.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("已保存礼包: %s"), kit.getName()));
+                player.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("kits.editor.saved"), kit.getName()));
                 break;
             case SYSTEM_DISABLED:
                 // This editor outlives the /kits edit command that opened it, so an operator can
                 // switch the kit system off while it is on screen. The refusal comes from the save
                 // gateway, which is where the switch is enforced; this only renders it, and it says
                 // the same sentence every other surface says.
-                player.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.disabled"));
                 break;
             default:
-                player.sendMessage(ChatColor.RED + plugin.i18n("领取礼包时发生错误"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.editor.save_error"));
                 break;
         }
 

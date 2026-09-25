@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.commands;
 
+import com.ultikits.plugins.kits.i18n.CatalogueText;
 import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
@@ -42,15 +43,15 @@ class KitCommandsTest {
 
     @BeforeEach
     void setUp() {
-        lenient().when(plugin.i18n(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("zh"));
         config = new KitsConfig("config/config.yml");
         kitCommands = new KitCommands(plugin, kitService, config);
     }
 
     /**
      * Asserts the sender was told, in a message of its own, that the kit system is switched off.
-     * The catalogue key is the literal the module passes to {@code i18n}, which the stub above
-     * echoes back unchanged.
+     * The stub above answers {@code i18n} from the real zh catalogue, so this is the text a player
+     * on a {@code language: zh} server reads.
      */
     private void assertRefusedAsDisabled(CommandSender sender) {
         ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
@@ -432,7 +433,7 @@ class KitCommandsTest {
 
             ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
             verify(player).sendMessage(captor.capture());
-            assertThat(captor.getValue()).contains("领取礼包时发生错误");
+            assertThat(captor.getValue()).contains("创建礼包时发生错误");
         }
     }
 
