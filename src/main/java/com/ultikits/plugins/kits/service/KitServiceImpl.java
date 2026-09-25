@@ -354,6 +354,15 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
+     * Makes the journal folder private to the server's account ({@code rwx------}). A seam,
+     * package-private so a test can make it fail, as it does on a folder another account owns or on
+     * a file system that refuses permission changes.
+     */
+    void restrictJournalFolder(Path folder) throws IOException {
+        Files.setPosixFilePermissions(folder, PosixFilePermissions.fromString("rwx------"));
+    }
+
+    /**
      * Deletes a journal file. A seam, package-private so a test can make the deletion fail, as a
      * journal held open by another process (a virus scanner on Windows) can.
      */
@@ -521,7 +530,7 @@ public class KitServiceImpl implements KitService {
             syncFolder(folder.getParent());
         }
         if (posix) {
-            Files.setPosixFilePermissions(folder, PosixFilePermissions.fromString("rwx------"));
+            restrictJournalFolder(folder);
         }
         Set<StandardOpenOption> options = EnumSet.of(StandardOpenOption.WRITE, StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING);

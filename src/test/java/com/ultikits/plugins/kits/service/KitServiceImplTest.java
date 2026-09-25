@@ -4640,9 +4640,14 @@ class KitServiceImplTest {
             assertThat(service.createKit(player, "plain")).isEqualTo(KitService.CreateResult.SUCCESS);
         }
 
+        /**
+         * A journal's target is its own file name in the journal folder, so it can never leave the kits
+         * folder: on Linux, where a backslash is an ordinary character, {@code ..\\evil.yml} names a file
+         * inside the kits folder, and nothing is created beside it.
+         */
         @Test
-        @DisplayName("a journal whose own name holds a backslash path is discarded without creating anything")
-        void journalWithABackslashNameIsDiscarded() throws Exception {
+        @DisplayName("a journal whose name holds a backslash never writes outside the kits folder")
+        void journalWithABackslashNameStaysInTheKitsFolder() throws Exception {
             writeKitFile("solo.yml", "old-items");
             java.nio.file.Path folder = tempDir.toPath().resolve("kit-journal");
             java.nio.file.Files.createDirectories(folder);
@@ -4651,7 +4656,8 @@ class KitServiceImplTest {
 
             createService();
 
-            assertThat(new File(tempDir, "kits").list()).containsExactly("solo.yml");
+            assertThat(tempDir.toPath().resolve("evil.yml")).doesNotExist();
+            assertThat(tempDir.toPath().getParent().resolve("evil.yml")).doesNotExist();
             assertThat(folder.toFile().list()).isEmpty();
         }
 
@@ -4701,6 +4707,60 @@ class KitServiceImplTest {
             assertThat(java.nio.file.Files.readAllBytes(victim)).isEqualTo(before);
             assertThat(java.nio.file.Files.isSymbolicLink(link)).isTrue();
             assertThat(journals(image[0])).isEmpty();
+        }
+
+        /**
+         * Making the journal folder private is hardening, not a condition of saving: where the server may
+         * not change the folder's permissions (another account owns it, or the file system refuses), the
+         * save goes on and the console says so.
+         */
+        @Test
+        @DisplayName("a journal folder whose permissions cannot be changed does not stop a save")
+        void journalFolderThatCannotBeRestrictedDoesNotStopTheSave() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
+            writeKitFile("solo.yml", "old-items");
+            KitServiceImpl service = new KitServiceImpl(plugin, config) {
+                @Override
+                void restrictJournalFolder(java.nio.file.Path folder) throws IOException {
+                    throw new java.nio.file.AccessDeniedException(folder.toString(), null, "not the owner");
+                }
+            };
+            KitDefinition kit = service.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(service.saveKitToFile("solo", kit)).isTrue();
+
+            assertThat(itemsIn(tempDir.toPath(), "solo.yml")).isEqualTo("new-items");
+            ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(warning.capture());
+            assertThat(warning.getAllValues()).anyMatch(line -> line.contains("kit-journal"));
+        }
+
+        /**
+         * Every name the kit loader reads, the replay accepts: a hand-placed kit file whose name starts
+         * with a dot or holds a colon is written through a journal like any other, so a crash in its
+         * write is completed at the next start, not discarded as damaged.
+         */
+        @Test
+        @DisplayName("an interrupted write of a hand-placed kit file with an unusual name is completed")
+        void unusualKitFileNamesAreReplayed() throws Exception {
+            for (String fileName : new String[] {".vip.yml", "vip:gold.yml", "a\\b.yml"}) {
+                writeKitFile(fileName, "old-items");
+                String kitName = fileName.substring(0, fileName.length() - ".yml".length()).toLowerCase();
+                java.nio.file.Path[] image = new java.nio.file.Path[1];
+                KitServiceImpl crashing = crashingAt("mid-write", image);
+                KitDefinition kit = crashing.getKit(kitName);
+                kit.setItems("new-items");
+                assertThat(crashing.saveKitToFile(kitName, kit)).as(fileName).isTrue();
+
+                KitServiceImpl restarted = startOn(image[0]);
+
+                assertThat(itemsIn(image[0], fileName)).as(fileName).isEqualTo("new-items");
+                assertThat(restarted.getKit(kitName).getItems()).as(fileName).isEqualTo("new-items");
+                assertThat(journals(image[0])).as(fileName).isEmpty();
+                when(plugin.getResourceFolderPath()).thenReturn(tempDir.getAbsolutePath());
+                new File(new File(tempDir, "kits"), fileName).delete();
+            }
         }
 
         @Test
