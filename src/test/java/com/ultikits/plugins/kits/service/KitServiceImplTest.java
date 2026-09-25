@@ -4038,6 +4038,29 @@ class KitServiceImplTest {
             assertThat(line.getAllValues()).anyMatch(l -> l.startsWith(String.format(zh("kits.log.example_copy_failed"), "")));
         }
 
+        /**
+         * The example kit is written like any kit file: a copy that fails part-way leaves no
+         * {@code starter.yml} (which would stop the next start from copying it again) and no
+         * temporary file. The control shows the jar's example really is copied when nothing fails.
+         */
+        @Test
+        @DisplayName("a failed copy of the example kit leaves no partial starter.yml")
+        void failedExampleCopyLeavesNoFile() {
+            File folder = new File(tempDir, "kits");
+            new KitServiceImpl(plugin, config) {
+                @Override
+                void atomicMove(java.nio.file.Path source, java.nio.file.Path target) throws IOException {
+                    throw new IOException("disk full");
+                }
+            };
+
+            assertThat(folder.list()).isEmpty();
+
+            assertThat(folder.delete()).isTrue();
+            createService();
+            assertThat(new File(folder, "starter.yml")).isFile();
+        }
+
         @Test
         @DisplayName("copyExampleKit handles missing resource stream gracefully")
         void handlesMissingResource() {
