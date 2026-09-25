@@ -3016,8 +3016,7 @@ class KitServiceImplTest {
             }
 
             assertThat(filesUnder(tempDir.toPath())).isEqualTo(before);
-            assertThat(filesUnder(tempDir.toPath().getParent()).stream()
-                    .filter(path -> path.getFileName().toString().contains("escape"))).isEmpty();
+            assertThat(tempDir.toPath().getParent().resolve("y.yml")).doesNotExist();
             verify(spyService, never()).saveKitToFile(anyString(), any(KitDefinition.class));
         }
 

@@ -193,6 +193,9 @@ public class KitCommands extends BaseCommandExecutor {
             case INVALID_NAME:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.create.invalid_name"));
                 break;
+            case NAME_HAS_PATH:
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.create.name_has_path"), name));
+                break;
             case EMPTY_INVENTORY:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.create.empty_inventory"));
                 break;

@@ -42,6 +42,7 @@
   "kits.log.delete_file_failed": "Could not delete the kit file %s - the kit stays loaded until this file can be removed.",
   "kits.log.kits_folder_unreadable": "Could not read the kits folder %s, so kit %s was not deleted and stays loaded.",
   "kits.log.kits_folder_unreadable_save": "Could not read the kits folder %s, so kit %s was not saved.",
+  "kits.log.kit_name_outside_folder": "Kit %s was not saved: its file would not be directly in the kits folder %s.",
   "kits.create.already_exists": "Kit name already exists: %s",
   "kits.create.invalid_name": "Invalid kit name",
   "kits.create.name_has_path": "Invalid kit name %s: a kit name cannot contain /, \\ or ..",

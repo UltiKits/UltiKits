@@ -149,6 +149,10 @@ public class KitServiceImpl implements KitService {
         if (normalizedName.isEmpty() || normalizedName.length() > 32) {
             return CreateResult.INVALID_NAME;
         }
+        // The name becomes kits/<name>.yml; a path in it would write outside the kits folder.
+        if (nameHasPath(normalizedName)) {
+            return CreateResult.NAME_HAS_PATH;
+        }
 
         if (kits.get(normalizedName) != null) {
             return CreateResult.ALREADY_EXISTS;
@@ -283,6 +287,31 @@ public class KitServiceImpl implements KitService {
 
     private File kitsFolder() {
         return new File(plugin.getResourceFolderPath(), "kits");
+    }
+
+    /**
+     * Whether a kit name holds a path: a separator ({@code /} or {@code \\}) or the step {@code ..}. The
+     * rule a sender is told; the file writer's own check ({@link #kitFileFor}) is the authoritative one.
+     * <p>
+     * 礼包名是否包含路径（分隔符或 {@code ..}）。
+     */
+    static boolean nameHasPath(String name) {
+        return name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || "..".equals(name);
+    }
+
+    /**
+     * The file a new kit named {@code name} is written to - {@code <name>.yml} directly in the kits
+     * folder - or {@code null} when that file would be anywhere else. This is the one place a kit name
+     * becomes a path; every other file this module opens comes from listing the kits folder.
+     */
+    @Nullable
+    private File kitFileFor(String name) {
+        Path folder = kitsFolder().getAbsoluteFile().toPath().normalize();
+        Path file = folder.resolve(name + ".yml").normalize();
+        if (!folder.equals(file.getParent())) {
+            return null;
+        }
+        return file.toFile();
     }
 
     /**
@@ -875,7 +904,13 @@ public class KitServiceImpl implements KitService {
                 return false;
             }
             if (targets.isEmpty()) {
-                targets = Collections.singletonList(new File(plugin.getResourceFolderPath(), "kits/" + name + ".yml"));
+                File newFile = kitFileFor(name);
+                if (newFile == null) {
+                    logger.error(String.format(plugin.i18n("kits.log.kit_name_outside_folder"), name,
+                            kitsFolder().getAbsolutePath()));
+                    return false;
+                }
+                targets = Collections.singletonList(newFile);
             }
             YamlConfiguration config = new YamlConfiguration();
 

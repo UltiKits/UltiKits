@@ -42,6 +42,7 @@
   "kits.log.delete_file_failed": "无法删除礼包文件 %s，该礼包会保持加载，直到此文件可以被删除。",
   "kits.log.kits_folder_unreadable": "无法读取礼包文件夹 %s，因此礼包 %s 未被删除，会保持加载。",
   "kits.log.kits_folder_unreadable_save": "无法读取礼包文件夹 %s，因此礼包 %s 未被保存。",
+  "kits.log.kit_name_outside_folder": "礼包 %s 未保存：其文件不会直接位于礼包文件夹 %s 中。",
   "kits.create.already_exists": "礼包名已存在: %s",
   "kits.create.invalid_name": "无效的礼包名",
   "kits.create.name_has_path": "无效的礼包名 %s：礼包名不能包含 /、\\ 或 ..",
