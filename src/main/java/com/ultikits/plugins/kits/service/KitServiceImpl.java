@@ -366,10 +366,7 @@ public class KitServiceImpl implements KitService {
         Path temp = createTempSibling(folder, targetPath.getFileName().toString());
         try {
             try (FileChannel channel = FileChannel.open(temp, StandardOpenOption.WRITE)) {
-                ByteBuffer buffer = ByteBuffer.wrap(content);
-                while (buffer.hasRemaining()) {
-                    channel.write(buffer);
-                }
+                writeContent(temp, channel, content);
                 // On disk before the move, so a power loss cannot leave the moved name pointing at an
                 // empty file.
                 channel.force(true);
@@ -386,6 +383,17 @@ public class KitServiceImpl implements KitService {
             } catch (IOException cleanup) {
                 logger.warn(String.format(plugin.i18n("kits.log.temp_file_not_removed"), temp, cleanup.getMessage()));
             }
+        }
+    }
+
+    /**
+     * Writes the whole of {@code content} into the open temporary file. A seam, package-private so a
+     * test can observe the temporary file at the moment its content is written.
+     */
+    void writeContent(Path temp, FileChannel channel, byte[] content) throws IOException {
+        ByteBuffer buffer = ByteBuffer.wrap(content);
+        while (buffer.hasRemaining()) {
+            channel.write(buffer);
         }
     }
 

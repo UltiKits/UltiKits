@@ -3235,6 +3235,37 @@ class KitServiceImplTest {
          * Discriminates only under a umask wider than {@code 077} (for example the usual {@code 022}):
          * under {@code 077} every new file is {@code rw-------} anyway.
          */
+        /**
+         * The kit's content must never sit in a file more readable than the kit file itself: the
+         * temporary file takes the replaced file's permissions before anything is written into it.
+         * Discriminates only under a umask wider than {@code 077}.
+         */
+        @Test
+        @DisplayName("the temporary file is already as restricted as the kit file when the content is written")
+        void tempIsRestrictedBeforeContentIsWritten() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(posix(), "POSIX file permissions");
+            File file = writeKitFile("solo.yml", "old-items");
+            java.nio.file.Files.setPosixFilePermissions(file.toPath(),
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+            java.util.List<String> modesAtWrite = new java.util.ArrayList<>();
+            KitServiceImpl observing = new KitServiceImpl(plugin, config) {
+                @Override
+                void writeContent(java.nio.file.Path temp, java.nio.channels.FileChannel channel, byte[] content)
+                        throws IOException {
+                    modesAtWrite.add(java.nio.file.attribute.PosixFilePermissions.toString(
+                            java.nio.file.Files.getPosixFilePermissions(temp)));
+                    super.writeContent(temp, channel, content);
+                }
+            };
+            KitDefinition kit = observing.getKit("solo");
+            kit.setItems("new-items");
+
+            assertThat(observing.saveKitToFile("solo", kit)).isTrue();
+
+            assertThat(modesAtWrite).containsExactly("rw-------");
+            assertThat(mode(file)).isEqualTo("rw-------");
+        }
+
         @Test
         @DisplayName("a new kit file gets the same permission bits as any file the server creates there")
         void newFileGetsTheDefaultMode() throws Exception {
