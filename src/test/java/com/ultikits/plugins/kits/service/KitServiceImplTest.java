@@ -767,8 +767,25 @@ class KitServiceImplTest {
             service = createService();
         }
 
+        /**
+         * A service whose kit-file deletion reports failure, standing in for a read-only kits folder,
+         * a file owned by another user, or a Windows file lock. The failure is injected through the
+         * package-private deletion seam rather than through file permissions: a build running as root
+         * deletes a read-only file anyway, so a permission-based test would pass without testing
+         * anything (UltiKits/UltiKits#23).
+         */
+        private KitServiceImpl createServiceWhoseFileDeleteFails(AtomicInteger attempts) {
+            return new KitServiceImpl(plugin, config) {
+                @Override
+                boolean deleteKitFile(File kitFile) {
+                    attempts.incrementAndGet();
+                    return false;
+                }
+            };
+        }
+
         @Test
-        @DisplayName("deleteKit returns true and removes kit and file")
+        @DisplayName("deleteKit returns DELETED and removes kit and file")
         void deleteKitSuccess() throws Exception {
             injectKit(service, createTestKit("todelete"));
 
@@ -776,18 +793,81 @@ class KitServiceImplTest {
             kitFile.createNewFile();
             assertThat(kitFile).exists();
 
-            boolean result = service.deleteKit("todelete");
+            KitService.DeleteResult result = service.deleteKit("todelete");
 
-            assertThat(result).isTrue();
+            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
             assertThat(service.getKit("todelete")).isNull();
             assertThat(kitFile).doesNotExist();
         }
 
         @Test
-        @DisplayName("deleteKit returns false for nonexistent kit")
+        @DisplayName("a kit whose file cannot be deleted is reported as not deleted and stays loaded")
+        void deleteKitFileNotDeletedKeepsKit() throws Exception {
+            File kitFile = createSimpleKitFile("premium");
+            AtomicInteger attempts = new AtomicInteger();
+            service = createServiceWhoseFileDeleteFails(attempts);
+            assertThat(service.getKit("premium")).isNotNull();
+
+            KitService.DeleteResult result = service.deleteKit("premium");
+
+            assertThat(attempts.get()).isEqualTo(1);
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+            assertThat(kitFile).exists();
+            assertThat(service.getKit("premium")).isNotNull();
+            assertThat(service.getKitNames()).contains("premium");
+        }
+
+        @Test
+        @DisplayName("a failed kit-file deletion logs a warning naming the file's path")
+        void deleteKitFileNotDeletedWarnsWithPath() throws Exception {
+            File kitFile = createSimpleKitFile("premium");
+            service = createServiceWhoseFileDeleteFails(new AtomicInteger());
+
+            service.deleteKit("premium");
+
+            ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(warning.capture());
+            assertThat(warning.getAllValues())
+                    .anyMatch(line -> line.contains(kitFile.getAbsolutePath()));
+        }
+
+        @Test
+        @DisplayName("after a failed deletion a reload still lists the kit, matching what the admin was told")
+        void deleteKitFileNotDeletedSurvivesReload() throws Exception {
+            createSimpleKitFile("premium");
+            service = createServiceWhoseFileDeleteFails(new AtomicInteger());
+
+            KitService.DeleteResult result = service.deleteKit("premium");
+            service.reload();
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+            assertThat(service.getKit("premium")).isNotNull();
+        }
+
+        @Test
+        @DisplayName("a file that is gone after a delete reported as failed counts as deleted")
+        void deleteKitFileGoneDespiteFailureIsDeleted() throws Exception {
+            File kitFile = createSimpleKitFile("racy");
+            service = new KitServiceImpl(plugin, config) {
+                @Override
+                boolean deleteKitFile(File file) {
+                    file.delete(); // NOPMD - another process removed it first
+                    return false;
+                }
+            };
+
+            KitService.DeleteResult result = service.deleteKit("racy");
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
+            assertThat(kitFile).doesNotExist();
+            assertThat(service.getKit("racy")).isNull();
+        }
+
+        @Test
+        @DisplayName("deleteKit returns NOT_FOUND for nonexistent kit")
         void deleteKitNotFound() {
-            boolean result = service.deleteKit("nosuchkit");
-            assertThat(result).isFalse();
+            KitService.DeleteResult result = service.deleteKit("nosuchkit");
+            assertThat(result).isEqualTo(KitService.DeleteResult.NOT_FOUND);
         }
 
         @Test
@@ -795,18 +875,18 @@ class KitServiceImplTest {
         void deleteKitCaseInsensitive() throws Exception {
             injectKit(service, createTestKit("mykit"));
 
-            boolean result = service.deleteKit("MYKIT");
-            assertThat(result).isTrue();
+            KitService.DeleteResult result = service.deleteKit("MYKIT");
+            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
             assertThat(service.getKit("mykit")).isNull();
         }
 
         @Test
-        @DisplayName("deleteKit works even when file does not exist on disk")
+        @DisplayName("deleteKit reports DELETED when the kit is loaded but its file is already gone")
         void deleteKitNoFile() throws Exception {
             injectKit(service, createTestKit("nofile"));
 
-            boolean result = service.deleteKit("nofile");
-            assertThat(result).isTrue();
+            KitService.DeleteResult result = service.deleteKit("nofile");
+            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
             assertThat(service.getKit("nofile")).isNull();
         }
 
@@ -828,15 +908,15 @@ class KitServiceImplTest {
         void deleteKitTrimsName() throws Exception {
             injectKit(service, createTestKit("trimme"));
 
-            boolean result = service.deleteKit("  TRIMME  ");
-            assertThat(result).isTrue();
+            KitService.DeleteResult result = service.deleteKit("  TRIMME  ");
+            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
             assertThat(service.getKit("trimme")).isNull();
         }
 
         @Test
-        @DisplayName("deleteKit with empty string returns false")
+        @DisplayName("deleteKit with empty string returns NOT_FOUND")
         void deleteKitEmptyString() {
-            assertThat(service.deleteKit("")).isFalse();
+            assertThat(service.deleteKit("")).isEqualTo(KitService.DeleteResult.NOT_FOUND);
         }
     }
 

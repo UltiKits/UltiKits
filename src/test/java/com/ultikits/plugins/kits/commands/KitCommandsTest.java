@@ -5,6 +5,7 @@ import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
+import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.junit.jupiter.api.*;
@@ -458,7 +459,7 @@ class KitCommandsTest {
         @DisplayName("successful delete sends deleted message")
         void successfulDelete() {
             when(consoleSender.hasPermission("ultikits.kits.admin")).thenReturn(true);
-            when(kitService.deleteKit("old")).thenReturn(true);
+            when(kitService.deleteKit("old")).thenReturn(KitService.DeleteResult.DELETED);
 
             kitCommands.onDelete(consoleSender, "old");
 
@@ -471,7 +472,7 @@ class KitCommandsTest {
         @DisplayName("nonexistent kit sends not found message")
         void nonexistent() {
             when(consoleSender.hasPermission("ultikits.kits.admin")).thenReturn(true);
-            when(kitService.deleteKit("missing")).thenReturn(false);
+            when(kitService.deleteKit("missing")).thenReturn(KitService.DeleteResult.NOT_FOUND);
 
             kitCommands.onDelete(consoleSender, "missing");
 
@@ -481,10 +482,50 @@ class KitCommandsTest {
         }
 
         @Test
+        @DisplayName("a kit whose file could not be deleted gets a failure reply, not the deleted message")
+        void fileNotDeleted() {
+            when(consoleSender.hasPermission("ultikits.kits.admin")).thenReturn(true);
+            when(kitService.deleteKit("premium")).thenReturn(KitService.DeleteResult.FILE_NOT_DELETED);
+
+            kitCommands.onDelete(consoleSender, "premium");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(consoleSender).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(
+                            CatalogueText.text("zh", "kits.delete.file_not_deleted"), "premium"))
+                    .doesNotContain("已删除礼包");
+        }
+
+        @Test
+        @DisplayName("each delete outcome has its own reply, in both languages")
+        void everyOutcomeHasADistinctReply() {
+            for (String code : new String[] {"en", "zh"}) {
+                when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer(code));
+                Set<String> replies = new HashSet<>();
+                for (KitService.DeleteResult outcome : KitService.DeleteResult.values()) {
+                    reset(consoleSender);
+                    when(consoleSender.hasPermission("ultikits.kits.admin")).thenReturn(true);
+                    when(kitService.deleteKit("k")).thenReturn(outcome);
+
+                    kitCommands.onDelete(consoleSender, "k");
+
+                    ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+                    verify(consoleSender).sendMessage(captor.capture());
+                    replies.add(captor.getValue());
+                }
+                assertThat(replies).as("distinct replies under language " + code)
+                        .hasSize(KitService.DeleteResult.values().length);
+            }
+            assertThat(CatalogueText.text("en", "kits.delete.file_not_deleted"))
+                    .contains("%s").doesNotContainPattern("[\\u4e00-\\u9fff]");
+        }
+
+        @Test
         @DisplayName("player can also delete kits with permission")
         void playerDelete() {
             when(player.hasPermission("ultikits.kits.admin")).thenReturn(true);
-            when(kitService.deleteKit("test")).thenReturn(true);
+            when(kitService.deleteKit("test")).thenReturn(KitService.DeleteResult.DELETED);
 
             kitCommands.onDelete(player, "test");
 
