@@ -913,6 +913,36 @@ class KitServiceImplTest {
             assertThat(service.getKit("vip")).isNull();
         }
 
+        /**
+         * Codex round 2 (P2): a kits folder that cannot be listed ({@code File#listFiles} returns null on
+         * an I/O or permission error) is not "no file": the kit's file may still be there to come back on
+         * the next reload, so the deletion is reported as failed and the kit stays loaded. The failure is
+         * injected through the listing seam, not through permissions, for the same reason as the delete
+         * seam.
+         */
+        @Test
+        @DisplayName("an unreadable kits folder is a failed deletion, not a missing file")
+        void deleteKitWhenTheKitsFolderCannotBeListed() throws Exception {
+            File kitFile = createSimpleKitFile("premium");
+            service = new KitServiceImpl(plugin, config) {
+                @Override
+                File[] listKitFiles(File folder) {
+                    return null;
+                }
+            };
+            assertThat(service.getKit("premium")).isNotNull();
+
+            KitService.DeleteResult result = service.deleteKit("premium");
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+            assertThat(kitFile).exists();
+            assertThat(service.getKit("premium")).isNotNull();
+            ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(warning.capture());
+            assertThat(warning.getAllValues())
+                    .anyMatch(line -> line.contains(kitFile.getParentFile().getAbsolutePath()));
+        }
+
         @Test
         @DisplayName("deleteKit returns NOT_FOUND for nonexistent kit")
         void deleteKitNotFound() {
