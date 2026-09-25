@@ -21,8 +21,11 @@ import org.yaml.snakeyaml.external.biz.base64Coder.Base64Coder;
 
 import javax.annotation.Nullable;
 import java.io.*;
+import java.nio.file.DirectoryIteratorException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -258,14 +261,28 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
-     * Lists the kit files in a folder; {@code null} when the folder cannot be listed. A seam,
-     * package-private so a test can make the listing fail without depending on file permissions.
+     * Lists the kit files in a folder: empty when the folder does not exist, {@code null} when it exists
+     * but cannot be listed. Read through {@link Files#newDirectoryStream}, which says why a listing
+     * failed, because {@link File#listFiles} answers {@code null} for both - and a missing folder holds
+     * no file, while an unreadable one may (Codex review rounds 2 and 4). A seam, package-private so a
+     * test can make the listing fail without depending on file permissions.
      * <p>
-     * 列出文件夹中的礼包文件；无法读取时返回 {@code null}。包级可见，供测试模拟读取失败。
+     * 列出文件夹中的礼包文件：文件夹不存在时为空，存在但无法读取时为 {@code null}。包级可见，供测试模拟读取失败。
      */
     @Nullable
     File[] listKitFiles(File folder) {
-        return folder.listFiles((dir, name) -> name.endsWith(".yml"));
+        List<File> files = new ArrayList<>();
+        try (DirectoryStream<Path> stream =
+                     Files.newDirectoryStream(folder.toPath(), path -> path.getFileName().toString().endsWith(".yml"))) {
+            for (Path path : stream) {
+                files.add(path.toFile());
+            }
+        } catch (NoSuchFileException missing) {
+            return new File[0];
+        } catch (IOException | DirectoryIteratorException e) {
+            return null;
+        }
+        return files.toArray(new File[0]);
     }
 
     /**
@@ -788,9 +805,16 @@ public class KitServiceImpl implements KitService {
     boolean saveKitToFile(String name, KitDefinition kit) {
         try {
             // Write every file the kit loads from (normally exactly one), so a save lands where the next
-            // reload reads it; a new kit gets "<name>.yml" (gate-1 CR-01).
+            // reload reads it; a new kit gets "<name>.yml" (gate-1 CR-01). A folder that cannot be listed
+            // gives no way to know which file that is, so the save fails rather than writing a second file
+            // beside the real one (Codex review round 4).
             List<File> targets = kitFilesOf(name);
-            if (targets == null || targets.isEmpty()) {
+            if (targets == null) {
+                logger.error(String.format(plugin.i18n("kits.log.kits_folder_unreadable_save"),
+                        kitsFolder().getAbsolutePath(), name));
+                return false;
+            }
+            if (targets.isEmpty()) {
                 targets = Collections.singletonList(new File(plugin.getResourceFolderPath(), "kits/" + name + ".yml"));
             }
             YamlConfiguration config = new YamlConfiguration();
