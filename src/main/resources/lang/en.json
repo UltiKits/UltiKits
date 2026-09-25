@@ -44,6 +44,7 @@
   "kits.log.kits_folder_unreadable_save": "Could not read the kits folder %s, so kit %s was not saved.",
   "kits.create.already_exists": "Kit name already exists: %s",
   "kits.create.invalid_name": "Invalid kit name",
+  "kits.create.name_has_path": "Invalid kit name %s: a kit name cannot contain /, \\ or ..",
   "kits.create.empty_inventory": "Inventory is empty",
   "kits.cooldown.hours": "%dh",
   "kits.cooldown.minutes": "%dm",

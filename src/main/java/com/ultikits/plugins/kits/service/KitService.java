@@ -61,7 +61,12 @@ public interface KitService {
          * More than one file in the kits folder already loads as this name (none of them parsed, or
          * the kit would exist); nothing was written. {@link #conflictingFiles(String)} names them.
          */
-        FILE_CONFLICT
+        FILE_CONFLICT,
+        /**
+         * The name holds a path separator ({@code /} or {@code \\}) or {@code ..}, or would resolve outside
+         * the kits folder; nothing was written.
+         */
+        NAME_HAS_PATH
     }
 
     /**

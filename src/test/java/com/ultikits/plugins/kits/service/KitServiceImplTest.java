@@ -2974,6 +2974,85 @@ class KitServiceImplTest {
     }
 
     // =========================================================================
+    // Kit names that would become a path outside the kits folder
+    // =========================================================================
+
+    /**
+     * A kit name becomes the file {@code kits/<name>.yml}, so a name holding a path separator or
+     * {@code ..} would make {@code /kits create} write outside the kits folder. Such a name is refused
+     * before any file is written.
+     */
+    @Nested
+    @DisplayName("Kit names with a path")
+    class KitNamePathTests {
+
+        private Player playerWithOneItem() {
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[]{stone});
+            return player;
+        }
+
+        private List<java.nio.file.Path> filesUnder(java.nio.file.Path root) throws IOException {
+            try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(root)) {
+                return paths.filter(java.nio.file.Files::isRegularFile).collect(java.util.stream.Collectors.toList());
+            }
+        }
+
+        @Test
+        @DisplayName("/kits create refuses a name with a path separator or .., writing nothing anywhere")
+        void createRefusesNamesWithAPath() throws Exception {
+            java.nio.file.Path outside = tempDir.toPath().resolve("outside");
+            java.nio.file.Files.createDirectories(outside);
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl spyService = spy(createService());
+            doReturn("items").when(spyService).serializeItems(any(ItemStack[].class));
+            Player player = playerWithOneItem();
+            List<java.nio.file.Path> before = filesUnder(tempDir.toPath());
+
+            for (String name : new String[] {"../escape", "../outside/x", "a/b", "a\\b", "..", "x/../../y"}) {
+                assertThat(spyService.createKit(player, name)).as(name).isEqualTo(KitService.CreateResult.NAME_HAS_PATH);
+            }
+
+            assertThat(filesUnder(tempDir.toPath())).isEqualTo(before);
+            assertThat(filesUnder(tempDir.toPath().getParent()).stream()
+                    .filter(path -> path.getFileName().toString().contains("escape"))).isEmpty();
+            verify(spyService, never()).saveKitToFile(anyString(), any(KitDefinition.class));
+        }
+
+        /** Two dots inside a name are no path: {@code a..b} is an ordinary kit name. */
+        @Test
+        @DisplayName("a name with dots that are not a path step is accepted")
+        void dotsThatAreNoPathAreAccepted() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl spyService = spy(createService());
+            doReturn("items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            assertThat(spyService.createKit(playerWithOneItem(), "a..b")).isEqualTo(KitService.CreateResult.SUCCESS);
+
+            assertThat(new File(tempDir, "kits/a..b.yml")).isFile();
+        }
+
+        /**
+         * The file writer is where a kit name becomes a path, so it refuses a name that resolves outside
+         * the kits folder whatever called it.
+         */
+        @Test
+        @DisplayName("the kit file writer refuses a name that resolves outside the kits folder")
+        void fileWriterRefusesAPathOutsideTheKitsFolder() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            KitDefinition kit = createTestKit("../escape");
+
+            assertThat(service.saveKitToFile("../escape", kit)).isFalse();
+
+            assertThat(tempDir.toPath().resolve("escape.yml")).doesNotExist();
+            assertThat(new File(tempDir, "kits").list()).isEmpty();
+        }
+    }
+
+    // =========================================================================
     // Duplicate kit files
     // =========================================================================
 
@@ -4249,7 +4328,8 @@ class KitServiceImplTest {
                     KitService.CreateResult.INVALID_NAME,
                     KitService.CreateResult.EMPTY_INVENTORY,
                     KitService.CreateResult.ERROR,
-                    KitService.CreateResult.FILE_CONFLICT
+                    KitService.CreateResult.FILE_CONFLICT,
+                    KitService.CreateResult.NAME_HAS_PATH
             );
         }
     }

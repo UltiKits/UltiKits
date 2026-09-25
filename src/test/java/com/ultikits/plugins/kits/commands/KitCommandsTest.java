@@ -489,6 +489,20 @@ class KitCommandsTest {
         }
 
         @Test
+        @DisplayName("NAME_HAS_PATH says a kit name cannot contain a path")
+        void nameHasPathSaysWhy() {
+            when(player.hasPermission("ultikits.kits.admin")).thenReturn(true);
+            when(kitService.createKit(player, "../x")).thenReturn(KitService.CreateResult.NAME_HAS_PATH);
+
+            kitCommands.onCreate(player, "../x");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(CatalogueText.text("zh", "kits.create.name_has_path"), "../x"));
+        }
+
+        @Test
         @DisplayName("INVALID_NAME sends invalid name message")
         void invalidName() {
             when(player.hasPermission("ultikits.kits.admin")).thenReturn(true);
