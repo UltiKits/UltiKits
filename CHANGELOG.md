@@ -53,15 +53,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   editor that fails no longer changes the loaded kit, so a claim still hands out what the file holds.
   A kit file is now written through a temporary file moved into place in one step, so a failed save
   leaves the old file intact and a failed `/kits create` leaves no partial file; the file keeps its
-  permissions, a symbolic link keeps pointing where it did, a read-only kit file is not replaced, and
-  the example kit is copied the same way. When more than one
+  permissions (and its access-control list on Windows), a symbolic link keeps pointing where it did, a
+  read-only kit file is not replaced, and the example kit is copied the same way. Saving now needs
+  write access to the kits folder, and hard links, extended attributes and Linux `setfacl` entries on
+  a kit file are not kept. When more than one
   file defines the same kit (`VIP.yml` and `vip.yml` on a case-sensitive file system), `/kits edit`,
   the editor's Save button, `/kits create` and `/kits delete` change nothing and name the files; one of them still
   loads, so the kit can be claimed, and `/kits reload` names them on the console
   (UltiKits/UltiKits#23).
 - 修复：礼包文件删除失败（或礼包文件夹无法读取）时，`/kits delete` 不再报告删除成功。礼包会保持加载，执行者会被告知未删除，控制台会记录该文件或文件夹的路径，
   因此被告知已删除的礼包不会在下次 `/kits reload` 或重启后重新出现。删除和保存礼包现在使用礼包加载时的那个文件，因此文件名含大写字母的手放礼包文件（如 `VIP.yml`）
-  也能像其他礼包一样被删除，并能从编辑界面保存。编辑界面保存失败时不再改动已加载的礼包，领取时发放的仍是文件中的物品。礼包文件现在先写入临时文件，再一次性移动到位，因此保存失败时原文件保持完整，`/kits create` 失败时也不会留下残缺文件；文件保留原有权限，符号链接仍指向原处，只读的礼包文件不会被替换，示例礼包也按同样方式复制。当多个文件定义同一礼包时（在区分大小写的文件系统上同时存在 `VIP.yml` 和 `vip.yml`），`/kits edit`、编辑界面的保存按钮、`/kits create` 和 `/kits delete` 不做任何修改并列出这些文件；其中一个仍会被加载，礼包照常可以领取，`/kits reload` 也会在控制台列出这些文件（UltiKits/UltiKits#23）。
+  也能像其他礼包一样被删除，并能从编辑界面保存。编辑界面保存失败时不再改动已加载的礼包，领取时发放的仍是文件中的物品。礼包文件现在先写入临时文件，再一次性移动到位，因此保存失败时原文件保持完整，`/kits create` 失败时也不会留下残缺文件；文件保留原有权限（在 Windows 上也保留访问控制列表），符号链接仍指向原处，只读的礼包文件不会被替换，示例礼包也按同样方式复制。保存现在需要礼包文件夹的写权限；礼包文件的硬链接、扩展属性以及 Linux `setfacl` 设置的额外条目不会保留。当多个文件定义同一礼包时（在区分大小写的文件系统上同时存在 `VIP.yml` 和 `vip.yml`），`/kits edit`、编辑界面的保存按钮、`/kits create` 和 `/kits delete` 不做任何修改并列出这些文件；其中一个仍会被加载，礼包照常可以领取，`/kits reload` 也会在控制台列出这些文件（UltiKits/UltiKits#23）。
 
 - `language: zh` now applies to the text that was fixed English: the kit editor's save-button lore
   (`Click to save kit contents`), the `/kits help` lines for `edit`, `create`, `delete` and `reload`,
