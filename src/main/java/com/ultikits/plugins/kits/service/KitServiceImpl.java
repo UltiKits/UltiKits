@@ -163,6 +163,11 @@ public class KitServiceImpl implements KitService {
         if (kits.get(normalizedName) != null) {
             return CreateResult.ALREADY_EXISTS;
         }
+        // Files that load as this name but did not parse still decide which one the next reload
+        // reads, so a name several of them share is refused like a save.
+        if (!conflictingFiles(normalizedName).isEmpty()) {
+            return CreateResult.FILE_CONFLICT;
+        }
 
         // Filter out air and null items from player inventory
         ItemStack[] validItems = Arrays.stream(player.getInventory().getStorageContents())
@@ -187,7 +192,8 @@ public class KitServiceImpl implements KitService {
 
         // Save to YAML
         if (!saveKitToFile(normalizedName, kit)) {
-            return CreateResult.ERROR;
+            // The writer also refuses a second file that appeared after the check above.
+            return conflictingFiles(normalizedName).isEmpty() ? CreateResult.ERROR : CreateResult.FILE_CONFLICT;
         }
 
         kits.put(normalizedName, kit);
@@ -490,7 +496,11 @@ public class KitServiceImpl implements KitService {
                 kit.setItems(previous);
             }
         }
-        return saved ? SaveResult.SUCCESS : SaveResult.FAILED;
+        if (saved) {
+            return SaveResult.SUCCESS;
+        }
+        // The writer also refuses a second file that appeared after the gateway's check.
+        return conflictingFiles(kit.getName()).isEmpty() ? SaveResult.FAILED : SaveResult.FILE_CONFLICT;
     }
 
     @Override

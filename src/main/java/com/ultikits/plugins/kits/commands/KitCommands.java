@@ -196,6 +196,10 @@ public class KitCommands extends BaseCommandExecutor {
             case EMPTY_INVENTORY:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.create.empty_inventory"));
                 break;
+            case FILE_CONFLICT:
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.conflict.not_changed"),
+                        name.toLowerCase().trim(), String.join(", ", kitService.conflictingFiles(name))));
+                break;
             default:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.create.error"));
                 break;
