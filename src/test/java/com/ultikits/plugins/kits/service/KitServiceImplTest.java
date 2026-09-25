@@ -4144,10 +4144,11 @@ class KitServiceImplTest {
             try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(source)) {
                 for (java.nio.file.Path path : (Iterable<java.nio.file.Path>) paths::iterator) {
                     java.nio.file.Path copy = image.resolve(source.relativize(path).toString());
-                    if (java.nio.file.Files.isDirectory(path)) {
+                    if (java.nio.file.Files.isDirectory(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                         java.nio.file.Files.createDirectories(copy);
                     } else {
-                        java.nio.file.Files.copy(path, copy);
+                        // A symbolic link is copied as the link it is, as the disk holds it.
+                        java.nio.file.Files.copy(path, copy, java.nio.file.LinkOption.NOFOLLOW_LINKS);
                     }
                 }
             }
@@ -4570,8 +4571,8 @@ class KitServiceImplTest {
         }
 
         @Test
-        @DisplayName("a new-file journal whose file is now a dangling symbolic link is discarded and the link left alone")
-        void createJournalOverADanglingLinkIsDiscarded() throws Exception {
+        @DisplayName("a new-file journal whose file is now a dangling symbolic link is kept and the link left alone")
+        void createJournalOverADanglingLinkIsKept() throws Exception {
             java.nio.file.Path[] image = new java.nio.file.Path[1];
             new File(tempDir, "kits").mkdirs();
             KitServiceImpl crashing = crashingAt("journal-written", image);
@@ -4584,7 +4585,7 @@ class KitServiceImplTest {
 
             assertThat(java.nio.file.Files.isSymbolicLink(link)).isTrue();
             assertThat(image[0].resolve("nowhere.yml")).doesNotExist();
-            assertThat(journals(image[0])).isEmpty();
+            assertThat(journals(image[0])).containsExactly("fresh.yml.journal");
         }
 
         /**
@@ -4691,8 +4692,8 @@ class KitServiceImplTest {
          * existing file (outside the kits folder, say), replay does not write through it.
          */
         @Test
-        @DisplayName("a new-file journal whose name is now a link to an existing file does not write through it")
-        void createJournalOverALiveLinkIsDiscarded() throws Exception {
+        @DisplayName("a new-file journal whose name is now a link to an existing file is kept and does not write through it")
+        void createJournalOverALiveLinkIsKept() throws Exception {
             java.nio.file.Path[] image = new java.nio.file.Path[1];
             new File(tempDir, "kits").mkdirs();
             KitServiceImpl crashing = crashingAt("journal-written", image);
@@ -4708,7 +4709,7 @@ class KitServiceImplTest {
 
             assertThat(java.nio.file.Files.readAllBytes(victim)).isEqualTo(before);
             assertThat(java.nio.file.Files.isSymbolicLink(link)).isTrue();
-            assertThat(journals(image[0])).isEmpty();
+            assertThat(journals(image[0])).containsExactly("fresh.yml.journal");
         }
 
         /**

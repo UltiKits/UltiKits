@@ -251,8 +251,16 @@ public class KitServiceImpl implements KitService {
             return DeleteResult.FILE_NOT_DELETED;
         }
         for (Path journal : journals) {
+            if (!hasContent(journal)) {
+                continue;
+            }
             Path kitFile = kitsFolder().toPath().resolve(journalTargetName(journal));
-            withdrawJournal(journal, kitFile);
+            if (Files.exists(kitFile, LinkOption.NOFOLLOW_LINKS)) {
+                // Complete the pending write first, so the file is whole even if it then cannot be deleted.
+                replayJournal(journal, kitsFolder().toPath());
+            } else {
+                withdrawJournal(journal, kitFile);
+            }
             if (hasContent(journal)) {
                 logger.warn(String.format(plugin.i18n("kits.log.delete_journal_pending"), kitFile, journal));
                 return DeleteResult.FILE_NOT_DELETED;
@@ -398,8 +406,8 @@ public class KitServiceImpl implements KitService {
         }
     }
 
-    /** First four bytes of a kit write journal ("UKJ1"). */
-    private static final int JOURNAL_MAGIC = 0x554B4A31;
+    /** First four bytes of a kit write journal ("UKJ2"). */
+    private static final int JOURNAL_MAGIC = 0x554B4A32;
 
     /** Whether the journal folder's permissions have been reported as not changeable this session. */
     private boolean journalFolderWarned;
@@ -428,6 +436,10 @@ public class KitServiceImpl implements KitService {
      */
     private void writeKitFile(File target, byte[] content, boolean create) throws IOException {
         Path targetPath = target.getAbsoluteFile().toPath();
+        if (Files.isSymbolicLink(journalFolder())) {
+            // A journal is only ever written in a plain folder this module made, never through a link.
+            throw new IOException(String.format(plugin.i18n("kits.log.journal_folder_is_link"), journalFolder()));
+        }
         Path journal = journalFolder().resolve(target.getName() + ".journal");
         if (hasContent(journal)) {
             // An earlier write of this file could not be undone and its journal is the only whole copy:
@@ -440,16 +452,12 @@ public class KitServiceImpl implements KitService {
         FileChannel channel = null;
         try {
             byte[] previous = null;
-            String linkedTo = "";
             if (!create) {
-                // A kit file that is a symbolic link is written at the file it points to, and the journal
-                // records the link as written, so a replay never follows a link this write did not go
-                // through (a link pointed elsewhere, or one put in place of a plain file).
-                // Opened before anything is written: a file the server may not write, or a link to a
-                // missing file, fails here with nothing changed.
+                // A kit file that is a symbolic link is written at the file it points to, resolved once
+                // and then opened without following links. Opened before anything is written: a file the
+                // server may not write, or a link to a missing file, fails here with nothing changed.
                 Path writePath = targetPath;
                 if (Files.isSymbolicLink(targetPath)) {
-                    linkedTo = Files.readSymbolicLink(targetPath).toString();
                     writePath = targetPath.toRealPath();
                 }
                 channel = FileChannel.open(writePath, StandardOpenOption.READ, StandardOpenOption.WRITE,
@@ -457,7 +465,7 @@ public class KitServiceImpl implements KitService {
                 previous = readAll(channel);
             }
             try {
-                writeJournal(journal, journalRecord(target.getName(), create, linkedTo, content));
+                writeJournal(journal, journalRecord(target.getName(), create, content));
             } catch (IOException | RuntimeException journalFailure) {
                 withdrawJournal(journal, targetPath);
                 throw journalFailure;
@@ -527,16 +535,8 @@ public class KitServiceImpl implements KitService {
         withdrawJournal(journal, target);
     }
 
-    /** The journal of a kit file write that did not go through a symbolic link. */
+    /** The journal of one kit file write: magic, new-file flag, file name, length, CRC32, content. */
     static byte[] journalRecord(String targetName, boolean create, byte[] content) {
-        return journalRecord(targetName, create, "", content);
-    }
-
-    /**
-     * The journal of one kit file write: magic, new-file flag, file name, the target of the symbolic link
-     * at that name as written in the link (empty when it was not a link), length, CRC32, content.
-     */
-    static byte[] journalRecord(String targetName, boolean create, String linkedTo, byte[] content) {
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream(content.length + 64);
             DataOutputStream out = new DataOutputStream(bytes);
@@ -545,7 +545,6 @@ public class KitServiceImpl implements KitService {
             out.writeInt(JOURNAL_MAGIC);
             out.writeBoolean(create);
             out.writeUTF(targetName);
-            out.writeUTF(linkedTo);
             out.writeInt(content.length);
             out.writeLong(crc.getValue());
             out.write(content);
@@ -625,7 +624,8 @@ public class KitServiceImpl implements KitService {
     private static boolean hasContent(Path journal) {
         try {
             BasicFileAttributes attributes = Files.readAttributes(journal, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-            return !attributes.isRegularFile() || attributes.size() > 0;
+            // A link is not a journal but is removed by replay; a folder is never a pending write.
+            return attributes.isSymbolicLink() || (attributes.isRegularFile() && attributes.size() > 0);
         } catch (NoSuchFileException missing) {
             return false;
         } catch (IOException unreadable) {
@@ -646,6 +646,10 @@ public class KitServiceImpl implements KitService {
      */
     private void replayJournals(Path kitsFolder) {
         Path folder = journalFolder();
+        if (Files.isSymbolicLink(folder)) {
+            logger.error(String.format(plugin.i18n("kits.log.journal_folder_is_link"), folder));
+            return;
+        }
         if (!Files.isDirectory(folder)) {
             return;
         }
@@ -671,9 +675,12 @@ public class KitServiceImpl implements KitService {
         try {
             BasicFileAttributes attributes = Files.readAttributes(journal, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
             if (!attributes.isRegularFile()) {
-                // Not a file this module wrote (a symbolic link, a folder): never read or written through.
-                logger.warn(String.format(plugin.i18n("kits.log.journal_damaged"), journal));
-                withdrawJournal(journal, withdrawnTarget);
+                // Not a file this module wrote: never read or written through. A link is removed; anything
+                // else (a folder) is left alone.
+                logger.warn(String.format(plugin.i18n("kits.log.journal_not_a_file"), journal));
+                if (attributes.isSymbolicLink()) {
+                    withdrawJournal(journal, withdrawnTarget);
+                }
                 return;
             }
             if (attributes.size() == 0) {
@@ -698,7 +705,6 @@ public class KitServiceImpl implements KitService {
         }
         boolean create;
         String targetName;
-        String linkedTo;
         byte[] content;
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(record))) {
             if (in.readInt() != JOURNAL_MAGIC) {
@@ -706,7 +712,6 @@ public class KitServiceImpl implements KitService {
             }
             create = in.readBoolean();
             targetName = in.readUTF();
-            linkedTo = in.readUTF();
             int length = in.readInt();
             long checksum = in.readLong();
             if (length < 0 || in.available() != length) {
@@ -745,34 +750,14 @@ public class KitServiceImpl implements KitService {
             withdrawJournal(journal, target);
             return;
         }
-        // Where to write: the kit file itself, never through a link; or, when the write went through a
-        // link, the file it recorded - and only while the link still points there.
-        Path writePath = target;
-        boolean isLink = exists && found.isSymbolicLink();
-        if (isLink || !linkedTo.isEmpty()) {
-            Path pointsTo = null;
-            if (isLink && !create && !linkedTo.isEmpty()) {
-                try {
-                    if (Files.readSymbolicLink(target).toString().equals(linkedTo)) {
-                        pointsTo = target.toRealPath();
-                    }
-                } catch (NoSuchFileException gone) {
-                    logger.warn(String.format(plugin.i18n("kits.log.journal_target_missing"), journal, target));
-                    withdrawJournal(journal, target);
-                    return;
-                } catch (IOException | RuntimeException unknown) {
-                    logger.error(String.format(plugin.i18n("kits.log.journal_replay_failed"), target, unknown.getMessage(), journal));
-                    return;
-                }
-            }
-            if (pointsTo == null) {
-                // A link added, removed or pointed elsewhere since the write: not the file it was writing.
-                logger.warn(String.format(plugin.i18n("kits.log.journal_target_is_link"), journal, target));
-                withdrawJournal(journal, target);
-                return;
-            }
-            writePath = pointsTo;
+        if (exists && !found.isRegularFile()) {
+            // Replay writes only a plain kit file and never follows a link: a link here (put in place of
+            // the file, or the link the save itself went through) is left alone and the journal - maybe
+            // the only whole copy - is kept for the operator.
+            logger.error(String.format(plugin.i18n("kits.log.journal_target_is_link"), journal, target));
+            return;
         }
+        Path writePath = target;
         try (FileChannel channel = exists
                 ? FileChannel.open(writePath, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)
                 : FileChannel.open(writePath, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW)) {
@@ -807,6 +792,7 @@ public class KitServiceImpl implements KitService {
         Path folder = journalFolder();
         List<Path> matches = new ArrayList<>();
         if (!Files.isDirectory(folder, LinkOption.NOFOLLOW_LINKS)) {
+            // No folder, or a link this module never writes into: no pending write of this kit.
             return matches;
         }
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(folder, "*.journal")) {
