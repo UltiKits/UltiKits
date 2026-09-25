@@ -22,6 +22,7 @@ import org.yaml.snakeyaml.external.biz.base64Coder.Base64Coder;
 import javax.annotation.Nullable;
 import java.io.*;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -202,9 +203,14 @@ public class KitServiceImpl implements KitService {
         }
         boolean survived = false;
         for (File kitFile : kitFiles) {
-            // Re-checked after a refused delete: a file another process removed in between is gone,
-            // which is what the admin asked for.
-            if (!deleteKitFile(kitFile) && kitFile.exists()) {
+            try {
+                deleteKitFile(kitFile);
+            } catch (NoSuchFileException gone) {
+                // Another process removed it first: it is gone, which is what the admin asked for.
+            } catch (IOException e) {
+                // Any other reason is a failure. The delete reports it; no existence check is asked
+                // afterwards, because in a folder the server may list but not search File#exists
+                // answers false for a file that is still there (Codex review round 3).
                 logger.warn(String.format(plugin.i18n("kits.log.delete_file_failed"), kitFile.getAbsolutePath()));
                 survived = true;
             }
@@ -263,16 +269,19 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
-     * Deletes one kit file. A seam, package-private so a test can make the deletion fail: a
-     * permission-based test is not one, because a build running as root deletes a read-only file.
+     * Deletes one kit file through {@link Files#delete}, which says why it failed instead of answering
+     * {@code false}: {@link NoSuchFileException} when the file is already gone, another
+     * {@link IOException} when it could not be removed. A seam, package-private so a test can make the
+     * deletion fail: a permission-based test is not one, because a build running as root deletes a
+     * read-only file.
      * <p>
-     * 删除单个礼包文件；包级可见，供测试模拟删除失败。
+     * 通过 {@link Files#delete} 删除单个礼包文件，失败时给出原因；包级可见，供测试模拟删除失败。
      *
      * @param kitFile the file to delete / 要删除的文件
-     * @return {@link File#delete()}'s result / 删除结果
+     * @throws IOException when the file could not be deleted / 无法删除时抛出
      */
-    boolean deleteKitFile(File kitFile) {
-        return kitFile.delete();
+    void deleteKitFile(File kitFile) throws IOException {
+        Files.delete(kitFile.toPath());
     }
 
     /**
