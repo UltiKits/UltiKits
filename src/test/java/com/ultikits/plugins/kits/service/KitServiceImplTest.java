@@ -3343,6 +3343,64 @@ class KitServiceImplTest {
             assertThat(result).isEqualTo(KitService.SaveResult.FILE_CONFLICT);
         }
 
+        /**
+         * On a file system with access-control lists (Windows) a replaced kit file must keep its own
+         * list rather than inherit the folder's, which could grant access an operator removed. The
+         * build runs on a file system without ACLs, so the copy is pinned on the views directly.
+         */
+        @Test
+        @DisplayName("the replacement file gets the replaced file's access-control list")
+        void aclIsCopied() throws Exception {
+            java.nio.file.attribute.AclFileAttributeView from = mock(java.nio.file.attribute.AclFileAttributeView.class);
+            java.nio.file.attribute.AclFileAttributeView to = mock(java.nio.file.attribute.AclFileAttributeView.class);
+            java.util.List<java.nio.file.attribute.AclEntry> acl = Collections.singletonList(
+                    java.nio.file.attribute.AclEntry.newBuilder()
+                            .setType(java.nio.file.attribute.AclEntryType.DENY)
+                            .setPrincipal(mock(java.nio.file.attribute.UserPrincipal.class))
+                            .setPermissions(java.nio.file.attribute.AclEntryPermission.READ_DATA)
+                            .build());
+            when(from.getAcl()).thenReturn(acl);
+
+            KitServiceImpl.copyAcl(from, to);
+
+            verify(to).setAcl(acl);
+        }
+
+        @Test
+        @DisplayName("without an access-control list on either side nothing is copied")
+        void noAclNoCopy() throws Exception {
+            java.nio.file.attribute.AclFileAttributeView view = mock(java.nio.file.attribute.AclFileAttributeView.class);
+
+            KitServiceImpl.copyAcl(null, view);
+            KitServiceImpl.copyAcl(view, null);
+
+            verify(view, never()).setAcl(any());
+            verify(view, never()).getAcl();
+        }
+
+        /**
+         * The create side of the late-found conflict: a second file the writer finds after
+         * {@code createKit}'s own check comes back as {@code FILE_CONFLICT}, not {@code ERROR}.
+         */
+        @Test
+        @DisplayName("a conflict the writer finds after createKit's check is reported as a conflict")
+        void createConflictFoundByTheWriterIsReportedAsAConflict() throws Exception {
+            File folder = new File(tempDir, "kits");
+            folder.mkdirs();
+            java.nio.file.Files.write(new File(folder, "VIP.yml").toPath(), "icon: [unclosed".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            java.nio.file.Files.write(new File(folder, "vip.yml").toPath(), "icon: [unclosed".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            KitServiceImpl spyService = spy(createService());
+            doReturn(Collections.emptyList()).doCallRealMethod().when(spyService).conflictingFiles("vip");
+            doReturn("items").when(spyService).serializeItems(any(ItemStack[].class));
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[]{stone});
+
+            assertThat(spyService.createKit(player, "vip")).isEqualTo(KitService.CreateResult.FILE_CONFLICT);
+            assertThat(kitsFolderListing()).containsExactly("VIP.yml", "vip.yml");
+        }
+
         @Test
         @DisplayName("a kit with a single file has no conflicting files")
         void singleFileIsNoConflict() throws Exception {

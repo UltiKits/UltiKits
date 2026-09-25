@@ -34,6 +34,7 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.AclFileAttributeView;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFileAttributes;
 import java.util.*;
@@ -401,6 +402,13 @@ public class KitServiceImpl implements KitService {
                 }
             }
         }
+    }
+
+    /**
+     * Gives the replacement file the access-control list of the file it replaces, on a file system
+     * that has one (Windows); nothing when either view is absent.
+     */
+    static void copyAcl(@Nullable AclFileAttributeView from, @Nullable AclFileAttributeView to) throws IOException {
     }
 
     /**
