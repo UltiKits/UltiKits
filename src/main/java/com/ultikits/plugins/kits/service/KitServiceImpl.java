@@ -1129,10 +1129,11 @@ public class KitServiceImpl implements KitService {
         }
         for (String cmd : commands) {
             String processed = cmd.replace("{player}", player.getName());
-            if (!runs(() -> player.performCommand(processed))) {
+            RewardRun run = RewardRun.of(() -> player.performCommand(processed));
+            if (!run.ran) {
                 player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.reward_command_failed"),
                         processed));
-                logger.warn(String.format(plugin.i18n("kits.log.player_reward_command_failed"), kit.getName(),
+                run.log(logger, String.format(plugin.i18n("kits.log.player_reward_command_failed"), kit.getName(),
                         processed, player.getName()));
             }
         }
@@ -1156,28 +1157,51 @@ public class KitServiceImpl implements KitService {
         for (String cmd : commands) {
             String processed = cmd.replace("{player}", playerName);
             if (ultiToolsPlugin == null) {
-                warnConsoleCommandFailed(kit, processed, playerName);
+                logger.warn(consoleCommandFailure(kit, processed, playerName));
                 continue;
             }
             Bukkit.getScheduler().runTask(ultiToolsPlugin, () -> {
-                if (!runs(() -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), processed))) {
-                    warnConsoleCommandFailed(kit, processed, playerName);
+                RewardRun run = RewardRun.of(() -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), processed));
+                if (!run.ran) {
+                    run.log(logger, consoleCommandFailure(kit, processed, playerName));
                 }
             });
         }
     }
 
-    private void warnConsoleCommandFailed(KitDefinition kit, String command, String playerName) {
-        logger.warn(String.format(plugin.i18n("kits.log.console_reward_command_failed"), kit.getName(), command,
-                playerName));
+    private String consoleCommandFailure(KitDefinition kit, String command, String playerName) {
+        return String.format(plugin.i18n("kits.log.console_reward_command_failed"), kit.getName(), command,
+                playerName);
     }
 
-    /** Whether a command dispatch was accepted; one that throws was not. */
-    private static boolean runs(java.util.function.BooleanSupplier dispatch) {
-        try {
-            return dispatch.getAsBoolean();
-        } catch (RuntimeException e) {
-            return false;
+    /**
+     * The outcome of dispatching one reward command: whether it was accepted, and the exception it threw
+     * if it threw one, so the warning carries the reason an executor gave (a third-party plugin's own
+     * error) rather than only the fact.
+     */
+    private static final class RewardRun {
+        private final boolean ran;
+        private final RuntimeException thrown;
+
+        private RewardRun(boolean ran, RuntimeException thrown) {
+            this.ran = ran;
+            this.thrown = thrown;
+        }
+
+        static RewardRun of(java.util.function.BooleanSupplier dispatch) {
+            try {
+                return new RewardRun(dispatch.getAsBoolean(), null);
+            } catch (RuntimeException e) {
+                return new RewardRun(false, e);
+            }
+        }
+
+        void log(PluginLogger logger, String message) {
+            if (thrown == null) {
+                logger.warn(message);
+            } else {
+                logger.warn(thrown, message);
+            }
         }
     }
 }
