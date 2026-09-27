@@ -3576,12 +3576,28 @@ class KitServiceImplTest {
         @DisplayName("the service probes the running server once, at construction")
         void serviceProbesAtConstruction() {
             new File(tempDir, "kits").mkdirs();
-            KitServiceImpl.EmptySlotCapacity expected =
-                    KitServiceImpl.probeEmptySlotCapacity(Bukkit.createInventory(null, 9));
+            // MockBukkit's own addItem fills to the item's maximum, which is also the fallback, so the
+            // server's scratch inventory is made to answer like Paper 1.21.1 to see the probe's result.
+            org.bukkit.inventory.Inventory paper1211 = scratch(99, amount -> Math.min(amount, 99));
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class, CALLS_REAL_METHODS)) {
+                bukkit.when(() -> Bukkit.createInventory(isNull(), eq(9))).thenReturn(paper1211);
+
+                service = createService();
+            }
+
+            assertThat(service.emptySlotCapacity()).isEqualTo(KitServiceImpl.EmptySlotCapacity.INVENTORY_MAX);
+            verify(paper1211).addItem(any(ItemStack[].class));
+        }
+
+        @Test
+        @DisplayName("with no server to probe the service keeps the item-maximum model")
+        void noServerKeepsItemMax() {
+            MockBukkitSupport.shutdown();
+            new File(tempDir, "kits").mkdirs();
 
             service = createService();
 
-            assertThat(service.emptySlotCapacity()).isEqualTo(expected);
+            assertThat(service.emptySlotCapacity()).isEqualTo(KitServiceImpl.EmptySlotCapacity.ITEM_MAX);
         }
     }
 
