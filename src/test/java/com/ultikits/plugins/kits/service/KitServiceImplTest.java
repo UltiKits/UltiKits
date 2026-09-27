@@ -2352,6 +2352,50 @@ class KitServiceImplTest {
             verify(mockClaimOperator, never()).insert(any(KitClaimData.class));
         }
 
+        /**
+         * Paper 1.21.1 and earlier put an over-sized stack into an empty slot up to the INVENTORY's maximum
+         * (99 by default), not the item's, so 70 cobblestone fit one empty slot there; the fit check,
+         * modelling only the later behaviour, refused that claim (UltiKits/UltiKits#38). The capacity is
+         * probed once at start; these fix it per server behaviour.
+         */
+        @Test
+        @DisplayName("on a server whose empty slots take the inventory's maximum, 70 cobblestone fit one free slot")
+        void inventoryMaxServerFitsAnOversizedStackInOneSlot() throws Exception {
+            leaveFreeSlots(1);
+            player.getInventory().setMaxStackSize(99);
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 70));
+            spyService.useEmptySlotCapacity(KitServiceImpl.EmptySlotCapacity.INVENTORY_MAX);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "bigstone");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.SUCCESS);
+            assertThat(balance[0]).isEqualTo(400.0);
+        }
+
+        @Test
+        @DisplayName("on a server whose empty slots take the item's maximum, the same claim is refused before any charge")
+        void itemMaxServerRefusesTheSameClaim() throws Exception {
+            leaveFreeSlots(1);
+            player.getInventory().setMaxStackSize(99);
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 70));
+            spyService.useEmptySlotCapacity(KitServiceImpl.EmptySlotCapacity.ITEM_MAX);
+
+            assertThat(spyService.claimKit(player, "bigstone")).isEqualTo(KitService.ClaimResult.INVENTORY_FULL);
+            assertThat(balance[0]).isEqualTo(500.0);
+        }
+
+        @Test
+        @DisplayName("on a server whose empty slots take the inventory's maximum, that maximum still caps a slot")
+        void inventoryMaxServerStillCapsAtTheInventoryMaximum() throws Exception {
+            leaveFreeSlots(1);
+            player.getInventory().setMaxStackSize(99);
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 128));
+            spyService.useEmptySlotCapacity(KitServiceImpl.EmptySlotCapacity.INVENTORY_MAX);
+
+            assertThat(spyService.claimKit(player, "bigstone")).isEqualTo(KitService.ClaimResult.INVENTORY_FULL);
+            assertThat(balance[0]).isEqualTo(500.0);
+        }
+
         @Test
         @DisplayName("with the two slots it needs, the whole over-sized stack arrives and nothing is dropped")
         void oversizedStackDeliveredInFull() throws Exception {
@@ -3465,6 +3509,79 @@ class KitServiceImplTest {
 
             assertThat(service.conflictingFiles("solo")).isEmpty();
             assertThat(service.conflictingFiles("missing")).isEmpty();
+        }
+    }
+
+    // =========================================================================
+    // Empty-slot capacity probe (UltiKits/UltiKits#38)
+    // =========================================================================
+    /**
+     * The probe adds one over-sized stack to an empty scratch inventory and reads how much landed in the
+     * first slot. The scratch inventory here answers the way each server version's {@code addItem} does.
+     */
+    @Nested
+    @DisplayName("Empty-slot capacity probe tests")
+    class EmptySlotCapacityProbeTests {
+
+        @BeforeEach
+        void setUp() {
+            MockBukkitSupport.bootstrap(); // ItemStack needs a server
+        }
+
+        /** A 9-slot scratch inventory with maximum 99 whose addItem puts at most {@code perEmptySlot} in slot 0. */
+        private org.bukkit.inventory.Inventory scratch(int inventoryMax, java.util.function.IntUnaryOperator perEmptySlot) {
+            org.bukkit.inventory.Inventory inventory = mock(org.bukkit.inventory.Inventory.class);
+            ItemStack[] slots = new ItemStack[9];
+            when(inventory.getMaxStackSize()).thenReturn(inventoryMax);
+            lenient().when(inventory.addItem(any(ItemStack[].class))).thenAnswer(inv -> {
+                ItemStack added = inv.getArgument(0);
+                ItemStack first = added.clone();
+                first.setAmount(perEmptySlot.applyAsInt(added.getAmount()));
+                slots[0] = first;
+                return new HashMap<Integer, ItemStack>();
+            });
+            lenient().when(inventory.getItem(0)).thenAnswer(inv -> slots[0]);
+            return inventory;
+        }
+
+        @Test
+        @DisplayName("a server that fills an empty slot to the inventory's maximum (Paper 1.21.1) is read as INVENTORY_MAX")
+        void readsInventoryMaxBehaviour() {
+            org.bukkit.inventory.Inventory paper1211 = scratch(99, amount -> Math.min(amount, 99));
+
+            assertThat(KitServiceImpl.probeEmptySlotCapacity(paper1211))
+                    .isEqualTo(KitServiceImpl.EmptySlotCapacity.INVENTORY_MAX);
+        }
+
+        @Test
+        @DisplayName("a server that fills an empty slot to the item's maximum (Paper 1.21.4) is read as ITEM_MAX")
+        void readsItemMaxBehaviour() {
+            org.bukkit.inventory.Inventory paper1214 = scratch(99, amount -> Math.min(amount, 64));
+
+            assertThat(KitServiceImpl.probeEmptySlotCapacity(paper1214))
+                    .isEqualTo(KitServiceImpl.EmptySlotCapacity.ITEM_MAX);
+        }
+
+        @Test
+        @DisplayName("an inventory maximum no larger than the item's cannot tell them apart: ITEM_MAX, nothing added")
+        void inventoryMaxNotAboveItemMaxIsItemMax() {
+            org.bukkit.inventory.Inventory legacy = scratch(64, amount -> Math.min(amount, 64));
+
+            assertThat(KitServiceImpl.probeEmptySlotCapacity(legacy))
+                    .isEqualTo(KitServiceImpl.EmptySlotCapacity.ITEM_MAX);
+            verify(legacy, never()).addItem(any(ItemStack[].class));
+        }
+
+        @Test
+        @DisplayName("the service probes the running server once, at construction")
+        void serviceProbesAtConstruction() {
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl.EmptySlotCapacity expected =
+                    KitServiceImpl.probeEmptySlotCapacity(Bukkit.createInventory(null, 9));
+
+            service = createService();
+
+            assertThat(service.emptySlotCapacity()).isEqualTo(expected);
         }
     }
 
