@@ -316,6 +316,9 @@ public class KitCommands extends BaseCommandExecutor {
                 String price = fundKit != null ? String.valueOf(fundKit.getPrice()) : "?";
                 player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.insufficient_funds_price"), price));
                 break;
+            case ECONOMY_UNAVAILABLE:
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.economy_unavailable"));
+                break;
             case PAYMENT_FAILED:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.payment_failed"));
                 break;

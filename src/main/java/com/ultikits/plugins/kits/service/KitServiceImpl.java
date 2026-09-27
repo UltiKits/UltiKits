@@ -529,14 +529,17 @@ public class KitServiceImpl implements KitService {
         if (kit.hasLevelRequirement() && player.getLevel() < kit.getLevelRequired()) {
             return ClaimResult.INSUFFICIENT_LEVEL;
         }
-        if (!kit.isFree() && !canAfford(player, kit.getPrice())) {
-            return ClaimResult.INSUFFICIENT_FUNDS;
+        if (!kit.isFree()) {
+            // No provider means no balance to compare: saying "insufficient balance" would be untrue
+            // and hide the missing economy from the player and the operator (UltiKits/UltiKits#32).
+            if (!EconomyUtils.isAvailable()) {
+                return ClaimResult.ECONOMY_UNAVAILABLE;
+            }
+            if (!EconomyUtils.has(player, kit.getPrice())) {
+                return ClaimResult.INSUFFICIENT_FUNDS;
+            }
         }
         return null;
-    }
-
-    private boolean canAfford(Player player, double price) {
-        return EconomyUtils.isAvailable() && EconomyUtils.has(player, price);
     }
 
     @Nullable

@@ -164,6 +164,19 @@ class KitCommandsTest {
         }
 
         @Test
+        @DisplayName("ECONOMY_UNAVAILABLE says the server has no economy, not insufficient balance (UltiKits/UltiKits#32)")
+        void economyUnavailableSendsItsOwnMessage() {
+            when(kitService.claimKit(player, "premium")).thenReturn(KitService.ClaimResult.ECONOMY_UNAVAILABLE);
+
+            kitCommands.onClaim(player, "premium");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + CatalogueText.text("zh", "kits.claim.economy_unavailable"));
+        }
+
+        @Test
         @DisplayName("ALREADY_CLAIMED sends already claimed message")
         void alreadyClaimedSendsMessage() {
             when(kitService.claimKit(player, "one-time")).thenReturn(KitService.ClaimResult.ALREADY_CLAIMED);

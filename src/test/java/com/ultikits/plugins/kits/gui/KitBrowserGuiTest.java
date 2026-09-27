@@ -839,6 +839,21 @@ class KitBrowserGuiTest {
         }
 
         @Test
+        @DisplayName("ECONOMY_UNAVAILABLE says the server has no economy and keeps the browser open (UltiKits/UltiKits#32)")
+        void economyUnavailable() {
+            KitDefinition kit = createKit("premium", "&6Premium", "CHEST", 500.0, 0);
+            when(kitService.claimKit(player, "premium")).thenReturn(KitService.ClaimResult.ECONOMY_UNAVAILABLE);
+
+            gui.handleKitClick(kit);
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + CatalogueText.text("zh", "kits.claim.economy_unavailable"));
+            verify(player, never()).closeInventory();
+        }
+
+        @Test
         @DisplayName("ALREADY_CLAIMED sends already claimed message")
         void alreadyClaimed() {
             KitDefinition kit = createKit("once", "&fOnce", "CHEST", 0, 0);

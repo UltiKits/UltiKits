@@ -34,6 +34,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A paid kit claimed on a server with no economy plugin now says so ("This kit has a price, but the
+  server has no economy plugin to pay it with"), and the kit browser shows "No economy on this server"
+  for it. Before, both said "Insufficient balance", which no balance could fix and which hid the missing
+  economy (UltiKits/UltiKits#32).
+- 在没有经济插件的服务器上领取付费礼包时，现在会如实提示（「此礼包需要付费，但服务器没有可用的经济插件」），礼包浏览界面
+  显示「服务器没有经济系统」。此前两处都显示「余额不足」，但任何余额都无法满足，也掩盖了经济系统缺失（UltiKits/UltiKits#32）。
 - The kit editor (`/kits edit`) now saves moves and additions: items can be moved within its grid and
   added from the player's own inventory, and Save writes them into the kit. Before, the GUI library
   cancelled every click in the grid, so Save re-saved the items the editor opened with. The bottom row

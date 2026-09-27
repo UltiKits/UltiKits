@@ -291,6 +291,9 @@ public class KitBrowserGui extends Gui {
             case INSUFFICIENT_FUNDS:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.insufficient_funds"));
                 break;
+            case ECONOMY_UNAVAILABLE:
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.economy_unavailable"));
+                break;
             case PAYMENT_FAILED:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.payment_failed"));
                 break;
@@ -327,7 +330,11 @@ public class KitBrowserGui extends Gui {
 
         // Check economy
         if (!kit.isFree()) {
-            if (!EconomyUtils.isAvailable() || !EconomyUtils.has(player, kit.getPrice())) {
+            // The same two outcomes the claim gives, in the same order (UltiKits/UltiKits#32).
+            if (!EconomyUtils.isAvailable()) {
+                return ChatColor.RED + plugin.i18n("kits.status.economy_unavailable");
+            }
+            if (!EconomyUtils.has(player, kit.getPrice())) {
                 return ChatColor.RED + plugin.i18n("kits.status.insufficient_funds");
             }
         }
