@@ -34,6 +34,8 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -4330,6 +4332,72 @@ class KitServiceImplTest {
 
             File starterFile = new File(tempDir, "kits/starter.yml");
             // Should not crash -- either the file exists or it doesn't depending on resources
+        }
+    }
+
+    // =========================================================================
+    // The example kit follows the server's language (UltiKits/UltiKits#33)
+    // =========================================================================
+    /**
+     * The example kit is copied once, when the kits folder does not exist yet. It used to be one file
+     * with a Chinese name and lore whatever {@code language} said; the maintainer's decision
+     * (2026-09-25) is one example per language, the one matching {@code language} copied at first
+     * start, and existing installs left as they are.
+     */
+    @Nested
+    @DisplayName("Example kit language tests")
+    class ExampleKitLanguageTests {
+
+        private YamlConfiguration firstStartExample(String language) {
+            when(plugin.getLanguageCode()).thenReturn(language);
+            service = createService();
+            File example = new File(tempDir, "kits/starter.yml");
+            assertThat(example).as("the example kit was copied at first start").exists();
+            return YamlConfiguration.loadConfiguration(example);
+        }
+
+        private boolean hasCjk(String text) {
+            return text.codePoints().anyMatch(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN);
+        }
+
+        @Test
+        @DisplayName("language: en copies an English example kit")
+        void englishServerGetsTheEnglishExample() {
+            YamlConfiguration example = firstStartExample("en");
+
+            assertThat(example.getString("displayName")).isEqualTo("&aStarter Kit");
+            assertThat(example.getStringList("description")).isNotEmpty().noneMatch(this::hasCjk);
+        }
+
+        @Test
+        @DisplayName("language: zh copies the Chinese example kit")
+        void chineseServerGetsTheChineseExample() {
+            YamlConfiguration example = firstStartExample("zh");
+
+            assertThat(example.getString("displayName")).isEqualTo("&a新手礼包");
+            assertThat(example.getStringList("description")).isNotEmpty().allMatch(this::hasCjk);
+        }
+
+        @Test
+        @DisplayName("a language this module does not ship falls back to the English example, as its messages do")
+        void unsupportedLanguageFallsBackToEnglish() {
+            YamlConfiguration example = firstStartExample("fr");
+
+            assertThat(example.getString("displayName")).isEqualTo("&aStarter Kit");
+        }
+
+        @Test
+        @DisplayName("an existing kits folder is left as it is: nothing is copied")
+        void existingInstallIsUntouched() throws Exception {
+            File kitsFolder = new File(tempDir, "kits");
+            assertThat(kitsFolder.mkdirs()).isTrue();
+            File own = new File(kitsFolder, "own.yml");
+            Files.write(own.toPath(), "displayName: \"&fOwn\"\n".getBytes(StandardCharsets.UTF_8));
+            when(plugin.getLanguageCode()).thenReturn("en");
+
+            service = createService();
+
+            assertThat(kitsFolder.list()).containsExactly("own.yml");
         }
     }
 
