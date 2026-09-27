@@ -34,6 +34,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `/kits list` and the "Insufficient balance, requires …" reply now write a kit's price in the server
+  economy's own format, as the kit browser already did. Before, they printed a hard-coded `$` and the
+  raw number (`($100.0)`), so a server whose currency is not dollars showed one price two ways
+  (UltiKits/UltiKits#34).
+- `/kits list` 和「余额不足，需要 …」回复现在按服务器经济系统自己的格式显示礼包价格，与礼包浏览界面一致。此前它们写死
+  `$` 并显示原始数字（`($100.0)`），货币不是美元的服务器上同一价格会有两种写法（UltiKits/UltiKits#34）。
 - A paid kit claimed on a server with no economy plugin now says so ("This kit has a price, but the
   server has no economy plugin to pay it with"), and the kit browser shows "No economy on this server"
   for it. Before, both said "Insufficient balance", which no balance could fix and which hid the missing

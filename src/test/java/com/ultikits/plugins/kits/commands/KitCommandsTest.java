@@ -337,7 +337,8 @@ class KitCommandsTest {
             List<String> messages = captor.getAllValues();
             assertThat(messages.get(0)).contains("礼包列表");
             assertThat(messages.get(1)).contains("starter");
-            assertThat(messages.get(2)).contains("vip").contains("$100");
+            // No economy is registered here, so the price is the plain number (UltiKits/UltiKits#34).
+            assertThat(messages.get(2)).contains("vip").contains("(100.0)").doesNotContain("$");
         }
 
         @Test

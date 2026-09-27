@@ -2,6 +2,7 @@ package com.ultikits.plugins.kits.gui;
 
 import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.model.KitDefinition;
+import com.ultikits.plugins.kits.model.KitPrice;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
 import com.ultikits.ultitools.utils.EconomyUtils;
@@ -211,7 +212,7 @@ public class KitBrowserGui extends Gui {
             if (kit.isFree()) {
                 lore.add(ChatColor.GRAY + plugin.i18n("kits.gui.price") + ": " + ChatColor.GREEN + plugin.i18n("kits.gui.price_free"));
             } else {
-                String priceStr = EconomyUtils.isAvailable() ? EconomyUtils.format(kit.getPrice()) : String.valueOf(kit.getPrice());
+                String priceStr = KitPrice.format(kit.getPrice());
                 lore.add(ChatColor.GRAY + plugin.i18n("kits.gui.price") + ": " + ChatColor.GOLD + priceStr);
             }
 
@@ -275,7 +276,7 @@ public class KitBrowserGui extends Gui {
             case SUCCESS:
                 player.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("kits.claim.success"), kit.getDisplayName()));
                 if (!kit.isFree() && EconomyUtils.isAvailable()) {
-                    player.sendMessage(ChatColor.YELLOW + String.format(plugin.i18n("kits.claim.charged"), EconomyUtils.format(kit.getPrice())));
+                    player.sendMessage(ChatColor.YELLOW + String.format(plugin.i18n("kits.claim.charged"), KitPrice.format(kit.getPrice())));
                 }
                 player.closeInventory();
                 break;

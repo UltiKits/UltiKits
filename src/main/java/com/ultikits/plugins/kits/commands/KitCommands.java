@@ -4,6 +4,7 @@ import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.gui.KitBrowserGui;
 import com.ultikits.plugins.kits.gui.KitEditorGui;
 import com.ultikits.plugins.kits.model.KitDefinition;
+import com.ultikits.plugins.kits.model.KitPrice;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
 import com.ultikits.ultitools.abstracts.command.BaseCommandExecutor;
@@ -129,7 +130,7 @@ public class KitCommands extends BaseCommandExecutor {
             String displayName = ChatColor.translateAlternateColorCodes('&', kit.getDisplayName());
             String info = ChatColor.YELLOW + kit.getName() + ChatColor.GRAY + " - " + displayName;
             if (!kit.isFree()) {
-                info += ChatColor.GOLD + " ($" + kit.getPrice() + ")";
+                info += ChatColor.GOLD + " (" + KitPrice.format(kit.getPrice()) + ")";
             }
             sender.sendMessage(info);
         }
@@ -313,7 +314,7 @@ public class KitCommands extends BaseCommandExecutor {
                 break;
             case INSUFFICIENT_FUNDS:
                 KitDefinition fundKit = kitService.getKit(kitName);
-                String price = fundKit != null ? String.valueOf(fundKit.getPrice()) : "?";
+                String price = fundKit != null ? KitPrice.format(fundKit.getPrice()) : "?";
                 player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.insufficient_funds_price"), price));
                 break;
             case ECONOMY_UNAVAILABLE:
