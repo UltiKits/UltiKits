@@ -66,6 +66,20 @@ public class KitServiceImpl implements KitService {
      */
     private final Set<String> refusalWarnedKits = Collections.synchronizedSet(new LinkedHashSet<>());
     private DataOperator<KitClaimData> claimOperator;
+    /** How {@code addItem} fills an empty slot with an over-sized stack on this server; see {@link #fitsInStorage}. */
+    private EmptySlotCapacity emptySlotCapacity = EmptySlotCapacity.ITEM_MAX;
+
+    /**
+     * How many of an over-sized stack the server's {@code addItem} puts into one empty slot.
+     * <p>
+     * 服务器 {@code addItem} 向空格放入超量物品堆时，每格最多放多少。
+     */
+    enum EmptySlotCapacity {
+        /** The stack's own maximum, capped by the inventory's. */
+        ITEM_MAX,
+        /** The inventory's maximum, whatever the stack's own is. */
+        INVENTORY_MAX
+    }
 
     public KitServiceImpl(UltiToolsPlugin plugin, KitsConfig config) {
         this.plugin = plugin;
@@ -575,6 +589,24 @@ public class KitServiceImpl implements KitService {
      * <p>
      * 按背包实际的放置方式判断能否放下：先补满相同物品的未满堆，再占用空格，每格上限为物品堆自身的最大堆叠数。
      */
+    /** Sets how empty slots are counted; a seam for tests. */
+    void useEmptySlotCapacity(EmptySlotCapacity capacity) {
+        this.emptySlotCapacity = capacity;
+    }
+
+    /** The empty-slot capacity in use. */
+    EmptySlotCapacity emptySlotCapacity() {
+        return emptySlotCapacity;
+    }
+
+    /**
+     * Works out how this server's {@code addItem} fills an empty slot with an over-sized stack, from a
+     * scratch inventory. This commit keeps the model the fit check has always used.
+     */
+    static EmptySlotCapacity probeEmptySlotCapacity(org.bukkit.inventory.Inventory scratch) {
+        return EmptySlotCapacity.ITEM_MAX;
+    }
+
     private boolean fitsInStorage(Player player, ItemStack[] items) {
         ItemStack[] contents = player.getInventory().getStorageContents();
         int inventoryMax = player.getInventory().getMaxStackSize();
