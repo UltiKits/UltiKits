@@ -34,6 +34,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A kit reward command that does not run is now reported instead of being ignored. A player command
+  that is unknown, refused or throws tells the player which reward did not run; every failed reward
+  command, player or console, logs a warning naming the kit, the command and the player. The claim
+  still stands and is not refunded, so an operator can make the reward good by hand. Before, both
+  results were discarded and the claim reported plain success (UltiKits/UltiKits#25).
+- 礼包奖励命令未能执行时，现在会如实报告，而不是被忽略。以玩家身份执行的命令若不存在、被拒绝或出错，会告诉玩家是哪项
+  奖励没有执行；无论玩家命令还是控制台命令，失败都会记录一条写明礼包、命令和玩家的警告。领取仍然有效且不退款，运维可
+  手动补发。此前两类命令的结果都被丢弃，领取直接报告成功（UltiKits/UltiKits#25）。
 - `/kits list` and the "Insufficient balance, requires …" reply now write a kit's price in the server
   economy's own format, as the kit browser already did. Before, they printed a hard-coded `$` and the
   raw number (`($100.0)`), so a server whose currency is not dollars showed one price two ways

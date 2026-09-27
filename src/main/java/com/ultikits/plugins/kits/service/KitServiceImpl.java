@@ -637,7 +637,10 @@ public class KitServiceImpl implements KitService {
      * are free ({@link #fitsInStorage}), and {@code addItem}'s leftovers are dropped
      * (UltiKits/UltiKits#24). The reward commands run last, after the record, because they are the
      * step most likely to throw ({@code player.performCommand} propagates a third-party executor's
-     * {@code CommandException}).
+     * {@code CommandException}). A reward command that does not run is reported, not undone - the
+     * maintainer's decision of 2026-09-27 (UltiKits/UltiKits#25): the claim keeps its record and its
+     * price, the player is told which reward did not run, and the console names the player, the kit
+     * and the command so an operator can make it good by hand.
      * <p>
      * What this order costs, as the decision accepted it: while the claim table cannot be written,
      * nobody can claim a kit; and if the refund fails too, the player has paid for nothing until an
@@ -670,8 +673,8 @@ public class KitServiceImpl implements KitService {
             return refuseUnrecordedClaim(player, kit);
         }
         giveOrDrop(player, items);
-        executePlayerCommands(player, kit.getPlayerCommands());
-        executeConsoleCommands(player, kit.getConsoleCommands());
+        executePlayerCommands(player, kit);
+        executeConsoleCommands(player, kit);
         return ClaimResult.SUCCESS;
     }
 
@@ -1014,29 +1017,72 @@ public class KitServiceImpl implements KitService {
         }
     }
 
-    private void executePlayerCommands(Player player, List<String> commands) {
+    /**
+     * Runs the kit's player commands as the player and checks each result where it is available.
+     * {@code performCommand} answers {@code false} for an unknown command or one whose executor refused
+     * it, and a third-party executor can throw; either way the reward did not run, so the player is told
+     * which one and the console gets a warning naming the player, the kit and the command. The claim
+     * stands - no refund, no undo (UltiKits/UltiKits#25). {@code true} only means an executor accepted
+     * the command, so that is all a pass claims.
+     * <p>
+     * 以玩家身份执行奖励命令并检查结果；未执行的命令会告知玩家并记录警告，领取不撤销、不退款。
+     */
+    private void executePlayerCommands(Player player, KitDefinition kit) {
+        List<String> commands = kit.getPlayerCommands();
         if (commands == null || commands.isEmpty()) {
             return;
         }
         for (String cmd : commands) {
             String processed = cmd.replace("{player}", player.getName());
-            player.performCommand(processed);
+            if (!runs(() -> player.performCommand(processed))) {
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.reward_command_failed"),
+                        processed));
+                logger.warn(String.format(plugin.i18n("kits.log.player_reward_command_failed"), kit.getName(),
+                        processed, player.getName()));
+            }
         }
     }
 
-    private void executeConsoleCommands(Player player, List<String> commands) {
+    /**
+     * Runs the kit's console commands one tick later, as the module always has, and checks each result
+     * when the deferred task runs it - the claim has returned by then, so a failure is logged with the
+     * player, the kit and the command rather than reported to the player (UltiKits/UltiKits#25). A
+     * command that cannot be scheduled at all is logged the same way instead of being dropped.
+     * <p>
+     * 延后一刻以控制台身份执行奖励命令，执行时检查结果，失败则记录警告。
+     */
+    private void executeConsoleCommands(Player player, KitDefinition kit) {
+        List<String> commands = kit.getConsoleCommands();
         if (commands == null || commands.isEmpty()) {
             return;
         }
+        String playerName = player.getName();
         org.bukkit.plugin.Plugin ultiToolsPlugin = Bukkit.getPluginManager().getPlugin("UltiTools");
-        if (ultiToolsPlugin == null) {
-            return;
-        }
         for (String cmd : commands) {
-            String processed = cmd.replace("{player}", player.getName());
-            String finalCmd = processed;
-            Bukkit.getScheduler().runTask(ultiToolsPlugin, () ->
-                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), finalCmd));
+            String processed = cmd.replace("{player}", playerName);
+            if (ultiToolsPlugin == null) {
+                warnConsoleCommandFailed(kit, processed, playerName);
+                continue;
+            }
+            Bukkit.getScheduler().runTask(ultiToolsPlugin, () -> {
+                if (!runs(() -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), processed))) {
+                    warnConsoleCommandFailed(kit, processed, playerName);
+                }
+            });
+        }
+    }
+
+    private void warnConsoleCommandFailed(KitDefinition kit, String command, String playerName) {
+        logger.warn(String.format(plugin.i18n("kits.log.console_reward_command_failed"), kit.getName(), command,
+                playerName));
+    }
+
+    /** Whether a command dispatch was accepted; one that throws was not. */
+    private static boolean runs(java.util.function.BooleanSupplier dispatch) {
+        try {
+            return dispatch.getAsBoolean();
+        } catch (RuntimeException e) {
+            return false;
         }
     }
 }
