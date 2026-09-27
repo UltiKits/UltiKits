@@ -29,6 +29,41 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- When a kit claim cannot be recorded, the claim is refused and any payment refunded, so a one-time
+  kit can no longer be claimed twice after a storage failure. A claim is now charged, then recorded,
+  then handed over; if the record cannot be written, nothing is given, no reward command runs and
+  the player is told to try again. If the refund fails as well, the player is told so and the console
+  logs an error naming the player, the kit and the amount (UltiKits/UltiKits#26).
+- 修复：领取记录写入失败时拒绝领取并退款，一次性礼包不会因存储故障被重复领取。领取顺序改为先扣款、再写入记录、再发放；
+  记录无法写入时不发放任何物品、不执行奖励命令，并提示玩家重试。若退款也失败，会如实告知玩家，并在控制台记录包含玩家、礼包和金额的错误（UltiKits/UltiKits#26）。
+
+- A kit containing a stack larger than its item's maximum stack size is refused before payment when
+  it will not fit — the claim now works out the fit the way the inventory fills, topping up matching
+  partial stacks first and splitting each stack at its own maximum — and anything that still does not fit is dropped at the player's feet with a message
+  instead of being destroyed (UltiKits/UltiKits#24).
+- 修复：超出最大堆叠数的物品不再在领取时被销毁。领取前按背包实际的放置方式判断能否放下（先补满相同物品的未满堆，每个物品堆按自身的最大堆叠数拆分），放不下时先拒绝领取且不扣款；
+  仍放不下的部分会掉落在玩家脚下并提示（UltiKits/UltiKits#24）。
+
+- `/kits delete` no longer reports a kit as deleted when its file could not be removed (or the kits
+  folder could not be read). The kit now stays loaded, the sender is told it was not deleted, and the
+  console names the file or folder, so a kit an
+  admin was told is gone can no longer come back on the next `/kits reload` or restart. Deleting and
+  saving a kit now use the file the kit was loaded from, so a hand-placed kit file whose name has
+  capital letters (`VIP.yml`) is deleted, and saved from the editor, like any other. A save from the
+  editor that fails no longer changes the loaded kit, so a claim still hands out what the file holds.
+  When more than one file defines the same kit (`VIP.yml` and `vip.yml` on a case-sensitive file
+  system), `/kits edit`, the editor's Save button, `/kits create` and `/kits delete` change nothing
+  and name the files; one of them still loads, so the kit can be claimed, and `/kits reload` names
+  them on the console (UltiKits/UltiKits#23). `/kits create` now refuses a name holding `/`, `\` or
+  `..`, which used to write the kit file outside the kits folder, and refuses a name that a file in
+  the kits folder already loads as (placed by hand without a reload, or unreadable), naming the file
+  instead of overwriting it (UltiKits/UltiKits#37). A kit file is still written the way earlier versions
+  wrote it, so a crash during a save can leave it cut off; crash-safe writes for modules are tracked
+  in UltiKits/UltiTools-Reborn#545.
+- 修复：礼包文件删除失败（或礼包文件夹无法读取）时，`/kits delete` 不再报告删除成功。礼包会保持加载，执行者会被告知未删除，控制台会记录该文件或文件夹的路径，
+  因此被告知已删除的礼包不会在下次 `/kits reload` 或重启后重新出现。删除和保存礼包现在使用礼包加载时的那个文件，因此文件名含大写字母的手放礼包文件（如 `VIP.yml`）
+  也能像其他礼包一样被删除，并能从编辑界面保存。编辑界面保存失败时不再改动已加载的礼包，领取时发放的仍是文件中的物品。当多个文件定义同一礼包时（在区分大小写的文件系统上同时存在 `VIP.yml` 和 `vip.yml`），`/kits edit`、编辑界面的保存按钮、`/kits create` 和 `/kits delete` 不做任何修改并列出这些文件；其中一个仍会被加载，礼包照常可以领取，`/kits reload` 也会在控制台列出这些文件（UltiKits/UltiKits#23）。`/kits create` 现在会拒绝含 `/`、`\` 或 `..` 的礼包名（以前会把礼包文件写到 kits 文件夹之外），也会拒绝礼包文件夹中已有文件（手工放入但未 reload 的，或无法解析的）加载为该名字的礼包名，并列出该文件而不是覆盖它（UltiKits/UltiKits#37）。礼包文件仍按以前版本的方式写入，保存过程中崩服可能留下残缺文件；模块的崩溃安全写入在 UltiKits/UltiTools-Reborn#545 中跟踪。
+
 - `language: zh` now applies to the text that was fixed English: the kit editor's save-button lore
   (`Click to save kit contents`), the `/kits help` lines for `edit`, `create`, `delete` and `reload`,
   and eight console lines (a refused kit payment, a kit file that fails to load or has an invalid

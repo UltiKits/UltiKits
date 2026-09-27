@@ -767,8 +767,25 @@ class KitServiceImplTest {
             service = createService();
         }
 
+        /**
+         * A service whose kit-file deletion reports failure, standing in for a read-only kits folder,
+         * a file owned by another user, or a Windows file lock. The failure is injected through the
+         * package-private deletion seam rather than through file permissions: a build running as root
+         * deletes a read-only file anyway, so a permission-based test would pass without testing
+         * anything (UltiKits/UltiKits#23).
+         */
+        private KitServiceImpl createServiceWhoseFileDeleteFails(AtomicInteger attempts) {
+            return new KitServiceImpl(plugin, config) {
+                @Override
+                void deleteKitFile(File kitFile) throws IOException {
+                    attempts.incrementAndGet();
+                    throw new java.nio.file.AccessDeniedException(kitFile.getPath());
+                }
+            };
+        }
+
         @Test
-        @DisplayName("deleteKit returns true and removes kit and file")
+        @DisplayName("deleteKit returns DELETED and removes kit and file")
         void deleteKitSuccess() throws Exception {
             injectKit(service, createTestKit("todelete"));
 
@@ -776,18 +793,206 @@ class KitServiceImplTest {
             kitFile.createNewFile();
             assertThat(kitFile).exists();
 
-            boolean result = service.deleteKit("todelete");
+            KitService.DeleteResult result = service.deleteKit("todelete");
 
-            assertThat(result).isTrue();
+            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
             assertThat(service.getKit("todelete")).isNull();
             assertThat(kitFile).doesNotExist();
         }
 
         @Test
-        @DisplayName("deleteKit returns false for nonexistent kit")
+        @DisplayName("a kit whose file cannot be deleted is reported as not deleted and stays loaded")
+        void deleteKitFileNotDeletedKeepsKit() throws Exception {
+            File kitFile = createSimpleKitFile("premium");
+            AtomicInteger attempts = new AtomicInteger();
+            service = createServiceWhoseFileDeleteFails(attempts);
+            assertThat(service.getKit("premium")).isNotNull();
+
+            KitService.DeleteResult result = service.deleteKit("premium");
+
+            assertThat(attempts.get()).isEqualTo(1);
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+            assertThat(kitFile).exists();
+            assertThat(service.getKit("premium")).isNotNull();
+            assertThat(service.getKitNames()).contains("premium");
+        }
+
+        @Test
+        @DisplayName("a failed kit-file deletion logs a warning naming the file's path")
+        void deleteKitFileNotDeletedWarnsWithPath() throws Exception {
+            File kitFile = createSimpleKitFile("premium");
+            service = createServiceWhoseFileDeleteFails(new AtomicInteger());
+
+            service.deleteKit("premium");
+
+            ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(warning.capture());
+            assertThat(warning.getAllValues())
+                    .anyMatch(line -> line.contains(kitFile.getAbsolutePath()));
+        }
+
+        @Test
+        @DisplayName("after a failed deletion a reload still lists the kit, matching what the admin was told")
+        void deleteKitFileNotDeletedSurvivesReload() throws Exception {
+            createSimpleKitFile("premium");
+            service = createServiceWhoseFileDeleteFails(new AtomicInteger());
+
+            KitService.DeleteResult result = service.deleteKit("premium");
+            service.reload();
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+            assertThat(service.getKit("premium")).isNotNull();
+        }
+
+        @Test
+        @DisplayName("a file another process removed before the delete ran counts as deleted")
+        void deleteKitFileAlreadyGoneIsDeleted() throws Exception {
+            File kitFile = createSimpleKitFile("racy");
+            service = new KitServiceImpl(plugin, config) {
+                @Override
+                void deleteKitFile(File file) throws IOException {
+                    file.delete(); // NOPMD - another process removed it first
+                    throw new java.nio.file.NoSuchFileException(file.getPath());
+                }
+            };
+
+            KitService.DeleteResult result = service.deleteKit("racy");
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
+            assertThat(kitFile).doesNotExist();
+            assertThat(service.getKit("racy")).isNull();
+        }
+
+        /**
+         * {@code loadKits} maps a file to a kit by lower-casing its name, so a hand-placed {@code
+         * VIP.yml} loads as {@code vip}. Deleting must remove the file the kit was loaded from, not a
+         * rebuilt {@code vip.yml}: on a case-sensitive file system that path does not exist, and the
+         * kit was reported deleted while {@code VIP.yml} stayed to be loaded again (UltiKits/UltiKits#23).
+         */
+        @Test
+        @DisplayName("a kit loaded from a file with capitals is deleted from that file and stays gone after a reload")
+        void deleteKitFromCapitalisedFile() throws Exception {
+            File kitFile = createSimpleKitFile("VIP");
+            service = createService();
+            assertThat(service.getKit("vip")).isNotNull();
+
+            KitService.DeleteResult result = service.deleteKit("vip");
+            service.reload();
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
+            assertThat(kitFile).doesNotExist();
+            assertThat(service.getKit("vip")).isNull();
+        }
+
+        @Test
+        @DisplayName("a kit loaded from a file with capitals whose deletion fails is reported as not deleted")
+        void deleteKitFromCapitalisedFileThatCannotBeDeleted() throws Exception {
+            File kitFile = createSimpleKitFile("VIP");
+            service = createServiceWhoseFileDeleteFails(new AtomicInteger());
+
+            KitService.DeleteResult result = service.deleteKit("vip");
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+            assertThat(kitFile).exists();
+            assertThat(service.getKit("vip")).isNotNull();
+        }
+
+        /**
+         * Two files that load as one kit are not deleted one by one - that could stop part-way and
+         * leave a different file to load next time. The deletion is refused, both files stay and the
+         * kit stays loaded until only one file defines it (this replaced "delete every such file").
+         */
+        @Test
+        @DisplayName("a kit two files load as is not deleted, so a half-finished delete cannot swap its file")
+        void deleteKitWithTwoFilesDeletesNeither() throws Exception {
+            File upper = createSimpleKitFile("VIP");
+            File lower = createSimpleKitFile("vip");
+            service = createService();
+
+            KitService.DeleteResult result = service.deleteKit("vip");
+            service.reload();
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_CONFLICT);
+            assertThat(upper).exists();
+            assertThat(lower).exists();
+            assertThat(service.getKit("vip")).isNotNull();
+        }
+
+        /**
+         * A kits folder that cannot be listed ({@code File#listFiles} returns null on an I/O or
+         * permission error) is not "no file": the kit's file may still be there to come back on the
+         * next reload, so the deletion is reported as failed and the kit stays loaded. The failure is
+         * injected through the listing seam, not through permissions, for the same reason as the delete
+         * seam.
+         */
+        @Test
+        @DisplayName("an unreadable kits folder is a failed deletion, not a missing file")
+        void deleteKitWhenTheKitsFolderCannotBeListed() throws Exception {
+            File kitFile = createSimpleKitFile("premium");
+            service = new KitServiceImpl(plugin, config) {
+                @Override
+                File[] listKitFiles(File folder) {
+                    return null;
+                }
+            };
+            assertThat(service.getKit("premium")).isNotNull();
+
+            KitService.DeleteResult result = service.deleteKit("premium");
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+            assertThat(kitFile).exists();
+            assertThat(service.getKit("premium")).isNotNull();
+            ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(warning.capture());
+            assertThat(warning.getAllValues())
+                    .anyMatch(line -> line.contains(kitFile.getParentFile().getAbsolutePath()));
+        }
+
+        /**
+         * A deletion the file system refused is a failure, whatever a later existence check says -
+         * in a folder the server may list but not search, {@code File#exists} answers false for a
+         * file that is still there. The delete reports its own reason ({@code Files#delete}), so
+         * no existence check is consulted: here the refusal is reported while the file has gone,
+         * and the result is still "not deleted".
+         */
+        @Test
+        @DisplayName("a refused deletion is a failure even when the file no longer appears to exist")
+        void aRefusedDeletionIsAFailureWhateverExistsSays() throws Exception {
+            File kitFile = createSimpleKitFile("premium");
+            service = new KitServiceImpl(plugin, config) {
+                @Override
+                void deleteKitFile(File file) throws IOException {
+                    file.delete(); // NOPMD - makes File#exists answer false, as an unsearchable folder does
+                    throw new java.nio.file.AccessDeniedException(file.getPath());
+                }
+            };
+
+            KitService.DeleteResult result = service.deleteKit("premium");
+
+            assertThat(kitFile).doesNotExist();
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_NOT_DELETED);
+            assertThat(service.getKit("premium")).isNotNull();
+        }
+
+        @Test
+        @DisplayName("the kit-file listing tells a missing folder, a failed listing and a readable folder apart")
+        void theListingHasThreeAnswers() throws Exception {
+            File kits = new File(tempDir, "kits");
+            File yml = createSimpleKitFile("alpha");
+            new File(kits, "notes.txt").createNewFile();
+            File plainFile = new File(tempDir, "not-a-folder");
+            plainFile.createNewFile();
+
+            assertThat(service.listKitFiles(new File(tempDir, "missing"))).isEmpty();
+            assertThat(service.listKitFiles(plainFile)).isNull();
+            assertThat(service.listKitFiles(kits)).containsExactly(yml);
+        }
+
+        @Test
+        @DisplayName("deleteKit returns NOT_FOUND for nonexistent kit")
         void deleteKitNotFound() {
-            boolean result = service.deleteKit("nosuchkit");
-            assertThat(result).isFalse();
+            KitService.DeleteResult result = service.deleteKit("nosuchkit");
+            assertThat(result).isEqualTo(KitService.DeleteResult.NOT_FOUND);
         }
 
         @Test
@@ -795,18 +1000,18 @@ class KitServiceImplTest {
         void deleteKitCaseInsensitive() throws Exception {
             injectKit(service, createTestKit("mykit"));
 
-            boolean result = service.deleteKit("MYKIT");
-            assertThat(result).isTrue();
+            KitService.DeleteResult result = service.deleteKit("MYKIT");
+            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
             assertThat(service.getKit("mykit")).isNull();
         }
 
         @Test
-        @DisplayName("deleteKit works even when file does not exist on disk")
+        @DisplayName("deleteKit reports DELETED when the kit is loaded but its file is already gone")
         void deleteKitNoFile() throws Exception {
             injectKit(service, createTestKit("nofile"));
 
-            boolean result = service.deleteKit("nofile");
-            assertThat(result).isTrue();
+            KitService.DeleteResult result = service.deleteKit("nofile");
+            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
             assertThat(service.getKit("nofile")).isNull();
         }
 
@@ -828,15 +1033,15 @@ class KitServiceImplTest {
         void deleteKitTrimsName() throws Exception {
             injectKit(service, createTestKit("trimme"));
 
-            boolean result = service.deleteKit("  TRIMME  ");
-            assertThat(result).isTrue();
+            KitService.DeleteResult result = service.deleteKit("  TRIMME  ");
+            assertThat(result).isEqualTo(KitService.DeleteResult.DELETED);
             assertThat(service.getKit("trimme")).isNull();
         }
 
         @Test
-        @DisplayName("deleteKit with empty string returns false")
+        @DisplayName("deleteKit with empty string returns NOT_FOUND")
         void deleteKitEmptyString() {
-            assertThat(service.deleteKit("")).isFalse();
+            assertThat(service.deleteKit("")).isEqualTo(KitService.DeleteResult.NOT_FOUND);
         }
     }
 
@@ -1597,8 +1802,8 @@ class KitServiceImplTest {
         }
 
         @Test
-        @DisplayName("ordering: the money moves before the items and the claim record, so a refused payment cannot leave half a claim")
-        void withdrawalHappensBeforeDeliveryAndClaimRecord() throws Exception {
+        @DisplayName("ordering: the money moves first, then the claim record, then the items (UltiKits/UltiKits#26)")
+        void withdrawalHappensBeforeClaimRecordAndDelivery() throws Exception {
             Economy mockEconomy = statefulEconomy(true);
 
             KitServiceImpl spyService = paidKitService("ordered", true);
@@ -1606,8 +1811,8 @@ class KitServiceImplTest {
 
             InOrder order = inOrder(mockEconomy, inventory, mockClaimOperator);
             order.verify(mockEconomy).withdrawPlayer(player, PRICE);
-            order.verify(inventory).addItem(kitItem);
             order.verify(mockClaimOperator).insert(any(KitClaimData.class));
+            order.verify(inventory).addItem(kitItem);
         }
 
         /**
@@ -1756,8 +1961,8 @@ class KitServiceImplTest {
             assertThat(spyService.claimKit(player, "rewarded")).isEqualTo(KitService.ClaimResult.SUCCESS);
 
             InOrder order = inOrder(inventory, mockClaimOperator, player);
-            order.verify(inventory).addItem(kitItem);
             order.verify(mockClaimOperator).insert(any(KitClaimData.class));
+            order.verify(inventory).addItem(kitItem);
             order.verify(player).performCommand("warp vip");
         }
 
@@ -1777,6 +1982,477 @@ class KitServiceImplTest {
             assertThat(spyService.claimKit(player, "freebie")).isEqualTo(KitService.ClaimResult.SUCCESS);
             verify(inventory).addItem(kitItem);
             assertThat(balance[0]).isEqualTo(500.0);
+        }
+    }
+
+    // =========================================================================
+    // Claim record failure tests (UltiKits/UltiKits#26)
+    // =========================================================================
+
+    /**
+     * A one-time claim whose record cannot be written. The maintainer's answer of 2026-09-24 decides
+     * the behaviour: write the record before handing anything over, and refuse the claim when the
+     * write fails; a paid kit keeps the charge-first order - charge, write the record, give - and is
+     * refunded when the record cannot be written; if the refund also fails, an ERROR names the
+     * player, the kit and the amount (UltiKits/UltiKits#26).
+     * <p>
+     * Every assertion reads state: the balance, the items handed to the inventory, the commands run
+     * and the rows in a claim table that - like the relational backends - is read back on every
+     * claim. The fake table hands out copies, so an object the service mutates before a failed write
+     * does not count as stored.
+     */
+    @Nested
+    @DisplayName("Claim Record Failure Tests")
+    class ClaimRecordFailureTests {
+
+        private static final double PRICE = 100.0;
+
+        private final double[] balance = {500.0};
+        private final List<KitClaimData> rows = new ArrayList<>();
+        private final List<ItemStack> given = new ArrayList<>();
+        private final List<String> commandsRun = new ArrayList<>();
+        /** Thrown by the next claim-table write while non-null. */
+        private Exception writeFailure;
+        private boolean refundSucceeds = true;
+        /** The number of items handed over when the claim row was written, per write. */
+        private final List<Integer> givenAtWrite = new ArrayList<>();
+        /** The balance when the claim row was written, per write. */
+        private final List<Double> balanceAtWrite = new ArrayList<>();
+
+        private Player player;
+        private ItemStack kitItem;
+
+        @BeforeEach
+        void setUp() throws Exception {
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            player = createMockPlayer();
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[36]);
+            when(inventory.addItem(any(ItemStack.class))).thenAnswer(inv -> {
+                given.add(inv.getArgument(0));
+                return new HashMap<Integer, ItemStack>();
+            });
+            when(player.performCommand(anyString())).thenAnswer(inv -> {
+                commandsRun.add(inv.getArgument(0));
+                return true;
+            });
+            kitItem = mock(ItemStack.class);
+            when(kitItem.clone()).thenReturn(kitItem);
+
+            when(mockQuery.list()).thenAnswer(inv -> {
+                List<KitClaimData> copies = new ArrayList<>();
+                for (KitClaimData row : rows) {
+                    copies.add(copyOf(row));
+                }
+                return copies;
+            });
+            doAnswer(inv -> {
+                recordWriteAttempt();
+                rows.add(copyOf(inv.getArgument(0)));
+                return null;
+            }).when(mockClaimOperator).insert(any(KitClaimData.class));
+            doAnswer(inv -> {
+                recordWriteAttempt();
+                KitClaimData updated = inv.getArgument(0);
+                rows.removeIf(row -> row.getUuid().equals(updated.getUuid()));
+                rows.add(copyOf(updated));
+                return null;
+            }).when(mockClaimOperator).update(any(KitClaimData.class));
+
+            Economy economy = setupMockEconomy();
+            when(economy.has(any(org.bukkit.OfflinePlayer.class), anyDouble()))
+                    .thenAnswer(inv -> balance[0] >= (Double) inv.getArgument(1));
+            when(economy.withdrawPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble())).thenAnswer(inv -> {
+                double amount = inv.getArgument(1);
+                balance[0] -= amount;
+                return new EconomyResponse(amount, balance[0], EconomyResponse.ResponseType.SUCCESS, "");
+            });
+            when(economy.depositPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble())).thenAnswer(inv -> {
+                double amount = inv.getArgument(1);
+                if (!refundSucceeds) {
+                    return new EconomyResponse(amount, balance[0], EconomyResponse.ResponseType.FAILURE, "economy down");
+                }
+                balance[0] += amount;
+                return new EconomyResponse(amount, balance[0], EconomyResponse.ResponseType.SUCCESS, "");
+            });
+        }
+
+        private void recordWriteAttempt() throws Exception {
+            givenAtWrite.add(given.size());
+            balanceAtWrite.add(balance[0]);
+            if (writeFailure != null) {
+                throw writeFailure;
+            }
+        }
+
+        private KitClaimData copyOf(KitClaimData row) {
+            return KitClaimData.builder().uuid(row.getUuid()).playerUuid(row.getPlayerUuid())
+                    .kitName(row.getKitName()).lastClaim(row.getLastClaim()).claimCount(row.getClaimCount())
+                    .build();
+        }
+
+        private KitServiceImpl serviceWithKit(String name, double price, boolean oneTime) throws Exception {
+            KitDefinition kit = createTestKit(name);
+            kit.setPrice(price);
+            kit.setReBuyable(!oneTime);
+            kit.setItems("someBase64Data");
+            kit.setPlayerCommands(Collections.singletonList("reward " + name));
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+            doReturn(new ItemStack[]{kitItem}).when(spyService).deserializeItems("someBase64Data");
+            return spyService;
+        }
+
+        private List<String> errors() {
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeast(0)).error(captor.capture());
+            return captor.getAllValues();
+        }
+
+        @Test
+        @DisplayName("paid one-time kit, the new claim row cannot be inserted: refused, refunded, nothing given or run")
+        void insertFailureRefusesAndRefunds() throws Exception {
+            writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
+            KitServiceImpl spyService = serviceWithKit("vip", PRICE, true);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "vip");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
+            assertThat(balanceAtWrite).containsExactly(400.0); // charged before the record, as decided
+            assertThat(balance[0]).isEqualTo(500.0);          // and refunded after it failed
+            assertThat(given).isEmpty();
+            assertThat(commandsRun).isEmpty();
+            assertThat(rows).isEmpty();
+        }
+
+        @Test
+        @DisplayName("the one-time guarantee holds across a failure: refused, then claimed once, then ALREADY_CLAIMED")
+        void oneTimeKitIsHandedOverExactlyOnce() throws Exception {
+            KitServiceImpl spyService = serviceWithKit("vip", PRICE, true);
+
+            writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
+            assertThat(spyService.claimKit(player, "vip")).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
+            writeFailure = null;
+            assertThat(spyService.claimKit(player, "vip")).isEqualTo(KitService.ClaimResult.SUCCESS);
+            assertThat(spyService.claimKit(player, "vip")).isEqualTo(KitService.ClaimResult.ALREADY_CLAIMED);
+
+            assertThat(given).containsExactly(kitItem);
+            assertThat(commandsRun).containsExactly("reward vip");
+            assertThat(rows).hasSize(1);
+            assertThat(balance[0]).isEqualTo(400.0);
+        }
+
+        @Test
+        @DisplayName("the claim row is written before any item is handed over")
+        void recordIsWrittenBeforeDelivery() throws Exception {
+            KitServiceImpl spyService = serviceWithKit("vip", PRICE, true);
+
+            assertThat(spyService.claimKit(player, "vip")).isEqualTo(KitService.ClaimResult.SUCCESS);
+
+            assertThat(givenAtWrite).containsExactly(0);
+            assertThat(given).containsExactly(kitItem);
+        }
+
+        @Test
+        @DisplayName("repeat claim whose update throws the unchecked database exception: refused and refunded")
+        void uncheckedUpdateFailureRefusesAndRefunds() throws Exception {
+            KitServiceImpl spyService = serviceWithKit("daily", PRICE, false);
+            assertThat(spyService.claimKit(player, "daily")).isEqualTo(KitService.ClaimResult.SUCCESS);
+            long firstClaim = rows.get(0).getLastClaim();
+            given.clear();
+            commandsRun.clear();
+
+            writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
+            KitService.ClaimResult result = spyService.claimKit(player, "daily");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
+            assertThat(balance[0]).isEqualTo(400.0); // the first claim's charge only
+            assertThat(given).isEmpty();
+            assertThat(commandsRun).isEmpty();
+            assertThat(rows).hasSize(1);
+            assertThat(rows.get(0).getClaimCount()).isEqualTo(1);
+            assertThat(rows.get(0).getLastClaim()).isEqualTo(firstClaim);
+        }
+
+        @Test
+        @DisplayName("repeat claim whose update throws IllegalAccessException: refused and refunded")
+        void checkedUpdateFailureRefusesAndRefunds() throws Exception {
+            KitServiceImpl spyService = serviceWithKit("daily", PRICE, false);
+            assertThat(spyService.claimKit(player, "daily")).isEqualTo(KitService.ClaimResult.SUCCESS);
+            given.clear();
+
+            writeFailure = new IllegalAccessException("field not accessible");
+            KitService.ClaimResult result = spyService.claimKit(player, "daily");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
+            assertThat(balance[0]).isEqualTo(400.0);
+            assertThat(given).isEmpty();
+        }
+
+        @Test
+        @DisplayName("free kit, the record cannot be written: refused, nothing given, no money moves")
+        void freeKitRecordFailureRefuses() throws Exception {
+            writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
+            KitServiceImpl spyService = serviceWithKit("starter", 0, true);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "starter");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
+            assertThat(given).isEmpty();
+            assertThat(commandsRun).isEmpty();
+            assertThat(rows).isEmpty();
+            assertThat(balance[0]).isEqualTo(500.0);
+        }
+
+        /** An economy that throws while refunding counts as a failed refund. */
+        @Test
+        @DisplayName("an economy that throws during the refund is a failed refund, reported as such")
+        void refundThatThrowsIsAFailedRefund() throws Exception {
+            writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
+            Economy economy = Bukkit.getServicesManager().getRegistration(Economy.class).getProvider();
+            when(economy.depositPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble()))
+                    .thenThrow(new IllegalStateException("economy offline"));
+            KitServiceImpl spyService = serviceWithKit("vipcrate", PRICE, true);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "vipcrate");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED);
+            assertThat(balance[0]).isEqualTo(400.0);
+            assertThat(given).isEmpty();
+            assertThat(errors()).anyMatch(line -> line.contains(player.getName())
+                    && line.contains("vipcrate") && line.contains(String.valueOf(PRICE)));
+        }
+
+        @Test
+        @DisplayName("the refund also fails: its own result, and an ERROR naming the player, the kit and the amount")
+        void refundFailureIsLoggedWithPlayerKitAndAmount() throws Exception {
+            writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
+            refundSucceeds = false;
+            KitServiceImpl spyService = serviceWithKit("vipcrate", PRICE, true);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "vipcrate");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED);
+            assertThat(balance[0]).isEqualTo(400.0);
+            assertThat(given).isEmpty();
+            assertThat(commandsRun).isEmpty();
+            assertThat(errors()).anyMatch(line -> line.contains(player.getName())
+                    && line.contains("vipcrate") && line.contains(String.valueOf(PRICE)));
+        }
+    }
+
+    // =========================================================================
+    // Over-sized stack tests (UltiKits/UltiKits#24)
+    // =========================================================================
+
+    /**
+     * A kit stack larger than its item's maximum stack size occupies more than one slot. The claim
+     * must count the slots the stacks really need, refuse before charging when they will not fit,
+     * and drop at the player's feet anything the inventory still cannot take - never destroy it
+     * (UltiKits/UltiKits#24). These run against a real MockBukkit player inventory, so the
+     * assertions read the inventory's contents, the balance and the world's dropped items.
+     */
+    @Nested
+    @DisplayName("Over-sized Stack Tests")
+    class OversizedStackTests {
+
+        private static final double PRICE = 100.0;
+        private final double[] balance = {500.0};
+        private org.mockbukkit.mockbukkit.ServerMock server;
+        private org.mockbukkit.mockbukkit.entity.PlayerMock player;
+
+        @BeforeEach
+        void setUp() {
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            Economy economy = setupMockEconomy(); // boots the shared MockBukkit server
+            when(economy.has(any(org.bukkit.OfflinePlayer.class), anyDouble()))
+                    .thenAnswer(inv -> balance[0] >= (Double) inv.getArgument(1));
+            when(economy.withdrawPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble())).thenAnswer(inv -> {
+                double amount = inv.getArgument(1);
+                balance[0] -= amount;
+                return new EconomyResponse(amount, balance[0], EconomyResponse.ResponseType.SUCCESS, "");
+            });
+            server = MockBukkit.getMock();
+            player = server.addPlayer();
+        }
+
+        /** A paid, re-buyable kit whose single stack is {@code stack}. */
+        private KitServiceImpl serviceWithKit(String name, ItemStack stack) throws Exception {
+            KitDefinition kit = createTestKit(name);
+            kit.setPrice(PRICE);
+            kit.setReBuyable(true);
+            kit.setItems("someBase64Data");
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+            doReturn(new ItemStack[]{stack}).when(spyService).deserializeItems("someBase64Data");
+            return spyService;
+        }
+
+        /** Fills every storage slot but the first {@code free} with a full stack of dirt. */
+        private void leaveFreeSlots(int free) {
+            ItemStack[] contents = new ItemStack[36];
+            for (int i = free; i < contents.length; i++) {
+                contents[i] = new ItemStack(Material.DIRT, 64);
+            }
+            player.getInventory().setStorageContents(contents);
+        }
+
+        private int count(Material material) {
+            int total = 0;
+            for (ItemStack stack : player.getInventory().getStorageContents()) {
+                if (stack != null && stack.getType() == material) {
+                    total += stack.getAmount();
+                }
+            }
+            return total;
+        }
+
+        @Test
+        @DisplayName("128 cobblestone needs two slots: with one free slot the claim is refused before any charge")
+        void oversizedStackRefusedBeforeCharging() throws Exception {
+            leaveFreeSlots(1);
+            ItemStack[] before = player.getInventory().getStorageContents().clone();
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 128));
+
+            KitService.ClaimResult result = spyService.claimKit(player, "bigstone");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.INVENTORY_FULL);
+            assertThat(balance[0]).isEqualTo(500.0);
+            assertThat(player.getInventory().getStorageContents()).containsExactly(before);
+            assertThat(count(Material.COBBLESTONE)).isZero();
+            verify(mockClaimOperator, never()).insert(any(KitClaimData.class));
+        }
+
+        @Test
+        @DisplayName("with the two slots it needs, the whole over-sized stack arrives and nothing is dropped")
+        void oversizedStackDeliveredInFull() throws Exception {
+            leaveFreeSlots(2);
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 128));
+
+            KitService.ClaimResult result = spyService.claimKit(player, "bigstone");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.SUCCESS);
+            assertThat(balance[0]).isEqualTo(400.0);
+            assertThat(count(Material.COBBLESTONE)).isEqualTo(128);
+            assertThat(player.getWorld().getEntitiesByClass(org.bukkit.entity.Item.class)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("the slot count uses the stack's own maximum, not its material's default")
+        void slotCountUsesTheStacksOwnMaximum() throws Exception {
+            ItemStack stack = new ItemStack(Material.COBBLESTONE, 32);
+            org.bukkit.inventory.meta.ItemMeta meta = stack.getItemMeta();
+            meta.setMaxStackSize(16);
+            stack.setItemMeta(meta);
+            // Pre-assertion: the component is what the stack reports, so a count by the material's
+            // default (64, one slot) and a count by the stack's own maximum (16, two slots) differ.
+            assertThat(stack.getMaxStackSize()).isEqualTo(16);
+            assertThat(Material.COBBLESTONE.getMaxStackSize()).isEqualTo(64);
+            leaveFreeSlots(1);
+            KitServiceImpl spyService = serviceWithKit("capped", stack);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "capped");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.INVENTORY_FULL);
+            assertThat(balance[0]).isEqualTo(500.0);
+        }
+
+        /**
+         * {@code addItem} tops up matching partial stacks before it takes an empty slot, so the check
+         * must count that room too - counting only empty slots refused a claim that fits. 65
+         * cobblestone fit a matching 63-stack (1 more) plus one empty slot (64).
+         */
+        @Test
+        @DisplayName("room left in a matching partial stack counts towards the fit")
+        void mergeIntoAPartialStackCountsTowardsTheFit() throws Exception {
+            leaveFreeSlots(1);
+            player.getInventory().setItem(1, new ItemStack(Material.COBBLESTONE, 63));
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 65));
+
+            KitService.ClaimResult result = spyService.claimKit(player, "bigstone");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.SUCCESS);
+            assertThat(balance[0]).isEqualTo(400.0);
+            assertThat(count(Material.COBBLESTONE)).isEqualTo(128);
+        }
+
+        @Test
+        @DisplayName("a partial stack of a different item is no room at all")
+        void aDissimilarPartialStackIsNoRoom() throws Exception {
+            leaveFreeSlots(1);
+            player.getInventory().setItem(1, new ItemStack(Material.STONE, 63));
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 65));
+
+            assertThat(spyService.claimKit(player, "bigstone")).isEqualTo(KitService.ClaimResult.INVENTORY_FULL);
+            assertThat(balance[0]).isEqualTo(500.0);
+        }
+
+        @Test
+        @DisplayName("two kit stacks of one item share the slot the first of them starts")
+        void kitStacksShareTheSlotAnEarlierOneStarts() throws Exception {
+            leaveFreeSlots(1);
+            KitDefinition kit = createTestKit("halves");
+            kit.setPrice(PRICE);
+            kit.setReBuyable(true);
+            kit.setItems("someBase64Data");
+            KitServiceImpl spyService = spy(service);
+            injectKit(spyService, kit);
+            doReturn(new ItemStack[]{new ItemStack(Material.COBBLESTONE, 32), new ItemStack(Material.COBBLESTONE, 32)})
+                    .when(spyService).deserializeItems("someBase64Data");
+
+            assertThat(spyService.claimKit(player, "halves")).isEqualTo(KitService.ClaimResult.SUCCESS);
+            assertThat(count(Material.COBBLESTONE)).isEqualTo(64);
+        }
+
+        @Test
+        @DisplayName("control: ordinary stacks still need one slot each")
+        void ordinaryStacksNeedOneSlotEach() throws Exception {
+            leaveFreeSlots(1);
+            KitServiceImpl spyService = serviceWithKit("onestack", new ItemStack(Material.COBBLESTONE, 64));
+
+            assertThat(spyService.claimKit(player, "onestack")).isEqualTo(KitService.ClaimResult.SUCCESS);
+            assertThat(count(Material.COBBLESTONE)).isEqualTo(64);
+        }
+
+        /**
+         * The second line of defence: whatever {@code addItem} still hands back - an inventory another
+         * plugin filled between the check and the delivery - is dropped at the player's location,
+         * each leftover once, and the player is told. The inventory is a mock here only because
+         * MockBukkit's {@code addItem} does not report leftovers; the world is the real mock world,
+         * so the dropped items are read from it.
+         */
+        @Test
+        @DisplayName("anything addItem cannot place is dropped at the player's feet once, and the player is told")
+        void leftoversAreDroppedNotDestroyed() throws Exception {
+            org.bukkit.World world = player.getWorld();
+            org.bukkit.Location feet = new org.bukkit.Location(world, 10, 64, 10);
+            Player mocked = createMockPlayer();
+            when(mocked.getWorld()).thenReturn(world);
+            when(mocked.getLocation()).thenReturn(feet);
+            PlayerInventory inventory = mocked.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[36]);
+            ItemStack leftover = new ItemStack(Material.COBBLESTONE, 64);
+            HashMap<Integer, ItemStack> leftovers = new HashMap<>();
+            leftovers.put(0, leftover);
+            when(inventory.addItem(any(ItemStack.class))).thenReturn(leftovers);
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 128));
+
+            KitService.ClaimResult result = spyService.claimKit(mocked, "bigstone");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.SUCCESS);
+            List<org.bukkit.entity.Item> dropped =
+                    new ArrayList<>(world.getEntitiesByClass(org.bukkit.entity.Item.class));
+            assertThat(dropped).hasSize(1);
+            assertThat(dropped.get(0).getItemStack().getType()).isEqualTo(Material.COBBLESTONE);
+            assertThat(dropped.get(0).getItemStack().getAmount()).isEqualTo(64);
+            ArgumentCaptor<String> told = ArgumentCaptor.forClass(String.class);
+            verify(mocked, atLeastOnce()).sendMessage(told.capture());
+            assertThat(told.getAllValues())
+                    .anyMatch(line -> line.contains(CatalogueText.text("en", "kits.claim.leftovers_dropped")));
         }
     }
 
@@ -2137,6 +2813,34 @@ class KitServiceImplTest {
             verify(spyService).saveKitToFile("editable", kit);
         }
 
+        /**
+         * A save the file does not take must leave the kit as it was: the editor reports the failure,
+         * so a claim afterwards must still hand out the items the file holds, not the unsaved ones.
+         */
+        @Test
+        @DisplayName("a failed save leaves the kit's live items unchanged")
+        void failedSaveLeavesLiveItemsUnchanged() throws Exception {
+            File upper = createSimpleKitFile("VIP");
+            service = new KitServiceImpl(plugin, config) {
+                @Override
+                File[] listKitFiles(File folder) {
+                    return null;
+                }
+            };
+            KitServiceImpl spyService = spy(service);
+            KitDefinition kit = spyService.getKit("vip");
+            String before = kit.getItems();
+            doReturn("unsaved-items").when(spyService).serializeItems(any(ItemStack[].class));
+            ItemStack stone = mock(ItemStack.class);
+            when(stone.getType()).thenReturn(Material.STONE);
+
+            KitService.SaveResult result = spyService.saveKitItems("vip", new ItemStack[]{stone});
+
+            assertThat(result).isEqualTo(KitService.SaveResult.FAILED);
+            assertThat(spyService.getKit("vip").getItems()).isEqualTo(before).isNotEqualTo("unsaved-items");
+            assertThat(YamlConfiguration.loadConfiguration(upper).getString("items", "")).isEqualTo(before);
+        }
+
         @Test
         @DisplayName("saveKitItems returns false for nonexistent kit")
         void saveNonexistentKit() {
@@ -2145,6 +2849,56 @@ class KitServiceImplTest {
 
             KitService.SaveResult result = service.saveKitItems("nosuchkit", new ItemStack[]{mockItem});
             assertThat(result).isEqualTo(KitService.SaveResult.FAILED);
+        }
+
+        /**
+         * The save half of the same root cause: a save must write the file the kit loads from. Writing
+         * a rebuilt {@code vip.yml} beside {@code VIP.yml} left two files mapping to one kit, and
+         * which one a reload kept depended on directory order, so a save reported as done could
+         * silently revert.
+         */
+        @Test
+        @DisplayName("saving a kit loaded from a file with capitals writes that file, not a second one")
+        void saveKitToFileWritesTheFileTheKitLoadsFrom() throws Exception {
+            File upper = createSimpleKitFile("VIP");
+            service = createService();
+            KitDefinition kit = service.getKit("vip");
+            kit.setPrice(42.0);
+
+            assertThat(service.saveKitToFile("vip", kit)).isTrue();
+
+            File[] files = new File(tempDir, "kits").listFiles((dir, name) -> name.endsWith(".yml"));
+            assertThat(files).extracting(File::getName).containsExactly("VIP.yml");
+            assertThat(YamlConfiguration.loadConfiguration(upper).getDouble("price")).isEqualTo(42.0);
+        }
+
+        /**
+         * A kits folder that cannot be listed gives no way to know which file the kit loads from, so
+         * the save fails rather than writing a second file beside the real one - in a folder the
+         * server may write to but not list, that second file would win or lose against the stale one
+         * in directory order after the next reload.
+         */
+        @Test
+        @DisplayName("a save fails, writing nothing, when the kits folder cannot be listed")
+        void saveKitToFileFailsWhenTheKitsFolderCannotBeListed() throws Exception {
+            File upper = createSimpleKitFile("VIP");
+            String before = new String(java.nio.file.Files.readAllBytes(upper.toPath()), "UTF-8");
+            service = new KitServiceImpl(plugin, config) {
+                @Override
+                File[] listKitFiles(File folder) {
+                    return null;
+                }
+            };
+            KitDefinition kit = service.getKit("vip");
+            kit.setPrice(42.0);
+
+            assertThat(service.saveKitToFile("vip", kit)).isFalse();
+
+            assertThat(new File(tempDir, "kits").list()).containsExactly("VIP.yml");
+            assertThat(new String(java.nio.file.Files.readAllBytes(upper.toPath()), "UTF-8")).isEqualTo(before);
+            ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).error(error.capture());
+            assertThat(error.getAllValues()).anyMatch(line -> line.contains(upper.getParentFile().getAbsolutePath()));
         }
 
         @Test
@@ -2216,6 +2970,476 @@ class KitServiceImplTest {
             assertThat(loaded.isReBuyable()).isTrue();
             assertThat(loaded.getCooldown()).isEqualTo(600);
             assertThat(loaded.getItems()).isEqualTo("testdata");
+        }
+    }
+
+    // =========================================================================
+    // Kit names that would become a path outside the kits folder
+    // =========================================================================
+
+    /**
+     * A kit name becomes the file {@code kits/<name>.yml}, so a name holding a path separator or
+     * {@code ..} would make {@code /kits create} write outside the kits folder. Such a name is refused
+     * before any file is written.
+     */
+    @Nested
+    @DisplayName("Kit names with a path")
+    class KitNamePathTests {
+
+        private Player playerWithOneItem() {
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[]{stone});
+            return player;
+        }
+
+        private List<java.nio.file.Path> filesUnder(java.nio.file.Path root) throws IOException {
+            try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(root)) {
+                return paths.filter(java.nio.file.Files::isRegularFile).collect(java.util.stream.Collectors.toList());
+            }
+        }
+
+        @Test
+        @DisplayName("/kits create refuses a name with a path separator or .., writing nothing anywhere")
+        void createRefusesNamesWithAPath() throws Exception {
+            java.nio.file.Path outside = tempDir.toPath().resolve("outside");
+            java.nio.file.Files.createDirectories(outside);
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl spyService = spy(createService());
+            doReturn("items").when(spyService).serializeItems(any(ItemStack[].class));
+            Player player = playerWithOneItem();
+            List<java.nio.file.Path> before = filesUnder(tempDir.toPath());
+
+            for (String name : new String[] {"../escape", "../outside/x", "a/b", "a\\b", "..", "x/../../y"}) {
+                assertThat(spyService.createKit(player, name)).as(name).isEqualTo(KitService.CreateResult.NAME_HAS_PATH);
+            }
+
+            assertThat(filesUnder(tempDir.toPath())).isEqualTo(before);
+            assertThat(tempDir.toPath().getParent().resolve("y.yml")).doesNotExist();
+            verify(spyService, never()).saveKitToFile(anyString(), any(KitDefinition.class), anyBoolean());
+        }
+
+        /**
+         * The rule a sender is told is "no /, \\ or .." and it holds literally: {@code a..b} is refused too,
+         * while a single dot is an ordinary character.
+         */
+        @Test
+        @DisplayName("a name holding .. anywhere is refused, a single dot is accepted")
+        void dotDotAnywhereIsRefused() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl spyService = spy(createService());
+            doReturn("items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            assertThat(spyService.createKit(playerWithOneItem(), "a..b")).isEqualTo(KitService.CreateResult.NAME_HAS_PATH);
+            assertThat(spyService.createKit(playerWithOneItem(), "a.b")).isEqualTo(KitService.CreateResult.SUCCESS);
+
+            assertThat(new File(tempDir, "kits").list()).containsExactly("a.b.yml");
+        }
+
+        /**
+         * A name the platform cannot turn into a path at all (a NUL here; {@code *} or {@code ?} on
+         * Windows) is a failed create, not an exception escaping the command.
+         */
+        @Test
+        @DisplayName("a name the platform cannot make a path of fails the create without an exception")
+        void nameThatIsNoPathFailsCleanly() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl spyService = spy(createService());
+            doReturn("items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            assertThat(spyService.createKit(playerWithOneItem(), "a\u0000b")).isEqualTo(KitService.CreateResult.ERROR);
+
+            assertThat(new File(tempDir, "kits").list()).isEmpty();
+        }
+
+        /**
+         * The file writer is where a kit name becomes a path, so it refuses a name that resolves outside
+         * the kits folder whatever called it.
+         */
+        @Test
+        @DisplayName("the kit file writer refuses a name that resolves outside the kits folder")
+        void fileWriterRefusesAPathOutsideTheKitsFolder() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            KitDefinition kit = createTestKit("../escape");
+
+            assertThat(service.saveKitToFile("../escape", kit)).isFalse();
+
+            assertThat(tempDir.toPath().resolve("escape.yml")).doesNotExist();
+            assertThat(new File(tempDir, "kits").list()).isEmpty();
+        }
+    }
+
+    // =========================================================================
+    // /kits create over an existing file
+    // =========================================================================
+
+    /**
+     * {@code /kits create} only ever creates a kit file. A file that already loads as the name - one
+     * placed by hand without a reload, an unreadable one, a case variant such as {@code VIP.yml} for
+     * {@code vip}, or one that appears while the command runs - is refused, named, and left untouched.
+     */
+    @Nested
+    @DisplayName("/kits create over an existing file")
+    class CreateOverExistingFileTests {
+
+        private Player playerWithOneItem() {
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[]{stone});
+            return player;
+        }
+
+        private byte[] write(String fileName, String content) throws IOException {
+            File folder = new File(tempDir, "kits");
+            folder.mkdirs();
+            byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            java.nio.file.Files.write(new File(folder, fileName).toPath(), bytes);
+            return bytes;
+        }
+
+        @Test
+        @DisplayName("a hand-placed file not yet reloaded is not overwritten, and is named")
+        void unloadedFileIsNotOverwritten() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl spyService = spy(createService());
+            doReturn("admin-items").when(spyService).serializeItems(any(ItemStack[].class));
+            byte[] operator = write("fresh.yml", "icon: CHEST\nitems: \"operator-items\"\n");
+
+            assertThat(spyService.createKit(playerWithOneItem(), "fresh")).isEqualTo(KitService.CreateResult.FILE_EXISTS);
+
+            assertThat(java.nio.file.Files.readAllBytes(new File(tempDir, "kits/fresh.yml").toPath())).isEqualTo(operator);
+            assertThat(spyService.kitFileNames("fresh")).containsExactly("fresh.yml");
+            assertThat(spyService.getKit("fresh")).isNull();
+        }
+
+        @Test
+        @DisplayName("an unreadable case-variant file (VIP.yml for vip) is not overwritten")
+        void unreadableCaseVariantIsNotOverwritten() throws Exception {
+            byte[] broken = write("VIP.yml", "icon: [unclosed");
+            KitServiceImpl spyService = spy(createService());
+            doReturn("admin-items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            assertThat(spyService.createKit(playerWithOneItem(), "vip")).isEqualTo(KitService.CreateResult.FILE_EXISTS);
+
+            assertThat(java.nio.file.Files.readAllBytes(new File(tempDir, "kits/VIP.yml").toPath())).isEqualTo(broken);
+            assertThat(new File(tempDir, "kits").list()).containsExactly("VIP.yml");
+            assertThat(spyService.kitFileNames("vip")).containsExactly("VIP.yml");
+        }
+
+        @Test
+        @DisplayName("a file that appears while the kit is being created is not overwritten")
+        void fileAppearingMeanwhileIsNotOverwritten() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            java.nio.file.Path appeared = tempDir.toPath().resolve("kits").resolve("race.yml");
+            byte[] operator = "icon: CHEST\nitems: \"operator-items\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            KitServiceImpl racing = new KitServiceImpl(plugin, config) {
+                @Override
+                public String serializeItems(ItemStack[] items) {
+                    try {
+                        java.nio.file.Files.write(appeared, operator);
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                    return "admin-items";
+                }
+            };
+
+            assertThat(racing.createKit(playerWithOneItem(), "race")).isEqualTo(KitService.CreateResult.FILE_EXISTS);
+
+            assertThat(java.nio.file.Files.readAllBytes(appeared)).isEqualTo(operator);
+        }
+
+        /**
+         * The file is created exclusively, so one that appears after the writer's own scan - the last
+         * moment a listing can see it - is not overwritten either.
+         */
+        @Test
+        @DisplayName("a file that appears after the writer's own scan is not overwritten")
+        void fileAppearingAfterTheLastScanIsNotOverwritten() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            java.nio.file.Path appeared = tempDir.toPath().resolve("kits").resolve("late.yml");
+            byte[] operator = "icon: CHEST\nitems: \"operator-items\"\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            int[] listings = {0};
+            KitServiceImpl racing = spy(new KitServiceImpl(plugin, config) {
+                @Override
+                File[] listKitFiles(File folder) {
+                    File[] listed = super.listKitFiles(folder);
+                    // The create lists the folder three times: two checks, then the writer's own scan.
+                    if (++listings[0] == 3) {
+                        try {
+                            java.nio.file.Files.write(appeared, operator);
+                        } catch (IOException e) {
+                            throw new java.io.UncheckedIOException(e);
+                        }
+                    }
+                    return listed;
+                }
+            });
+            listings[0] = 0;
+            doReturn("admin-items").when(racing).serializeItems(any(ItemStack[].class));
+
+            assertThat(racing.createKit(playerWithOneItem(), "late")).isEqualTo(KitService.CreateResult.FILE_EXISTS);
+
+            assertThat(java.nio.file.Files.readAllBytes(appeared)).isEqualTo(operator);
+        }
+
+        /**
+         * A create whose write fails after it claimed its file removes that file again: otherwise the
+         * failure would read as "a file already exists", a retry would be refused, and a reload would
+         * load an empty kit.
+         */
+        @Test
+        @DisplayName("a create whose write fails leaves no claimed file and reports an error")
+        void failedCreateLeavesNoClaimedFile() throws Exception {
+            org.junit.jupiter.api.Assumptions.assumeTrue(
+                    java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix"), "POSIX permissions");
+            org.junit.jupiter.api.Assumptions.assumeFalse("root".equals(System.getProperty("user.name")),
+                    "root writes a read-only file");
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl failing = spy(new KitServiceImpl(plugin, config) {
+                @Override
+                void claimNewFile(java.nio.file.Path file) throws IOException {
+                    super.claimNewFile(file);
+                    java.nio.file.Files.setPosixFilePermissions(file,
+                            java.nio.file.attribute.PosixFilePermissions.fromString("r--r--r--"));
+                }
+            });
+            doReturn("admin-items").when(failing).serializeItems(any(ItemStack[].class));
+
+            assertThat(failing.createKit(playerWithOneItem(), "broken")).isEqualTo(KitService.CreateResult.ERROR);
+
+            assertThat(new File(tempDir, "kits").list()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("a create into a kits folder removed since the start recreates the folder")
+        void createRecreatesAMissingKitsFolder() throws Exception {
+            service = createService();
+            java.nio.file.Path kits = tempDir.toPath().resolve("kits");
+            try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(kits)) {
+                paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+            }
+            KitServiceImpl spyService = spy(service);
+            doReturn("admin-items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            assertThat(spyService.createKit(playerWithOneItem(), "again")).isEqualTo(KitService.CreateResult.SUCCESS);
+
+            assertThat(kits.resolve("again.yml")).isRegularFile();
+        }
+
+        @Test
+        @DisplayName("a name with no file is still created (control)")
+        void newNameIsCreated() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl spyService = spy(createService());
+            doReturn("admin-items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            assertThat(spyService.createKit(playerWithOneItem(), "brand")).isEqualTo(KitService.CreateResult.SUCCESS);
+
+            assertThat(new File(tempDir, "kits/brand.yml")).isFile();
+        }
+    }
+
+    // =========================================================================
+    // Duplicate kit files
+    // =========================================================================
+
+    /**
+     * A kit that more than one file maps to (for example {@code VIP.yml} and {@code vip.yml} on a
+     * case-sensitive file system) is neither saved nor deleted: nothing is written or removed, and the
+     * caller can name the files.
+     */
+    @Nested
+    @DisplayName("Duplicate kit files")
+    class DuplicateFileTests {
+
+        private File upper;
+        private File lower;
+
+        private File writeKitFile(String fileName, String items) throws IOException {
+            File kitsFolder = new File(tempDir, "kits");
+            kitsFolder.mkdirs();
+            File file = new File(kitsFolder, fileName);
+            String yaml = "displayName: \"&a" + fileName + "\"\nicon: CHEST\nitems: \"" + items + "\"\n";
+            java.nio.file.Files.write(file.toPath(), yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return file;
+        }
+
+        private byte[] bytes(File file) throws IOException {
+            return java.nio.file.Files.readAllBytes(file.toPath());
+        }
+
+        private void twoFilesForOneKit() throws IOException {
+            upper = writeKitFile("VIP.yml", "upper-items");
+            lower = writeKitFile("vip.yml", "lower-items");
+        }
+
+        @Test
+        @DisplayName("a kit two files map to is not saved, neither file changes, and the files are named")
+        void saveRefusedForDuplicateFiles() throws Exception {
+            twoFilesForOneKit();
+            byte[] upperBefore = bytes(upper);
+            byte[] lowerBefore = bytes(lower);
+            KitServiceImpl spyService = spy(createService());
+            String liveBefore = spyService.getKit("vip").getItems();
+            doReturn("new-items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            KitService.SaveResult result = spyService.saveKitItems("vip", new ItemStack[]{mockItemStack(Material.STONE)});
+
+            assertThat(result).isEqualTo(KitService.SaveResult.FILE_CONFLICT);
+            assertThat(bytes(upper)).isEqualTo(upperBefore);
+            assertThat(bytes(lower)).isEqualTo(lowerBefore);
+            assertThat(new File(tempDir, "kits").list()).containsExactlyInAnyOrder("VIP.yml", "vip.yml");
+            assertThat(spyService.getKit("vip").getItems()).isEqualTo(liveBefore);
+            assertThat(spyService.conflictingFiles("vip")).containsExactly("VIP.yml", "vip.yml");
+        }
+
+        /**
+         * The file writer itself never picks one of several files: every writer (the editor's save and
+         * {@code createKit}) goes through it, so the refusal holds even for a caller that does not ask
+         * {@code conflictingFiles} first.
+         */
+        @Test
+        @DisplayName("the kit file writer refuses a kit two files map to and writes neither")
+        void fileWriterRefusesDuplicateFiles() throws Exception {
+            twoFilesForOneKit();
+            byte[] upperBefore = bytes(upper);
+            byte[] lowerBefore = bytes(lower);
+            service = createService();
+            KitDefinition kit = service.getKit("vip");
+            kit.setItems("new-items");
+
+            assertThat(service.saveKitToFile("vip", kit)).isFalse();
+
+            assertThat(bytes(upper)).isEqualTo(upperBefore);
+            assertThat(bytes(lower)).isEqualTo(lowerBefore);
+            assertThat(new File(tempDir, "kits").list()).containsExactlyInAnyOrder("VIP.yml", "vip.yml");
+        }
+
+        @Test
+        @DisplayName("a kit two files map to is not deleted: both files stay and the kit stays loaded")
+        void deleteRefusedForDuplicateFiles() throws Exception {
+            twoFilesForOneKit();
+            byte[] upperBefore = bytes(upper);
+            byte[] lowerBefore = bytes(lower);
+            service = createService();
+
+            KitService.DeleteResult result = service.deleteKit("vip");
+
+            assertThat(result).isEqualTo(KitService.DeleteResult.FILE_CONFLICT);
+            assertThat(bytes(upper)).isEqualTo(upperBefore);
+            assertThat(bytes(lower)).isEqualTo(lowerBefore);
+            assertThat(service.getKit("vip")).isNotNull();
+        }
+
+        private String[] kitsFolderListing() {
+            String[] names = new File(tempDir, "kits").list();
+            Arrays.sort(names);
+            return names;
+        }
+
+        /**
+         * Loading is unchanged - one of the files loads, as before, so the kit can still be claimed -
+         * but the console now names the files and the one that was loaded, because the kit can no
+         * longer be edited or deleted until only one remains.
+         */
+        @Test
+        @DisplayName("loading a kit two files define warns once, naming both files and the one loaded")
+        void loadWarnsAboutDuplicateFiles() throws Exception {
+            twoFilesForOneKit();
+
+            service = createService();
+
+            KitDefinition loaded = service.getKit("vip");
+            assertThat(loaded).isNotNull();
+            String loadedFile = "upper-items".equals(loaded.getItems()) ? "VIP.yml" : "vip.yml";
+            ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(warning.capture());
+            assertThat(warning.getAllValues()).containsOnlyOnce(String.format(
+                    CatalogueText.text("zh", "kits.log.kit_file_conflict"),
+                    new File(tempDir, "kits").getAbsolutePath(), "vip", "VIP.yml, vip.yml", loadedFile));
+        }
+
+        @Test
+        @DisplayName("creating a kit two unloadable files already map to is refused as a conflict, writing nothing")
+        void createRefusedForDuplicateFiles() throws Exception {
+            File folder = new File(tempDir, "kits");
+            folder.mkdirs();
+            File upperFile = new File(folder, "VIP.yml");
+            File lowerFile = new File(folder, "vip.yml");
+            java.nio.file.Files.write(upperFile.toPath(), "icon: [unclosed".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            java.nio.file.Files.write(lowerFile.toPath(), "icon: [unclosed".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            byte[] upperBefore = bytes(upperFile);
+            byte[] lowerBefore = bytes(lowerFile);
+            KitServiceImpl spyService = spy(createService());
+            assertThat(spyService.getKit("vip")).isNull();
+            doReturn("items").when(spyService).serializeItems(any(ItemStack[].class));
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[]{stone});
+
+            KitService.CreateResult result = spyService.createKit(player, "vip");
+
+            assertThat(result).isEqualTo(KitService.CreateResult.FILE_CONFLICT);
+            assertThat(bytes(upperFile)).isEqualTo(upperBefore);
+            assertThat(bytes(lowerFile)).isEqualTo(lowerBefore);
+            assertThat(kitsFolderListing()).containsExactly("VIP.yml", "vip.yml");
+        }
+
+        /**
+         * A second file that appears between the gateway's check and the write is caught by the writer;
+         * the caller still gets the conflict, with the files, not a bare failure.
+         */
+        @Test
+        @DisplayName("a conflict the writer finds after the gateway's check is still reported as a conflict")
+        void conflictFoundByTheWriterIsReportedAsAConflict() throws Exception {
+            twoFilesForOneKit();
+            KitServiceImpl spyService = spy(createService());
+            doReturn(Collections.emptyList()).doCallRealMethod().when(spyService).conflictingFiles("vip");
+            doReturn("new-items").when(spyService).serializeItems(any(ItemStack[].class));
+
+            KitService.SaveResult result = spyService.saveKitItems("vip", new ItemStack[]{mockItemStack(Material.STONE)});
+
+            assertThat(result).isEqualTo(KitService.SaveResult.FILE_CONFLICT);
+        }
+
+        /**
+         * The create side of the late-found conflict: a second file the writer finds after
+         * {@code createKit}'s own check comes back as {@code FILE_CONFLICT}, not {@code ERROR}.
+         */
+        @Test
+        @DisplayName("a conflict the writer finds after createKit's check is reported as a conflict")
+        void createConflictFoundByTheWriterIsReportedAsAConflict() throws Exception {
+            File folder = new File(tempDir, "kits");
+            folder.mkdirs();
+            java.nio.file.Files.write(new File(folder, "VIP.yml").toPath(), "icon: [unclosed".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            java.nio.file.Files.write(new File(folder, "vip.yml").toPath(), "icon: [unclosed".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            KitServiceImpl spyService = spy(createService());
+            // Both early checks miss the files (they appear after them); the writer must still refuse.
+            doReturn(Collections.emptyList()).doCallRealMethod().when(spyService).conflictingFiles("vip");
+            doReturn(Collections.emptyList()).when(spyService).kitFileNames("vip");
+            doReturn("items").when(spyService).serializeItems(any(ItemStack[].class));
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            PlayerInventory inventory = player.getInventory();
+            when(inventory.getStorageContents()).thenReturn(new ItemStack[]{stone});
+
+            assertThat(spyService.createKit(player, "vip")).isEqualTo(KitService.CreateResult.FILE_CONFLICT);
+            assertThat(kitsFolderListing()).containsExactly("VIP.yml", "vip.yml");
+        }
+
+        @Test
+        @DisplayName("a kit with a single file has no conflicting files")
+        void singleFileIsNoConflict() throws Exception {
+            writeKitFile("solo.yml", "solo-items");
+            service = createService();
+
+            assertThat(service.conflictingFiles("solo")).isEmpty();
+            assertThat(service.conflictingFiles("missing")).isEmpty();
         }
     }
 
@@ -3013,7 +4237,7 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("data").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(false).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+            doReturn(false).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
 
             KitService.CreateResult result = spyService.createKit(player, "savefail");
             assertThat(result).isEqualTo(KitService.CreateResult.ERROR);
@@ -3031,13 +4255,13 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("serialized").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
 
             KitService.CreateResult result = spyService.createKit(player, "icontest");
             assertThat(result).isEqualTo(KitService.CreateResult.SUCCESS);
 
             ArgumentCaptor<KitDefinition> captor = ArgumentCaptor.forClass(KitDefinition.class);
-            verify(spyService).saveKitToFile(eq("icontest"), captor.capture());
+            verify(spyService).saveKitToFile(eq("icontest"), captor.capture(), eq(true));
             assertThat(captor.getValue().getIcon()).isEqualTo("DIAMOND_SWORD");
         }
 
@@ -3051,12 +4275,12 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("serialized").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
 
             spyService.createKit(player, "MyNewKit");
 
             ArgumentCaptor<KitDefinition> captor = ArgumentCaptor.forClass(KitDefinition.class);
-            verify(spyService).saveKitToFile(eq("mynewkit"), captor.capture());
+            verify(spyService).saveKitToFile(eq("mynewkit"), captor.capture(), eq(true));
             assertThat(captor.getValue().getDisplayName()).isEqualTo("&fMyNewKit");
         }
 
@@ -3070,7 +4294,7 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("serialized").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
 
             KitService.CreateResult result = spyService.createKit(player, "added");
             assertThat(result).isEqualTo(KitService.CreateResult.SUCCESS);
@@ -3089,7 +4313,7 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("data").when(spyService).serializeItems(argThat(arr -> arr.length == 1));
-            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
+            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
 
             KitService.CreateResult result = spyService.createKit(player, "filtered");
             assertThat(result).isEqualTo(KitService.CreateResult.SUCCESS);
@@ -3282,6 +4506,8 @@ class KitServiceImplTest {
                     KitService.ClaimResult.EMPTY_KIT,
                     KitService.ClaimResult.PAYMENT_FAILED,
                     KitService.ClaimResult.SYSTEM_DISABLED,
+                    KitService.ClaimResult.NOT_RECORDED,
+                    KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED,
                     KitService.ClaimResult.ERROR
             );
         }
@@ -3294,7 +4520,10 @@ class KitServiceImplTest {
                     KitService.CreateResult.ALREADY_EXISTS,
                     KitService.CreateResult.INVALID_NAME,
                     KitService.CreateResult.EMPTY_INVENTORY,
-                    KitService.CreateResult.ERROR
+                    KitService.CreateResult.ERROR,
+                    KitService.CreateResult.FILE_CONFLICT,
+                    KitService.CreateResult.NAME_HAS_PATH,
+                    KitService.CreateResult.FILE_EXISTS
             );
         }
     }

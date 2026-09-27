@@ -1,6 +1,7 @@
 package com.ultikits.plugins.kits.gui;
 
 import com.ultikits.plugins.kits.i18n.CatalogueText;
+import org.bukkit.ChatColor;
 import com.ultikits.plugins.kits.MockBukkitSupport;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
@@ -321,6 +322,27 @@ class KitEditorGuiTest {
             ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
             verify(player).sendMessage(captor.capture());
             assertThat(captor.getValue()).contains("保存礼包时发生错误");
+            verify(player).closeInventory();
+        }
+
+        @Test
+        @DisplayName("FILE_CONFLICT names the conflicting files, not the generic error")
+        void fileConflictNamesTheFiles() {
+            for (int i = 0; i < 45; i++) {
+                when(topInventory.getItem(i)).thenReturn(null);
+            }
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class)))
+                    .thenReturn(KitService.SaveResult.FILE_CONFLICT);
+            when(kitService.conflictingFiles("testkit")).thenReturn(Arrays.asList("TestKit.yml", "testkit.yml"));
+
+            gui.handleSave();
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(CatalogueText.text("zh", "kits.conflict.not_changed"),
+                            "testkit", "TestKit.yml, testkit.yml"))
+                    .doesNotContain("保存礼包时发生错误");
             verify(player).closeInventory();
         }
 

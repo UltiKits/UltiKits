@@ -5,6 +5,7 @@ import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
+import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.junit.jupiter.api.*;
@@ -235,6 +236,57 @@ class KitCommandsTest {
         }
 
         @Test
+        @DisplayName("NOT_RECORDED tells the player nothing was charged or given (UltiKits/UltiKits#26)")
+        void notRecordedSendsItsOwnMessage() {
+            when(kitService.claimKit(player, "vip")).thenReturn(KitService.ClaimResult.NOT_RECORDED);
+
+            kitCommands.onClaim(player, "vip");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + CatalogueText.text("zh", "kits.claim.not_recorded"));
+        }
+
+        @Test
+        @DisplayName("NOT_RECORDED_REFUND_FAILED does not claim the payment was returned")
+        void notRecordedRefundFailedSendsItsOwnMessage() {
+            when(kitService.claimKit(player, "vip")).thenReturn(KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED);
+
+            kitCommands.onClaim(player, "vip");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + CatalogueText.text("zh", "kits.claim.not_recorded_refund_failed"));
+        }
+
+        /**
+         * Sweep by class: a result the switch forgets falls to {@code default:} and says "Error
+         * claiming kit", which is true of no result but {@code ERROR}. Every other result must have a
+         * reply of its own.
+         */
+        @Test
+        @DisplayName("every claim result other than ERROR has its own reply, never the generic error")
+        void everyResultHasItsOwnReply() {
+            String generic = CatalogueText.text("zh", "kits.claim.error");
+            lenient().when(kitService.getKit(anyString())).thenReturn(null);
+            for (KitService.ClaimResult result : KitService.ClaimResult.values()) {
+                if (result == KitService.ClaimResult.ERROR) {
+                    continue;
+                }
+                reset(player);
+                when(kitService.claimKit(player, "k")).thenReturn(result);
+
+                kitCommands.onClaim(player, "k");
+
+                ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+                verify(player, atLeastOnce()).sendMessage(captor.capture());
+                assertThat(captor.getAllValues()).as(result.name()).noneMatch(m -> m.contains(generic));
+            }
+        }
+
+        @Test
         @DisplayName("ERROR sends generic error message")
         void errorSendsMessage() {
             when(kitService.claimKit(player, "broken")).thenReturn(KitService.ClaimResult.ERROR);
@@ -352,6 +404,29 @@ class KitCommandsTest {
             verify(player).sendMessage(captor.capture());
             assertThat(captor.getValue()).contains("不存在").contains("missing");
         }
+
+        /**
+         * An editor for a kit that more than one file defines could never be saved, so it is not
+         * opened: the admin is told which files conflict instead.
+         */
+        @Test
+        @DisplayName("a kit more than one file defines is not opened for editing, and the files are named")
+        void fileConflictIsNotOpened() {
+            when(player.hasPermission("ultikits.kits.admin")).thenReturn(true);
+            KitDefinition kit = new KitDefinition();
+            kit.setName("vip");
+            when(kitService.getKit("vip")).thenReturn(kit);
+            when(kitService.conflictingFiles("vip")).thenReturn(Arrays.asList("VIP.yml", "vip.yml"));
+
+            kitCommands.onEdit(player, "vip");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(
+                            CatalogueText.text("zh", "kits.conflict.not_changed"), "vip", "VIP.yml, vip.yml"));
+            verify(player, never()).openInventory(any(org.bukkit.inventory.Inventory.class));
+        }
     }
 
     @Nested
@@ -395,6 +470,51 @@ class KitCommandsTest {
             ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
             verify(player).sendMessage(captor.capture());
             assertThat(captor.getValue()).contains("礼包名已存在").contains("dupe");
+        }
+
+        @Test
+        @DisplayName("FILE_CONFLICT names the files that already define the name")
+        void fileConflictNamesTheFiles() {
+            when(player.hasPermission("ultikits.kits.admin")).thenReturn(true);
+            when(kitService.createKit(player, "vip")).thenReturn(KitService.CreateResult.FILE_CONFLICT);
+            when(kitService.conflictingFiles("vip")).thenReturn(Arrays.asList("VIP.yml", "vip.yml"));
+
+            kitCommands.onCreate(player, "vip");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(
+                            CatalogueText.text("zh", "kits.conflict.not_changed"), "vip", "VIP.yml, vip.yml"));
+        }
+
+        @Test
+        @DisplayName("FILE_EXISTS names the file that already exists")
+        void fileExistsNamesTheFile() {
+            when(player.hasPermission("ultikits.kits.admin")).thenReturn(true);
+            when(kitService.createKit(player, "vip")).thenReturn(KitService.CreateResult.FILE_EXISTS);
+            when(kitService.kitFileNames("vip")).thenReturn(Collections.singletonList("VIP.yml"));
+
+            kitCommands.onCreate(player, "vip");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(CatalogueText.text("zh", "kits.create.file_exists"), "vip", "VIP.yml"));
+        }
+
+        @Test
+        @DisplayName("NAME_HAS_PATH says a kit name cannot contain a path")
+        void nameHasPathSaysWhy() {
+            when(player.hasPermission("ultikits.kits.admin")).thenReturn(true);
+            when(kitService.createKit(player, "../x")).thenReturn(KitService.CreateResult.NAME_HAS_PATH);
+
+            kitCommands.onCreate(player, "../x");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(CatalogueText.text("zh", "kits.create.name_has_path"), "../x"));
         }
 
         @Test
@@ -458,7 +578,7 @@ class KitCommandsTest {
         @DisplayName("successful delete sends deleted message")
         void successfulDelete() {
             when(consoleSender.hasPermission("ultikits.kits.admin")).thenReturn(true);
-            when(kitService.deleteKit("old")).thenReturn(true);
+            when(kitService.deleteKit("old")).thenReturn(KitService.DeleteResult.DELETED);
 
             kitCommands.onDelete(consoleSender, "old");
 
@@ -471,7 +591,7 @@ class KitCommandsTest {
         @DisplayName("nonexistent kit sends not found message")
         void nonexistent() {
             when(consoleSender.hasPermission("ultikits.kits.admin")).thenReturn(true);
-            when(kitService.deleteKit("missing")).thenReturn(false);
+            when(kitService.deleteKit("missing")).thenReturn(KitService.DeleteResult.NOT_FOUND);
 
             kitCommands.onDelete(consoleSender, "missing");
 
@@ -481,10 +601,66 @@ class KitCommandsTest {
         }
 
         @Test
+        @DisplayName("a kit whose file could not be deleted gets a failure reply, not the deleted message")
+        void fileNotDeleted() {
+            when(consoleSender.hasPermission("ultikits.kits.admin")).thenReturn(true);
+            when(kitService.deleteKit("premium")).thenReturn(KitService.DeleteResult.FILE_NOT_DELETED);
+
+            kitCommands.onDelete(consoleSender, "premium");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(consoleSender).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(
+                            CatalogueText.text("zh", "kits.delete.file_not_deleted"), "premium"))
+                    .doesNotContain("已删除礼包");
+        }
+
+        @Test
+        @DisplayName("a kit more than one file defines is not deleted, and the reply names the files")
+        void fileConflictNamesTheFiles() {
+            when(consoleSender.hasPermission("ultikits.kits.admin")).thenReturn(true);
+            when(kitService.deleteKit("vip")).thenReturn(KitService.DeleteResult.FILE_CONFLICT);
+            when(kitService.conflictingFiles("vip")).thenReturn(Arrays.asList("VIP.yml", "vip.yml"));
+
+            kitCommands.onDelete(consoleSender, "vip");
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(consoleSender).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(
+                            CatalogueText.text("zh", "kits.conflict.not_changed"), "vip", "VIP.yml, vip.yml"));
+        }
+
+        @Test
+        @DisplayName("each delete outcome has its own reply, in both languages")
+        void everyOutcomeHasADistinctReply() {
+            for (String code : new String[] {"en", "zh"}) {
+                when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer(code));
+                Set<String> replies = new HashSet<>();
+                for (KitService.DeleteResult outcome : KitService.DeleteResult.values()) {
+                    reset(consoleSender);
+                    when(consoleSender.hasPermission("ultikits.kits.admin")).thenReturn(true);
+                    when(kitService.deleteKit("k")).thenReturn(outcome);
+
+                    kitCommands.onDelete(consoleSender, "k");
+
+                    ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+                    verify(consoleSender).sendMessage(captor.capture());
+                    replies.add(captor.getValue());
+                }
+                assertThat(replies).as("distinct replies under language " + code)
+                        .hasSize(KitService.DeleteResult.values().length);
+            }
+            assertThat(CatalogueText.text("en", "kits.delete.file_not_deleted"))
+                    .contains("%s").doesNotContainPattern("[\\u4e00-\\u9fff]");
+        }
+
+        @Test
         @DisplayName("player can also delete kits with permission")
         void playerDelete() {
             when(player.hasPermission("ultikits.kits.admin")).thenReturn(true);
-            when(kitService.deleteKit("test")).thenReturn(true);
+            when(kitService.deleteKit("test")).thenReturn(KitService.DeleteResult.DELETED);
 
             kitCommands.onDelete(player, "test");
 
