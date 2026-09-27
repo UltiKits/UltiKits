@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.gui;
 
+import com.ultikits.plugins.kits.i18n.CatalogueText;
 import com.ultikits.plugins.kits.MockBukkitSupport;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.plugins.kits.service.KitService;
@@ -51,7 +52,7 @@ class KitEditorGuiTest {
     @BeforeEach
     void setUp() {
         MockBukkitSupport.bootstrap();
-        lenient().when(plugin.i18n(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("zh"));
 
         kit = new KitDefinition();
         kit.setName("testkit");
@@ -319,7 +320,7 @@ class KitEditorGuiTest {
 
             ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
             verify(player).sendMessage(captor.capture());
-            assertThat(captor.getValue()).contains("领取礼包时发生错误");
+            assertThat(captor.getValue()).contains("保存礼包时发生错误");
             verify(player).closeInventory();
         }
 
@@ -341,7 +342,7 @@ class KitEditorGuiTest {
             verify(player).sendMessage(captor.capture());
             assertThat(captor.getValue())
                     .contains("礼包系统当前已关闭")
-                    .doesNotContain("领取礼包时发生错误")
+                    .doesNotContain("保存礼包时发生错误")
                     .doesNotContain("已保存礼包");
         }
 
@@ -426,7 +427,7 @@ class KitEditorGuiTest {
 
             gui.handleSave();
 
-            verify(plugin).i18n("已保存礼包: %s");
+            verify(plugin).i18n("kits.editor.saved");
         }
 
         @Test
@@ -439,7 +440,7 @@ class KitEditorGuiTest {
 
             gui.handleSave();
 
-            verify(plugin).i18n("领取礼包时发生错误");
+            verify(plugin).i18n("kits.editor.save_error");
         }
     }
 
@@ -489,8 +490,8 @@ class KitEditorGuiTest {
             gui.onOpen(openEvent);
 
             // Verify the method ran fully: i18n called for save and cancel button labels
-            verify(plugin).i18n("保存");
-            verify(plugin).i18n("取消");
+            verify(plugin).i18n("kits.editor.save");
+            verify(plugin).i18n("kits.editor.cancel");
         }
 
         @Test
@@ -501,7 +502,7 @@ class KitEditorGuiTest {
             gui.onOpen(openEvent);
 
             // Verify i18n was called for the save button label
-            verify(plugin).i18n("保存");
+            verify(plugin).i18n("kits.editor.save");
         }
 
         @Test
@@ -511,7 +512,7 @@ class KitEditorGuiTest {
 
             gui.onOpen(openEvent);
 
-            verify(plugin).i18n("取消");
+            verify(plugin).i18n("kits.editor.cancel");
         }
 
         @Test
@@ -595,8 +596,8 @@ class KitEditorGuiTest {
 
             // Glass panes go in slots 46,47,48,50,51,52 (not 45=save, 49=info, 53=cancel)
             // verify no crash and i18n labels set
-            verify(plugin).i18n("保存");
-            verify(plugin).i18n("取消");
+            verify(plugin).i18n("kits.editor.save");
+            verify(plugin).i18n("kits.editor.cancel");
         }
 
         @Test
@@ -608,8 +609,8 @@ class KitEditorGuiTest {
 
             // The info button displays kit.getName() and description
             // Verify method ran to completion
-            verify(plugin).i18n("保存");
-            verify(plugin).i18n("取消");
+            verify(plugin).i18n("kits.editor.save");
+            verify(plugin).i18n("kits.editor.cancel");
         }
 
         @Test
@@ -655,7 +656,7 @@ class KitEditorGuiTest {
             gui.onOpen(openEvent);
 
             // Should not crash with empty description
-            verify(plugin).i18n("保存");
+            verify(plugin).i18n("kits.editor.save");
         }
     }
 }

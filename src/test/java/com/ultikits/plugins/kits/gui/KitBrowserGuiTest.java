@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.gui;
 
+import com.ultikits.plugins.kits.i18n.CatalogueText;
 import com.ultikits.plugins.kits.MockBukkitSupport;
 import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.model.KitDefinition;
@@ -60,7 +61,7 @@ class KitBrowserGuiTest {
     @BeforeEach
     void setUp() {
         MockBukkitSupport.bootstrap();
-        lenient().when(plugin.i18n(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("zh"));
         config = new KitsConfig("config/config.yml");
         gui = new KitBrowserGui(player, plugin, kitService, config, 0);
 
@@ -928,7 +929,7 @@ class KitBrowserGuiTest {
          * Regression guard, NOT evidence: this passes with and without the fix, because before it
          * PAYMENT_FAILED fell to the default branch, which also does not close the inventory. It
          * earns its place because the sibling {@code nonSuccessNoClose} drives only
-         * INSUFFICIENT_FUNDS despite its name, so nothing else pins this branch (gate-1 IN-02).
+         * INSUFFICIENT_FUNDS despite its name, so nothing else pins this branch.
          */
         @Test
         @DisplayName("PAYMENT_FAILED does not close the inventory (guard, passes either way)")
@@ -1423,7 +1424,7 @@ class KitBrowserGuiTest {
     }
 
     // -----------------------------------------------------------------------
-    // A page index that no longer exists (UltiKits/UltiKits#13, Codex P2)
+    // A page index that no longer exists (UltiKits/UltiKits#13)
     // -----------------------------------------------------------------------
 
     /**

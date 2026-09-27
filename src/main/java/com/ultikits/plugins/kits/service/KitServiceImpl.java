@@ -77,7 +77,7 @@ public class KitServiceImpl implements KitService {
 
         File[] files = kitsFolder.listFiles((dir, name) -> name.endsWith(".yml"));
         if (files == null || files.length == 0) {
-            logger.warn(plugin.i18n("没有找到礼包配置文件"));
+            logger.warn(plugin.i18n("kits.log.no_kit_files"));
             return;
         }
 
@@ -92,7 +92,7 @@ public class KitServiceImpl implements KitService {
             }
         }
 
-        logger.info(String.format(plugin.i18n("共加载 %d 个礼包"), loadedCount));
+        logger.info(String.format(plugin.i18n("kits.log.loaded_count"), loadedCount));
     }
 
     @Override
@@ -359,9 +359,9 @@ public class KitServiceImpl implements KitService {
     private ClaimResult deliverKit(Player player, KitDefinition kit, ItemStack[] items) {
         // No isAvailable() term here on purpose: it would short-circuit this whole condition to
         // false if the Vault provider were deregistered after checkPrerequisites ran, delivering
-        // the paid kit free - the very outcome this guard exists to stop (UltiKits/UltiKits#20,
-        // gate-1 WR-01). The framework's bridge already returns false when no provider is
-        // registered, so the term bought nothing and could only turn a refusal into a giveaway.
+        // the paid kit free - the very outcome this guard exists to stop (UltiKits/UltiKits#20).
+        // The framework's bridge already returns false when no provider is registered, so the
+        // term bought nothing and could only turn a refusal into a giveaway.
         if (!kit.isFree() && !EconomyUtils.withdraw(player, kit.getPrice())) {
             // checkPrerequisites saw the player could afford this, so reaching here means the
             // balance moved in between, the economy rejected the transaction, or the provider went
@@ -386,9 +386,8 @@ public class KitServiceImpl implements KitService {
         if (!refusalWarnedKits.add(kit.getName())) {
             return;
         }
-        logger.warn("Kit '" + kit.getName() + "' was not delivered to " + player.getName()
-                + ": the economy refused to withdraw " + kit.getPrice()
-                + ". Further refusals for this kit are not logged until the kits are reloaded.");
+        logger.warn(String.format(plugin.i18n("kits.log.payment_refused"), kit.getName(), player.getName(),
+                kit.getPrice()));
     }
 
     @Override
@@ -411,7 +410,7 @@ public class KitServiceImpl implements KitService {
     @Override
     public String formatCooldown(long millis) {
         if (millis <= 0) {
-            return plugin.i18n("可领取");
+            return plugin.i18n("kits.status.available");
         }
 
         long hours = TimeUnit.MILLISECONDS.toHours(millis);
@@ -420,13 +419,13 @@ public class KitServiceImpl implements KitService {
 
         StringBuilder sb = new StringBuilder();
         if (hours > 0) {
-            sb.append(String.format(plugin.i18n("%d小时"), hours)).append(" ");
+            sb.append(String.format(plugin.i18n("kits.cooldown.hours"), hours)).append(" ");
         }
         if (minutes > 0) {
-            sb.append(String.format(plugin.i18n("%d分钟"), minutes)).append(" ");
+            sb.append(String.format(plugin.i18n("kits.cooldown.minutes"), minutes)).append(" ");
         }
         if (seconds > 0 || sb.length() == 0) {
-            sb.append(String.format(plugin.i18n("%d秒"), seconds));
+            sb.append(String.format(plugin.i18n("kits.cooldown.seconds"), seconds));
         }
 
         return sb.toString().trim();
@@ -446,7 +445,7 @@ public class KitServiceImpl implements KitService {
             dataOutput.close();
             return Base64Coder.encodeLines(outputStream.toByteArray());
         } catch (IOException e) {
-            logger.error("Failed to serialize kit items: " + e.getMessage());
+            logger.error(String.format(plugin.i18n("kits.log.serialize_failed"), e.getMessage()));
             return null;
         }
     }
@@ -471,7 +470,7 @@ public class KitServiceImpl implements KitService {
             dataInput.close();
             return items;
         } catch (IOException | ClassNotFoundException e) {
-            logger.error("Failed to deserialize kit items: " + e.getMessage());
+            logger.error(String.format(plugin.i18n("kits.log.deserialize_failed"), e.getMessage()));
             return null;
         }
     }
@@ -499,7 +498,7 @@ public class KitServiceImpl implements KitService {
             try {
                 claimOperator.update(existing);
             } catch (IllegalAccessException e) {
-                logger.error("Failed to update kit claim data: " + e.getMessage());
+                logger.error(String.format(plugin.i18n("kits.log.claim_update_failed"), e.getMessage()));
             }
         } else {
             KitClaimData claim = KitClaimData.builder()
@@ -519,7 +518,12 @@ public class KitServiceImpl implements KitService {
             YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
 
             KitDefinition kit = new KitDefinition();
-            kit.setDisplayName(config.getString("displayName", "&7Kit"));
+            String displayName = config.getString("displayName");
+            if (displayName == null) {
+                kit.useCatalogueDisplayName("&7" + plugin.i18n("kits.kit.default_display_name"));
+            } else {
+                kit.setDisplayName(displayName);
+            }
             kit.setDescription(config.getStringList("description"));
             kit.setPrice(config.getDouble("price", 0));
             kit.setLevelRequired(config.getInt("levelRequired", 0));
@@ -536,13 +540,13 @@ public class KitServiceImpl implements KitService {
                 Material.valueOf(iconStr.toUpperCase());
                 kit.setIcon(iconStr.toUpperCase());
             } catch (IllegalArgumentException e) {
-                logger.warn(plugin.i18n("加载礼包失败: ") + file.getName() + " - invalid icon: " + iconStr);
+                logger.warn(String.format(plugin.i18n("kits.log.invalid_icon"), file.getName(), iconStr));
                 kit.setIcon("CHEST");
             }
 
             return kit;
         } catch (Exception e) {
-            logger.warn(plugin.i18n("加载礼包失败: ") + file.getName() + " - " + e.getMessage());
+            logger.warn(String.format(plugin.i18n("kits.log.load_failed"), file.getName(), e.getMessage()));
             return null;
         }
     }
@@ -552,7 +556,8 @@ public class KitServiceImpl implements KitService {
             File kitFile = new File(plugin.getResourceFolderPath(), "kits/" + name + ".yml");
             YamlConfiguration config = new YamlConfiguration();
 
-            config.set("displayName", kit.getDisplayName());
+            // A fallback name is left out, so it keeps following the language (null writes nothing).
+            config.set("displayName", kit.isDisplayNameFromCatalogue() ? null : kit.getDisplayName());
             config.set("description", kit.getDescription());
             config.set("icon", kit.getIcon());
             config.set("price", kit.getPrice());
@@ -567,7 +572,7 @@ public class KitServiceImpl implements KitService {
             config.save(kitFile);
             return true;
         } catch (IOException e) {
-            logger.error("Failed to save kit file: " + name + " - " + e.getMessage());
+            logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
             return false;
         }
     }
@@ -579,7 +584,7 @@ public class KitServiceImpl implements KitService {
                 Files.copy(is, exampleFile.toPath());
             }
         } catch (IOException e) {
-            logger.warn("Failed to copy example kit: " + e.getMessage());
+            logger.warn(String.format(plugin.i18n("kits.log.example_copy_failed"), e.getMessage()));
         }
     }
 

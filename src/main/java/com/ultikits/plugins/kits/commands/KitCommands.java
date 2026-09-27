@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
  */
 @CmdExecutor(
         permission = "ultikits.kits.use",
-        description = "礼包管理命令",
+        description = "kits.command.description",
         alias = {"kits", "kit"}
 )
 public class KitCommands extends BaseCommandExecutor {
@@ -70,7 +70,7 @@ public class KitCommands extends BaseCommandExecutor {
         if (config.isEnabled()) {
             return false;
         }
-        sender.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
+        sender.sendMessage(ChatColor.RED + plugin.i18n("kits.disabled"));
         return true;
     }
 
@@ -120,11 +120,11 @@ public class KitCommands extends BaseCommandExecutor {
         }
 
         if (allKits.isEmpty()) {
-            sender.sendMessage(ChatColor.RED + plugin.i18n("没有可用的礼包"));
+            sender.sendMessage(ChatColor.RED + plugin.i18n("kits.list.empty"));
             return;
         }
 
-        sender.sendMessage(ChatColor.GOLD + "=== " + plugin.i18n("礼包列表") + " ===");
+        sender.sendMessage(ChatColor.GOLD + "=== " + plugin.i18n("kits.list.title") + " ===");
         for (KitDefinition kit : allKits) {
             String displayName = ChatColor.translateAlternateColorCodes('&', kit.getDisplayName());
             String info = ChatColor.YELLOW + kit.getName() + ChatColor.GRAY + " - " + displayName;
@@ -147,13 +147,13 @@ public class KitCommands extends BaseCommandExecutor {
             return;
         }
         if (!player.hasPermission("ultikits.kits.admin")) {
-            player.sendMessage(ChatColor.RED + plugin.i18n("你没有权限执行此命令"));
+            player.sendMessage(ChatColor.RED + plugin.i18n("kits.command.no_permission"));
             return;
         }
 
         KitDefinition kit = kitService.getKit(name);
         if (kit == null) {
-            player.sendMessage(ChatColor.RED + String.format(plugin.i18n("礼包 '%s' 不存在"), name));
+            player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.kit.not_found"), name));
             return;
         }
 
@@ -170,26 +170,26 @@ public class KitCommands extends BaseCommandExecutor {
             return;
         }
         if (!player.hasPermission("ultikits.kits.admin")) {
-            player.sendMessage(ChatColor.RED + plugin.i18n("你没有权限执行此命令"));
+            player.sendMessage(ChatColor.RED + plugin.i18n("kits.command.no_permission"));
             return;
         }
 
         KitService.CreateResult result = kitService.createKit(player, name);
         switch (result) {
             case SUCCESS:
-                player.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("已创建礼包: %s"), name));
+                player.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("kits.create.success"), name));
                 break;
             case ALREADY_EXISTS:
-                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("礼包名已存在: %s"), name));
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.create.already_exists"), name));
                 break;
             case INVALID_NAME:
-                player.sendMessage(ChatColor.RED + plugin.i18n("无效的礼包名"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.create.invalid_name"));
                 break;
             case EMPTY_INVENTORY:
-                player.sendMessage(ChatColor.RED + plugin.i18n("物品栏为空"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.create.empty_inventory"));
                 break;
             default:
-                player.sendMessage(ChatColor.RED + plugin.i18n("领取礼包时发生错误"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.create.error"));
                 break;
         }
     }
@@ -205,14 +205,14 @@ public class KitCommands extends BaseCommandExecutor {
             return;
         }
         if (!sender.hasPermission("ultikits.kits.admin")) {
-            sender.sendMessage(ChatColor.RED + plugin.i18n("你没有权限执行此命令"));
+            sender.sendMessage(ChatColor.RED + plugin.i18n("kits.command.no_permission"));
             return;
         }
 
         if (kitService.deleteKit(name)) {
-            sender.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("已删除礼包: %s"), name));
+            sender.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("kits.delete.success"), name));
         } else {
-            sender.sendMessage(ChatColor.RED + String.format(plugin.i18n("礼包 '%s' 不存在"), name));
+            sender.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.kit.not_found"), name));
         }
     }
 
@@ -225,13 +225,13 @@ public class KitCommands extends BaseCommandExecutor {
             return;
         }
         if (!sender.hasPermission("ultikits.kits.admin")) {
-            sender.sendMessage(ChatColor.RED + plugin.i18n("你没有权限执行此命令"));
+            sender.sendMessage(ChatColor.RED + plugin.i18n("kits.command.no_permission"));
             return;
         }
 
         kitService.reload();
         int count = kitService.getAllKits().size();
-        sender.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("已重新加载 %d 个礼包"), count));
+        sender.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("kits.reload.success"), count));
     }
 
     /**
@@ -255,53 +255,53 @@ public class KitCommands extends BaseCommandExecutor {
             return;
         }
         sender.sendMessage(ChatColor.GOLD + "=== UltiKits ===");
-        sender.sendMessage(ChatColor.YELLOW + "/kits" + ChatColor.GRAY + " - " + plugin.i18n("礼包列表"));
-        sender.sendMessage(ChatColor.YELLOW + "/kits claim <name>" + ChatColor.GRAY + " - " + plugin.i18n("可领取"));
-        sender.sendMessage(ChatColor.YELLOW + "/kits list" + ChatColor.GRAY + " - " + plugin.i18n("礼包列表"));
-        sender.sendMessage(ChatColor.YELLOW + "/kits edit <name>" + ChatColor.GRAY + " - Edit kit");
-        sender.sendMessage(ChatColor.YELLOW + "/kits create <name>" + ChatColor.GRAY + " - Create kit");
-        sender.sendMessage(ChatColor.YELLOW + "/kits delete <name>" + ChatColor.GRAY + " - Delete kit");
-        sender.sendMessage(ChatColor.YELLOW + "/kits reload" + ChatColor.GRAY + " - Reload kits");
+        sender.sendMessage(ChatColor.YELLOW + "/kits" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.open"));
+        sender.sendMessage(ChatColor.YELLOW + "/kits claim <name>" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.claim"));
+        sender.sendMessage(ChatColor.YELLOW + "/kits list" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.list"));
+        sender.sendMessage(ChatColor.YELLOW + "/kits edit <name>" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.edit"));
+        sender.sendMessage(ChatColor.YELLOW + "/kits create <name>" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.create"));
+        sender.sendMessage(ChatColor.YELLOW + "/kits delete <name>" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.delete"));
+        sender.sendMessage(ChatColor.YELLOW + "/kits reload" + ChatColor.GRAY + " - " + plugin.i18n("kits.help.reload"));
     }
 
     private void handleClaimResult(Player player, String kitName, KitService.ClaimResult result) {
         switch (result) {
             case SUCCESS:
-                player.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("成功领取礼包: %s"), kitName));
+                player.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("kits.claim.success"), kitName));
                 break;
             case NOT_FOUND:
-                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("礼包 '%s' 不存在"), kitName));
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.kit.not_found"), kitName));
                 break;
             case NO_PERMISSION:
-                player.sendMessage(ChatColor.RED + plugin.i18n("你没有权限使用此礼包"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.no_permission"));
                 break;
             case INSUFFICIENT_LEVEL:
                 KitDefinition kit = kitService.getKit(kitName);
                 int level = kit != null ? kit.getLevelRequired() : 0;
-                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("等级不足，需要 %d 级"), level));
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.level_too_low"), level));
                 break;
             case INSUFFICIENT_FUNDS:
                 KitDefinition fundKit = kitService.getKit(kitName);
                 String price = fundKit != null ? String.valueOf(fundKit.getPrice()) : "?";
-                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("余额不足，需要 %s"), price));
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.insufficient_funds_price"), price));
                 break;
             case PAYMENT_FAILED:
-                player.sendMessage(ChatColor.RED + plugin.i18n("扣款失败，礼包未领取"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.payment_failed"));
                 break;
             case ALREADY_CLAIMED:
-                player.sendMessage(ChatColor.RED + plugin.i18n("你已经领取过此礼包"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.already_claimed"));
                 break;
             case ON_COOLDOWN:
                 KitDefinition cdKit = kitService.getKit(kitName);
                 long remaining = cdKit != null ? kitService.getRemainingCooldown(player, cdKit) : 0;
                 String timeStr = kitService.formatCooldown(remaining);
-                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("礼包冷却中，剩余: %s"), timeStr));
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.on_cooldown"), timeStr));
                 break;
             case INVENTORY_FULL:
-                player.sendMessage(ChatColor.RED + plugin.i18n("背包空间不足"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.inventory_full"));
                 break;
             case EMPTY_KIT:
-                player.sendMessage(ChatColor.RED + plugin.i18n("礼包内容为空"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.empty_kit"));
                 break;
             case SYSTEM_DISABLED:
                 // Not reached from /kits claim, which refuses at refusedAsDisabled before the
@@ -309,10 +309,10 @@ public class KitCommands extends BaseCommandExecutor {
                 // for a claim outcome: a caller added later that does not pre-check would otherwise
                 // fall into default: and tell the player "Error claiming kit" for a kit system the
                 // operator switched off on purpose.
-                player.sendMessage(ChatColor.RED + plugin.i18n("礼包系统当前已关闭"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.disabled"));
                 break;
             default:
-                player.sendMessage(ChatColor.RED + plugin.i18n("领取礼包时发生错误"));
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.error"));
                 break;
         }
     }

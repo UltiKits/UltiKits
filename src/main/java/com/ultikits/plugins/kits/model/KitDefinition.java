@@ -1,6 +1,7 @@
 package com.ultikits.plugins.kits.model;
 
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,6 +19,25 @@ public class KitDefinition {
     private List<String> playerCommands = new ArrayList<>();
     private List<String> consoleCommands = new ArrayList<>();
     private String items = "";
+    /**
+     * True while {@link #displayName} is the catalogue's fallback because the kit file has no
+     * {@code displayName}. Saving the kit then leaves the key out, so the name keeps following the
+     * server's language instead of being written down in whichever language saved the file.
+     */
+    @EqualsAndHashCode.Exclude
+    private boolean displayNameFromCatalogue;
+
+    /** Sets a display name that belongs to the kit, and is therefore saved with it. */
+    public void setDisplayName(String displayName) {
+        this.displayName = displayName;
+        this.displayNameFromCatalogue = false;
+    }
+
+    /** Shows {@code fallback} as the display name without making it part of the kit file. */
+    public void useCatalogueDisplayName(String fallback) {
+        this.displayName = fallback;
+        this.displayNameFromCatalogue = true;
+    }
 
     public boolean isFree() {
         return price <= 0;

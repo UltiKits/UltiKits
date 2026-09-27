@@ -1,5 +1,6 @@
 package com.ultikits.plugins.kits.service;
 
+import com.ultikits.plugins.kits.i18n.CatalogueText;
 import com.ultikits.plugins.kits.MockBukkitSupport;
 import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.entity.KitClaimData;
@@ -20,6 +21,7 @@ import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.scheduler.BukkitScheduler;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.*;
@@ -62,7 +64,7 @@ class KitServiceImplTest {
 
         when(plugin.getLogger()).thenReturn(mockLogger);
         when(plugin.getResourceFolderPath()).thenReturn(tempDir.getAbsolutePath());
-        when(plugin.i18n(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("zh"));
         when(plugin.getDataOperator(KitClaimData.class)).thenReturn(mockClaimOperator);
         when(mockClaimOperator.query()).thenReturn(mockQuery);
         when(mockQuery.where(anyString())).thenReturn(mockQuery);
@@ -308,7 +310,7 @@ class KitServiceImplTest {
             KitDefinition kit = service.getKit("badicon");
             assertThat(kit).isNotNull();
             assertThat(kit.getIcon()).isEqualTo("CHEST");
-            verify(mockLogger).warn(contains("invalid icon"));
+            verify(mockLogger).warn(contains("图标无效: NOT_A_MATERIAL"));
         }
 
         @Test
@@ -1212,9 +1214,9 @@ class KitServiceImplTest {
          * What it does NOT guard: the module's own {@code !kit.isFree()} check in
          * {@code KitServiceImpl#deliverKit}. Through the public Vault path, the framework's economy
          * bridge refuses a zero amount before it reaches the registered {@link Economy}, so the
-         * {@code never()} verification below would hold even if that check were removed (measured by
-         * the gate-1 review, UltiKits/UltiKits#19 IN-01). On a live server the same framework refusal
-         * also stops a free kit from being charged. The GUI's separate {@code !kit.isFree()} check
+         * {@code never()} verification below would hold even if that check were removed (measured
+         * when reviewing UltiKits/UltiKits#19). On a live server the same framework refusal also
+         * stops a free kit from being charged. The GUI's separate {@code !kit.isFree()} check
          * (the "deducted" message) is guarded by {@code KitBrowserGuiTest#successFreeKit}.
          */
         @Test
@@ -1435,6 +1437,8 @@ class KitServiceImplTest {
 
         @BeforeEach
         void setUp() {
+            // These tests read the refusal line in English: answer from the real en catalogue.
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
             new File(tempDir, "kits").mkdirs();
             service = createService();
             player = createMockPlayer();
@@ -1608,10 +1612,22 @@ class KitServiceImplTest {
 
         /**
          * The console line is promised by {@code FEATURES.md} and {@code CHANGELOG.md} to name the
-         * kit, the player AND the amount, so all three are asserted (gate-1 WR-04). The kit is
-         * named {@code vipcrate} rather than something like {@code logged}, which occurs in the
-         * message template itself and would let almost any warning satisfy the assertion.
+         * kit, the player AND the amount, so all three are asserted. The kit is named {@code
+         * vipcrate} rather than something like {@code logged}, which occurs in the message
+         * template itself and would let almost any warning satisfy the assertion.
          */
+        @Test
+        @DisplayName("the refused-payment line is in the server's language (zh)")
+        void refusedPaymentLineFollowsTheLanguage() throws Exception {
+            statefulEconomy(false);
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("zh"));
+
+            KitServiceImpl spyService = paidKitService("vipcrate", true);
+            spyService.claimKit(player, "vipcrate");
+
+            verify(mockLogger).warn(String.format(zh("kits.log.payment_refused"), "vipcrate", player.getName(), PRICE));
+        }
+
         @Test
         @DisplayName("a refused payment is reported to the console naming the kit, the player and the amount")
         void refusedPaymentIsLoggedWithKitPlayerAndAmount() throws Exception {
@@ -1629,11 +1645,11 @@ class KitServiceImplTest {
         }
 
         /**
-         * Throttling, gate-1 WR-05. The claim path is player-triggered behind only a 200ms GUI
-         * debounce, and {@code /kits claim} carries no cooldown at all, so one line per refused
-         * attempt floods the console during an economy outage - in the window an operator most
-         * needs to read it. The framework's own {@code EconomyUtils} already took this position for
-         * the adjacent condition: one line per calling module per server session.
+         * Throttling. The claim path is player-triggered behind only a 200ms GUI debounce, and
+         * {@code /kits claim} carries no cooldown at all, so one line per refused attempt floods
+         * the console during an economy outage - in the window an operator most needs to read it.
+         * The framework's own {@code EconomyUtils} already took this position for the adjacent
+         * condition: one line per calling module per server session.
          */
         @Test
         @DisplayName("repeated refusals for the same kit are logged once, not once per attempt")
@@ -1691,11 +1707,11 @@ class KitServiceImplTest {
         }
 
         /**
-         * gate-1 WR-01. The guard this fix first wrote read
-         * {@code !kit.isFree() && EconomyUtils.isAvailable() && !EconomyUtils.withdraw(...)}. If the
-         * Vault provider is deregistered after {@code canAfford} passed, that middle term
-         * short-circuits the whole condition to false and control falls through to delivery -
-         * reproducing #20's own outcome inside the guard that closes #20. The term bought nothing:
+         * The guard this fix first wrote read {@code !kit.isFree() && EconomyUtils.isAvailable() &&
+         * !EconomyUtils.withdraw(...)}. If the Vault provider is deregistered after {@code
+         * canAfford} passed, that middle term short-circuits the whole condition to false and
+         * control falls through to delivery - reproducing #20's own outcome inside the guard that
+         * closes #20. The term bought nothing:
          * the framework's bridge already returns false when no provider is registered.
          */
         @Test
@@ -1723,10 +1739,10 @@ class KitServiceImplTest {
         }
 
         /**
-         * gate-1 WR-06. {@code player.performCommand} propagates {@code CommandException} out of any
-         * third-party executor that throws, so a reward command failing between the money moving and
-         * the claim being recorded would leave a one-time kit silently claimable again. The claim
-         * record is therefore written before the reward commands run.
+         * {@code player.performCommand} propagates {@code CommandException} out of any third-party
+         * executor that throws, so a reward command failing between the money moving and the claim
+         * being recorded would leave a one-time kit silently claimable again. The claim record is
+         * therefore written before the reward commands run.
          */
         @Test
         @DisplayName("ordering: the claim is recorded before the reward commands, the likeliest step to fail")
@@ -2046,7 +2062,20 @@ class KitServiceImplTest {
         @DisplayName("deserializeItems returns null for invalid base64 and logs error")
         void deserializeInvalidDataReturnsNull() {
             assertThat(service.deserializeItems("AAAA")).isNull();
-            verify(mockLogger).error(contains("Failed to deserialize"));
+            verify(mockLogger).error(contains("反序列化礼包物品失败"));
+        }
+
+        @Test
+        @DisplayName("serializeItems logs a failed write in the server's language (zh)")
+        void serializeFailureIsLoggedInTheServersLanguage() {
+            ItemStack unserializable = mock(ItemStack.class);
+            when(unserializable.serialize()).thenReturn(Collections.<String, Object>singletonMap("x", new Object()));
+
+            assertThat(service.serializeItems(new ItemStack[]{unserializable})).isNull();
+
+            ArgumentCaptor<String> line = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger).error(line.capture());
+            assertThat(line.getValue()).startsWith(String.format(zh("kits.log.serialize_failed"), ""));
         }
 
         @Test
@@ -2153,7 +2182,7 @@ class KitServiceImplTest {
 
             boolean result = service.saveKitToFile("fail", kit);
             assertThat(result).isFalse();
-            verify(mockLogger).error(contains("Failed to save kit file"));
+            verify(mockLogger).error(contains("保存礼包文件失败"));
         }
 
         @Test
@@ -2548,7 +2577,7 @@ class KitServiceImplTest {
 
             service.updateClaimData(UUID.fromString("00000000-0000-0000-0000-000000000001"), "starter");
 
-            verify(mockLogger).error(contains("Failed to update kit claim data"));
+            verify(mockLogger).error(contains("更新礼包领取记录失败"));
         }
 
         @Test
@@ -2580,12 +2609,51 @@ class KitServiceImplTest {
 
             KitDefinition result = service.parseKitFile(kitFile);
             assertThat(result).isNotNull();
-            assertThat(result.getDisplayName()).isEqualTo("&7Kit");
+            // The fallback name is the catalogue's, in the server's language (zh here).
+            assertThat(result.getDisplayName()).isEqualTo("&7礼包");
             assertThat(result.getIcon()).isEqualTo("CHEST");
             assertThat(result.getPrice()).isEqualTo(0.0);
             assertThat(result.getLevelRequired()).isEqualTo(0);
             assertThat(result.isReBuyable()).isFalse();
             assertThat(result.getCooldown()).isEqualTo(0);
+        }
+
+        @Test
+        @DisplayName("saving a kit whose file has no displayName leaves it out, so the name keeps following the language")
+        void fallbackDisplayNameIsNotSaved() throws IOException {
+            File kitsFolder = new File(tempDir, "kits");
+            kitsFolder.mkdirs();
+            File kitFile = new File(kitsFolder, "unnamed.yml");
+            FileWriter writer = new FileWriter(kitFile);
+            writer.write("icon: CHEST\n");
+            writer.close();
+
+            // An item-only save, as the kit editor's save button does.
+            KitDefinition kit = service.parseKitFile(kitFile);
+            kit.setItems("items-from-the-editor");
+            assertThat(service.saveKitToFile("unnamed", kit)).isTrue();
+
+            assertThat(YamlConfiguration.loadConfiguration(kitFile).contains("displayName")).isFalse();
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            assertThat(service.parseKitFile(kitFile).getDisplayName())
+                    .isEqualTo("&7" + CatalogueText.entries("en").get("kits.kit.default_display_name"));
+        }
+
+        @Test
+        @DisplayName("a display name set on a kit whose file had none is saved")
+        void displayNameSetLaterIsSaved() throws IOException {
+            File kitsFolder = new File(tempDir, "kits");
+            kitsFolder.mkdirs();
+            File kitFile = new File(kitsFolder, "renamed.yml");
+            FileWriter writer = new FileWriter(kitFile);
+            writer.write("icon: CHEST\n");
+            writer.close();
+
+            KitDefinition kit = service.parseKitFile(kitFile);
+            kit.setDisplayName("&aNamed");
+            assertThat(service.saveKitToFile("renamed", kit)).isTrue();
+
+            assertThat(YamlConfiguration.loadConfiguration(kitFile).getString("displayName")).isEqualTo("&aNamed");
         }
 
         @Test
@@ -2820,6 +2888,22 @@ class KitServiceImplTest {
         }
 
         @Test
+        @DisplayName("a failed copy of the example kit is logged in the server's language (zh)")
+        void copyFailureIsLoggedInTheServersLanguage() throws Exception {
+            service = createService();
+            File notAFolder = new File(tempDir, "not-a-folder");
+            assertThat(notAFolder.createNewFile()).isTrue();
+            java.lang.reflect.Method copy = KitServiceImpl.class.getDeclaredMethod("copyExampleKit", File.class);
+            copy.setAccessible(true); // NOPMD - private helper, reached to drive its failure branch
+
+            copy.invoke(service, notAFolder);
+
+            ArgumentCaptor<String> line = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(line.capture());
+            assertThat(line.getAllValues()).anyMatch(l -> l.startsWith(String.format(zh("kits.log.example_copy_failed"), "")));
+        }
+
+        @Test
         @DisplayName("copyExampleKit handles missing resource stream gracefully")
         void handlesMissingResource() {
             // loadKits -> kits folder doesn't exist -> mkdirs + copyExampleKit
@@ -3041,6 +3125,21 @@ class KitServiceImplTest {
         }
 
         @Test
+        @DisplayName("a kit file that fails to load is logged in the server's language (zh)")
+        void loadFailureIsLoggedInTheServersLanguage() throws IOException {
+            File kitFile = new File(new File(tempDir, "kits"), "broken.yml");
+            FileWriter writer = new FileWriter(kitFile);
+            writer.write("icon: CHEST\n");
+            writer.close();
+            // Any exception inside the parse lands in the same catch; this one is the cheapest to cause.
+            when(plugin.i18n("kits.kit.default_display_name")).thenThrow(new IllegalStateException("boom"));
+
+            assertThat(service.parseKitFile(kitFile)).isNull();
+
+            verify(mockLogger).warn(String.format(zh("kits.log.load_failed"), "broken.yml", "boom"));
+        }
+
+        @Test
         @DisplayName("parseKitFile returns kit with default permission when not specified")
         void defaultPermission() throws IOException {
             File kitsFolder = new File(tempDir, "kits");
@@ -3198,5 +3297,11 @@ class KitServiceImplTest {
                     KitService.CreateResult.ERROR
             );
         }
+    }
+
+    /** The zh text for {@code key}, or a marker naming the missing key so a failure shows the logged line. */
+    private static String zh(String key) {
+        String text = CatalogueText.entries("zh").get(key);
+        return text == null ? "<lang/zh.json has no " + key + ">" : text;
     }
 }
