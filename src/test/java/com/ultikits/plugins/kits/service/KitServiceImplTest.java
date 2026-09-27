@@ -3675,6 +3675,27 @@ class KitServiceImplTest {
         }
 
         @Test
+        @DisplayName("a reward command that throws is logged with the exception, so the operator sees why")
+        void throwingRewardCommandLogsTheException() throws Exception {
+            rewardKit(Collections.singletonList("warp vip"), Collections.singletonList("broken"));
+            org.bukkit.command.CommandException playerFailure = new org.bukkit.command.CommandException("player boom");
+            org.bukkit.command.CommandException consoleFailure = new org.bukkit.command.CommandException("console boom");
+            when(player.performCommand("warp vip")).thenThrow(playerFailure);
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                bukkit.when(() -> Bukkit.dispatchCommand(any(), eq("broken"))).thenThrow(consoleFailure);
+
+                spyService.claimKit(player, "reward");
+                runDeferredTask(scheduler);
+            }
+
+            verify(mockLogger).warn(playerFailure, String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "warp vip", "TestPlayer"));
+            verify(mockLogger).warn(consoleFailure, String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "broken", "TestPlayer"));
+        }
+
+        @Test
         @DisplayName("an accepted player command reports nothing")
         void acceptedPlayerCommandReportsNothing() throws Exception {
             rewardKit(Collections.singletonList("spawn"), null);
@@ -3717,8 +3738,8 @@ class KitServiceImplTest {
                 runDeferredTask(scheduler);
             }
 
-            verify(mockLogger).warn(String.format(zh("kits.log.console_reward_command_failed"),
-                    "reward", "broken", "TestPlayer"));
+            verify(mockLogger).warn(any(Throwable.class), eq(String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "broken", "TestPlayer")));
         }
 
         @Test
