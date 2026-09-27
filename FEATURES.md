@@ -64,10 +64,10 @@ catalogue: `lang/en.json` under `language: en`, `lang/zh.json` under `language: 
 `UltiKitsCjkLiteralScopeTest`) fail the build when a key is missing from either catalogue or Chinese
 text appears outside one. The editor's save-button lore and the four `/kits help` lines for
 `edit`/`create`/`delete`/`reload`, formerly hard-coded English, are catalogued too. Fixed text left
-in `src/main/java`: the `=== UltiKits ===` help header (the module's name) and `/kits list`'s price
-suffix, whose hard-coded `$` is tracked in UltiKits/UltiKits#34. The shipped example kit file
-(`kits/starter.yml`, copied on first start) is kit data, not a catalogue, and its name and lore are
-Chinese; that is tracked in UltiKits/UltiKits#33.
+in `src/main/java`: the `=== UltiKits ===` help header (the module's name); `/kits list`'s price now
+goes through the economy's format (UltiKits/UltiKits#34). The example kit file (`kits/starter.yml`,
+copied on first start) is kit data, not a catalogue: the jar ships one per language and copies the one
+matching `language` (`ultikits.storage.example-kit`, UltiKits/UltiKits#33).
 
 ### Reconciliation command family
 
@@ -190,6 +190,7 @@ independently-persisted things, given their own rows rather than folded into one
 | ID | Feature | Kind | How to reach | Permission | Target | Tier | Manual | Source |
 |---|---|---|---|---|---|---|---|---|
 | ultikits.storage.claim-history-survives-restart | A player's claim history (last-claim timestamp, cumulative claim count) is stored per player-per-kit via `DataOperator`/`@Table("kits_claims")` in whichever ORM backend the framework has configured; a cooldown or one-time-claim restriction observed before a restart is still enforced identically after one, because `getRemainingCooldown`/`checkCooldown` read this same persisted row, not any in-memory state | persistence | claim a kit that has a cooldown or is not re-buyable, then restart the server and attempt to claim it again | n/a | n/a | admin | brief | KitClaimData#KitClaimData, KitServiceImpl#getClaimData, KitServiceImpl#updateClaimData |
+| ultikits.storage.example-kit | On the first start, when the kits folder `plugins/UltiTools/pluginConfig/UltiTools-Kits/kits/` does not exist yet, it is created with one example kit, `starter.yml`, in the server's `language`: the jar ships `kits/en/starter.yml` (`Starter Kit`) and `kits/zh/starter.yml` (`新手礼包`), and a language it has no example for gets the English one, the same fallback its messages use. An existing kits folder is never touched, so an install that already has the old example keeps it (maintainer decision 2026-09-25; before UltiKits/UltiKits#33 the one shipped example was Chinese under every language) | persistence | start the server with no kits folder, then run `/kits list` | n/a | n/a | admin | brief | KitServiceImpl#loadKits, KitServiceImpl#copyExampleKit |
 | ultikits.storage.kit-contents-survive-restart | A kit's definition (display name, description, price, level requirement, permission, re-buyable flag, cooldown, player/console commands, and its serialized item contents) is stored as a plain YAML file under `plugins/UltiTools/pluginConfig/UltiTools-Kits/kits/<name>.yml`, independent of the ORM/database entirely — surviving a restart is not a database-durability question for this row, it is the trivial fact that the file itself is still on disk; `loadKits()` re-parses every `.yml` file in that folder on every boot and on `/kits reload` | persistence | create or edit a kit, then restart the server and run `/kits list`/`/kits claim <name>` to confirm its contents are unchanged | n/a | n/a | admin | brief | KitServiceImpl#loadKits, KitServiceImpl#parseKitFile, KitServiceImpl#saveKitToFile |
 
 ## Configuration

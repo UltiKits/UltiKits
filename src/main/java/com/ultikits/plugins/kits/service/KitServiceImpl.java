@@ -39,6 +39,9 @@ import java.util.stream.Collectors;
 @Service
 public class KitServiceImpl implements KitService {
 
+    /** The example kit copied when the jar ships none for the server's language. */
+    private static final String EXAMPLE_KIT_FALLBACK = "kits/en/starter.yml";
+
     private final UltiToolsPlugin plugin;
     /**
      * The module's live configuration object, not a snapshot of its values. {@code ConfigManager}
@@ -1006,8 +1009,24 @@ public class KitServiceImpl implements KitService {
         }
     }
 
+    /**
+     * Copies the example kit into a kits folder this start just created - the jar's example for the
+     * server's {@code language}, or the English one when the module ships none for it, which is the
+     * fallback its messages use too. One example per language is the maintainer's decision of
+     * 2026-09-25: the single shipped file had a Chinese name and lore under {@code language: en}
+     * (UltiKits/UltiKits#33). A folder that already exists is never touched, so existing installs keep
+     * the kit they have.
+     * <p>
+     * 首次启动时按服务器语言复制示例礼包；没有对应语言时使用英文版；已有的礼包文件夹不受影响。
+     */
     private void copyExampleKit(File folder) {
-        try (InputStream is = plugin.getClass().getClassLoader().getResourceAsStream("kits/starter.yml")) {
+        ClassLoader loader = KitServiceImpl.class.getClassLoader();
+        String language = plugin.getLanguageCode();
+        String resource = EXAMPLE_KIT_FALLBACK;
+        if (language != null && loader.getResource("kits/" + language + "/starter.yml") != null) {
+            resource = "kits/" + language + "/starter.yml";
+        }
+        try (InputStream is = loader.getResourceAsStream(resource)) {
             File exampleFile = new File(folder, "starter.yml");
             if (is != null && !exampleFile.exists()) {
                 Files.copy(is, exampleFile.toPath());

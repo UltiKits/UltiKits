@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The example kit created on first start now follows the server's `language`: an English server gets
+  a `Starter Kit` with English lore, a Chinese one `新手礼包`, and a language the module has no
+  example for gets the English one. Before, the one shipped example was Chinese under every language.
+  Existing installs are not affected: the example is copied only when the kits folder does not exist
+  yet (UltiKits/UltiKits#33).
+- 首次启动时创建的示例礼包现在跟随服务器的 `language`：英文服务器得到英文说明的 `Starter Kit`，中文服务器得到
+  `新手礼包`，模块没有示例的语言使用英文版。此前唯一的示例在任何语言下都是中文。已有安装不受影响：只有礼包文件夹尚不
+  存在时才会复制示例（UltiKits/UltiKits#33）。
 - Language keys were renamed from Chinese sentences to ASCII keys (for example `kits.claim.success`).
   An operator who edited this module's `lang/en.json` or `lang/zh.json` must re-apply those edits to
   the new keys; until then the renamed messages show the new built-in text. A server whose language
