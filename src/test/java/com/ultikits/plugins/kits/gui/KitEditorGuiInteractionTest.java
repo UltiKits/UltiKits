@@ -226,6 +226,26 @@ class KitEditorGuiInteractionTest {
         }
 
         @Test
+        @DisplayName("a click on each button is cancelled and still runs the button")
+        void buttonClicksAreCancelledAndRouted() {
+            openEditor();
+            assertThat(click(49, ClickType.LEFT, InventoryAction.PICKUP_ALL).isCancelled()).as("info").isTrue();
+            assertThat(admin.getOpenInventory().getTopInventory().getItem(49)).isNotNull();
+
+            assertThat(click(SAVE_SLOT, ClickType.LEFT, InventoryAction.PICKUP_ALL).isCancelled()).as("save").isTrue();
+            assertThat(admin.nextMessage()).contains("Saved kit: edited");
+        }
+
+        @Test
+        @DisplayName("Cancel is cancelled as a click and closes the editor without a message")
+        void cancelButtonClosesWithoutMessage() {
+            openEditor();
+            assertThat(click(CANCEL_SLOT, ClickType.LEFT, InventoryAction.PICKUP_ALL).isCancelled()).isTrue();
+            assertThat(admin.nextMessage()).isNull();
+            assertThat(admin.getOpenInventory().getTopInventory()).as("the editor is closed").isNull();
+        }
+
+        @Test
         @DisplayName("a drag that touches the control row is cancelled")
         void dragIntoControlRowIsCancelled() {
             openEditor();
