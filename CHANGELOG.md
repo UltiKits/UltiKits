@@ -29,6 +29,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The kit editor (`/kits edit`) now saves moves and additions: items can be moved within its grid and
+  added from the player's own inventory, and Save writes them into the kit. Before, the GUI library
+  cancelled every click in the grid, so Save re-saved the items the editor opened with. The bottom row
+  of buttons stays fixed. When the editor closes without a successful save, the items the player put
+  into the grid go back to the player instead of being thrown away (UltiKits/UltiKits#16).
+- 礼包编辑界面（`/kits edit`）现在会保存移动和新增的物品：可以在格子内移动物品、从自己的背包放入物品，保存后写入礼包。
+  此前 GUI 库会取消格子内的每一次点击，保存时只是把打开时的物品原样再存一遍。底部按钮行保持固定。未成功保存就关闭
+  编辑界面时，玩家放入格子的物品会退还给玩家，而不是随界面一起丢弃（UltiKits/UltiKits#16）。
 - When a kit claim cannot be recorded, the claim is refused and any payment refunded, so a one-time
   kit can no longer be claimed twice after a storage failure. A claim is now charged, then recorded,
   then handed over; if the record cannot be written, nothing is given, no reward command runs and

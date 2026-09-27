@@ -8,7 +8,12 @@ import mc.obliviate.inventory.Icon;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
+import org.bukkit.event.inventory.InventoryAction;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
+import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
@@ -16,10 +21,24 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 /**
- * GUI for editing kit contents.
- * 礼包内容编辑界面。
+ * GUI for editing kit contents: slots 0-44 are a grid of real items the player moves, adds and removes
+ * like a chest, and the bottom row holds the Save, info and Cancel buttons.
+ * <p>
+ * The GUI library cancels every click and drag in the top inventory unless {@link #onClick} /
+ * {@link #onDrag} answer {@code true}, and its defaults answer {@code false}; without the two overrides
+ * below no item could be moved into, out of or within the grid, and Save re-saved the items the editor
+ * opened with (UltiKits/UltiKits#16). The overrides let the grid and the player's own inventory through
+ * and keep the bottom row fixed.
+ * <p>
+ * An item the player puts into the grid leaves their inventory, as it would into a chest. It becomes part
+ * of the kit when Save succeeds; when the editor closes any other way - Cancel, Esc, a refused save - the
+ * items the grid holds beyond what it opened with go back to the player ({@link #onClose}), so a cancelled
+ * edit costs nothing. The grid's own items are copies of the kit's, so one taken out stays with the player.
+ * <p>
+ * 礼包内容编辑界面：0-44 格可像箱子一样移动、放入、取出物品；未成功保存就关闭时，玩家放入的物品会退还。
  */
 public class KitEditorGui extends Gui {
 
@@ -32,6 +51,12 @@ public class KitEditorGui extends Gui {
     private final UltiToolsPlugin plugin;
     private final KitService kitService;
     private final KitDefinition kit;
+    /** Copies of the items the grid was filled with on open; what the grid holds beyond them was added. */
+    private final List<ItemStack> openedWith = new ArrayList<>();
+    /** Whether Save wrote the grid into the kit; a close after that gives nothing back. */
+    private boolean saved;
+    /** Whether the close has been handled, so a second close event cannot give items back twice. */
+    private boolean settled;
 
     public KitEditorGui(Player player, UltiToolsPlugin plugin, KitService kitService, KitDefinition kit) {
         super(player, "kit_editor_" + kit.getName(),
@@ -54,6 +79,7 @@ public class KitEditorGui extends Gui {
                     if (existingItems[i] != null && existingItems[i].getType() != Material.AIR) {
                         // Place directly in inventory without Icon wrapper so items are moveable
                         event.getInventory().setItem(i, existingItems[i].clone());
+                        openedWith.add(existingItems[i].clone());
                     }
                 }
             }
@@ -123,6 +149,109 @@ public class KitEditorGui extends Gui {
         }
     }
 
+    /**
+     * Lets a click through in the grid and in the player's own inventory, and refuses it on the bottom
+     * row. Two actions reach the bottom row from elsewhere and are refused when they would: a shift-click
+     * from the player's inventory stacks onto a matching top-inventory item, and a double-click collects
+     * matching items from the whole view onto the cursor - either would pull a button or pane out of
+     * place, or push the player's item into a slot that is thrown away on close.
+     *
+     * @return {@code true} to let the click happen / 允许点击时为 {@code true}
+     */
+    @Override
+    public boolean onClick(InventoryClickEvent event) {
+        int rawSlot = event.getRawSlot();
+        Inventory top = event.getView().getTopInventory();
+        boolean inGrid = rawSlot >= 0 && rawSlot < ITEM_SLOTS;
+        boolean inOwnInventory = rawSlot >= top.getSize();
+        if (!inGrid && !inOwnInventory) {
+            return false;
+        }
+        if (event.getAction() == InventoryAction.COLLECT_TO_CURSOR && matchesControlRow(top, event.getCursor())) {
+            return false;
+        }
+        return !(inOwnInventory && event.getAction() == InventoryAction.MOVE_TO_OTHER_INVENTORY
+                && matchesControlRow(top, event.getCurrentItem()));
+    }
+
+    /**
+     * Lets a drag through when none of its slots is on the bottom row.
+     *
+     * @return {@code true} to let the drag happen / 允许拖动时为 {@code true}
+     */
+    @Override
+    public boolean onDrag(InventoryDragEvent event) {
+        int topSize = event.getView().getTopInventory().getSize();
+        for (int rawSlot : event.getRawSlots()) {
+            if (rawSlot >= ITEM_SLOTS && rawSlot < topSize) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Gives the player back what they put into the grid, unless Save wrote it into the kit: every item
+     * the grid holds beyond the copies it opened with, into their inventory or at their feet when it is
+     * full. The library's own {@code onClose} only stops this GUI's scheduled tasks, which is done here too.
+     */
+    @Override
+    public void onClose(InventoryCloseEvent event) {
+        stopAllTasks();
+        if (saved || settled) {
+            return;
+        }
+        settled = true;
+        Inventory grid = event.getInventory();
+        List<ItemStack> unmatched = new ArrayList<>();
+        for (ItemStack original : openedWith) {
+            unmatched.add(original.clone());
+        }
+        for (int i = 0; i < ITEM_SLOTS && i < grid.getSize(); i++) {
+            ItemStack item = grid.getItem(i);
+            if (item == null || item.getType() == Material.AIR) {
+                continue;
+            }
+            int added = item.getAmount();
+            for (ItemStack original : unmatched) {
+                if (added == 0) {
+                    break;
+                }
+                if (original.getAmount() > 0 && original.isSimilar(item)) {
+                    int matched = Math.min(added, original.getAmount());
+                    original.setAmount(original.getAmount() - matched);
+                    added -= matched;
+                }
+            }
+            if (added > 0) {
+                ItemStack returned = item.clone();
+                returned.setAmount(added);
+                giveOrDrop(returned);
+            }
+        }
+    }
+
+    private void giveOrDrop(ItemStack item) {
+        Map<Integer, ItemStack> leftovers = player.getInventory().addItem(item);
+        for (ItemStack leftover : leftovers.values()) {
+            player.getWorld().dropItemNaturally(player.getLocation(), leftover);
+        }
+    }
+
+    /** Whether {@code item} would stack with a button or pane on the bottom row. */
+    private static boolean matchesControlRow(Inventory top, ItemStack item) {
+        if (item == null || item.getType() == Material.AIR) {
+            return false;
+        }
+        for (int slot = ITEM_SLOTS; slot < top.getSize(); slot++) {
+            ItemStack control = top.getItem(slot);
+            if (control != null && control.isSimilar(item)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     void handleSave() {
         // Collect items from slots 0-44
         List<ItemStack> collectedItems = new ArrayList<>();
@@ -135,6 +264,7 @@ public class KitEditorGui extends Gui {
 
         ItemStack[] itemsArray = collectedItems.toArray(new ItemStack[0]);
         KitService.SaveResult result = kitService.saveKitItems(kit.getName(), itemsArray);
+        saved = result == KitService.SaveResult.SUCCESS;
 
         switch (result) {
             case SUCCESS:
