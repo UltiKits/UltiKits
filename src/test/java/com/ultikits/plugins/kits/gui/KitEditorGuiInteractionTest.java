@@ -32,6 +32,7 @@ import org.mockbukkit.mockbukkit.ServerMock;
 import org.mockbukkit.mockbukkit.entity.PlayerMock;
 
 import java.io.File;
+import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -89,9 +90,15 @@ class KitEditorGuiInteractionTest {
     }
 
     @AfterEach
-    void tearDown() {
+    @SuppressWarnings("PMD.AvoidAccessibilityAlteration") // the library keeps its singleton private
+    void tearDown() throws Exception {
         // InventoryAPI#unload asks UniversalScheduler for a scheduler MockBukkit does not implement;
-        // unmocking the server drops the listener it registered.
+        // unmocking the server drops the listener it registered. The library's static instance is
+        // cleared by hand so it does not outlive this test's server: other test classes rely on
+        // opening a GUI failing with "Inventory API is not initialized".
+        Field instance = InventoryAPI.class.getDeclaredField("instance");
+        instance.setAccessible(true);
+        instance.set(null, null);
         MockBukkitSupport.shutdown();
     }
 
