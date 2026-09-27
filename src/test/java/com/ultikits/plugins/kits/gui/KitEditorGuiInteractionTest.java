@@ -246,6 +246,18 @@ class KitEditorGuiInteractionTest {
         }
 
         @Test
+        @DisplayName("a click outside the window is cancelled, as before, so the cursor's item is not dropped")
+        void clickOutsideIsCancelled() {
+            openEditor();
+            InventoryView view = admin.getOpenInventory();
+            InventoryClickEvent event = new InventoryClickEvent(view, InventoryType.SlotType.OUTSIDE,
+                    InventoryView.OUTSIDE, ClickType.LEFT, InventoryAction.DROP_ALL_CURSOR);
+            server.getPluginManager().callEvent(event);
+
+            assertThat(event.isCancelled()).isTrue();
+        }
+
+        @Test
         @DisplayName("a drag that touches the control row is cancelled")
         void dragIntoControlRowIsCancelled() {
             openEditor();
