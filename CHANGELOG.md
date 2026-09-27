@@ -42,6 +42,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A kit claim is no longer refused with "Inventory full" on Paper 1.21.1 and earlier when an
+  over-sized stack would fit. Those versions fill an empty slot up to the inventory's maximum (99), not
+  the item's (64); the module now probes which behaviour the server has once at start and counts empty
+  slots accordingly. Nothing was lost before: the claim was refused before any charge
+  (UltiKits/UltiKits#38).
+- 在 Paper 1.21.1 及更早版本上，放得下的超量物品堆不再被误判为「背包已满」而拒绝领取。这些版本向空格放入物品时按背包上限
+  （99）而不是物品上限（64）放置；模块现在会在启动时探测一次服务器的实际行为并据此计算空格。此前不会丢失物品：领取在扣款
+  前就被拒绝（UltiKits/UltiKits#38）。
 - A kit reward command that does not run is now reported instead of being ignored. A player command
   that is unknown, refused or throws tells the player which reward did not run; every failed reward
   command, player or console, logs a warning naming the kit, the command and the player. The claim

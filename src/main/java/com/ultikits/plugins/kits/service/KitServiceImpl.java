@@ -66,8 +66,11 @@ public class KitServiceImpl implements KitService {
      */
     private final Set<String> refusalWarnedKits = Collections.synchronizedSet(new LinkedHashSet<>());
     private DataOperator<KitClaimData> claimOperator;
-    /** How {@code addItem} fills an empty slot with an over-sized stack on this server; see {@link #fitsInStorage}. */
-    private EmptySlotCapacity emptySlotCapacity = EmptySlotCapacity.ITEM_MAX;
+    /**
+     * How {@code addItem} fills an empty slot with an over-sized stack on this server, probed once at
+     * construction (see {@link #probeEmptySlotCapacity}); {@link #fitsInStorage} counts empty slots by it.
+     */
+    private EmptySlotCapacity emptySlotCapacity;
 
     /**
      * How many of an over-sized stack the server's {@code addItem} puts into one empty slot.
@@ -86,6 +89,7 @@ public class KitServiceImpl implements KitService {
         this.config = config;
         this.logger = plugin.getLogger();
         this.claimOperator = plugin.getDataOperator(KitClaimData.class);
+        this.emptySlotCapacity = probeRunningServer();
         loadKits();
     }
 
@@ -577,7 +581,9 @@ public class KitServiceImpl implements KitService {
      * player holds and those an earlier stack of this kit started - and then takes empty slots, every
      * slot holding at most the stack's <b>own</b> maximum stack size ({@link ItemStack#getMaxStackSize()},
      * which reads a {@code max_stack_size} component), capped by the inventory's maximum when that is
-     * lower.
+     * lower - except that an EMPTY slot holds what this server's {@code addItem} puts there, which on Paper
+     * 1.21.1 and earlier is the inventory's maximum whatever the stack's own is; {@link
+     * #emptySlotCapacity}, probed at construction, says which (UltiKits/UltiKits#38).
      * <p>
      * One slot per stack was not the answer: a stack larger than its maximum - which another plugin, or
      * a component, can put into an inventory that {@code /kits create} then captures - is split across
@@ -600,11 +606,45 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
-     * Works out how this server's {@code addItem} fills an empty slot with an over-sized stack, from a
-     * scratch inventory. This commit keeps the model the fit check has always used.
+     * Works out how this server's {@code addItem} fills an empty slot with an over-sized stack: adds one
+     * stack a single item larger than its maximum to an empty scratch inventory and reads how many landed
+     * in the first slot. Paper 1.21.1 and earlier fill an empty slot up to the inventory's maximum (99 by
+     * default since 1.20.5); Paper 1.21.4 up to the smaller of the item's and the inventory's
+     * (UltiKits/UltiKits#38). An inventory maximum no larger than the item's makes the two the same, so
+     * nothing is added.
+     * <p>
+     * 用临时背包探测服务器 {@code addItem} 向空格放入超量物品堆时每格的上限。
+     *
+     * @param scratch an empty inventory the probe may fill / 可供探测填充的空背包
+     * @return the capacity {@code addItem} uses / 服务器使用的空格容量
      */
     static EmptySlotCapacity probeEmptySlotCapacity(org.bukkit.inventory.Inventory scratch) {
-        return EmptySlotCapacity.ITEM_MAX;
+        ItemStack probe = new ItemStack(Material.COBBLESTONE);
+        int itemMax = probe.getMaxStackSize();
+        if (scratch.getMaxStackSize() <= itemMax) {
+            return EmptySlotCapacity.ITEM_MAX;
+        }
+        probe.setAmount(itemMax + 1);
+        scratch.addItem(probe);
+        ItemStack first = scratch.getItem(0);
+        return first != null && first.getAmount() > itemMax
+                ? EmptySlotCapacity.INVENTORY_MAX : EmptySlotCapacity.ITEM_MAX;
+    }
+
+    /**
+     * Probes the running server, or keeps {@link EmptySlotCapacity#ITEM_MAX} when there is none to probe
+     * (a unit test) or the probe fails: that model can only refuse a claim that would fit, never pass one
+     * that does not, and whatever it gets wrong is dropped at the player's feet rather than lost.
+     */
+    private static EmptySlotCapacity probeRunningServer() {
+        if (Bukkit.getServer() == null) {
+            return EmptySlotCapacity.ITEM_MAX;
+        }
+        try {
+            return probeEmptySlotCapacity(Bukkit.createInventory(null, 9));
+        } catch (RuntimeException e) {
+            return EmptySlotCapacity.ITEM_MAX;
+        }
     }
 
     private boolean fitsInStorage(Player player, ItemStack[] items) {
@@ -627,6 +667,10 @@ public class KitServiceImpl implements KitService {
             if (inventoryMax > 0) {
                 perSlot = Math.min(perSlot, inventoryMax);
             }
+            // An empty slot holds what this server's addItem puts there: the capped item maximum, or on
+            // Paper 1.21.1 and earlier the inventory's maximum (UltiKits/UltiKits#38).
+            int perEmptySlot = emptySlotCapacity == EmptySlotCapacity.INVENTORY_MAX && inventoryMax > 0
+                    ? inventoryMax : perSlot;
             int remaining = Math.max(1, item.getAmount());
             for (int i = 0; i < slots.length && remaining > 0; i++) {
                 if (slots[i] != null && amounts[i] < perSlot && slots[i].isSimilar(item)) {
@@ -638,7 +682,7 @@ public class KitServiceImpl implements KitService {
             for (int i = 0; i < slots.length && remaining > 0; i++) {
                 if (slots[i] == null) {
                     slots[i] = item;
-                    amounts[i] = Math.min(perSlot, remaining);
+                    amounts[i] = Math.min(perEmptySlot, remaining);
                     remaining -= amounts[i];
                 }
             }
