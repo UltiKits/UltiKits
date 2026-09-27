@@ -502,14 +502,15 @@ class KitBrowserGuiTest {
         }
 
         @Test
-        @DisplayName("economy unavailable with paid kit shows balance insufficient")
+        @DisplayName("economy unavailable with paid kit says so, not insufficient balance (UltiKits/UltiKits#32)")
         void economyUnavailable() throws Exception {
             setEconomyAvailable(false);
             KitDefinition kit = createKit("paid", "&6Paid", "CHEST", 100.0, 0);
 
             String result = gui.getStatusText(kit);
 
-            assertThat(result).contains("余额不足");
+            assertThat(result).isEqualTo(ChatColor.RED + CatalogueText.text("zh", "kits.status.economy_unavailable"));
+            assertThat(result).doesNotContain("余额不足");
         }
 
         @Test

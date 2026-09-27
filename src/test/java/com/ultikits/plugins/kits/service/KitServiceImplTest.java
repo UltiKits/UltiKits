@@ -1248,6 +1248,29 @@ class KitServiceImplTest {
             verify(mockEconomy, never()).withdrawPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble());
         }
 
+        /**
+         * With no economy provider the player's balance is never read and no balance would do, so the
+         * claim must not say "Insufficient balance": it has its own outcome, and nothing is charged,
+         * recorded or given (UltiKits/UltiKits#32). The outcome is compared by name so this test states
+         * the contract before the constant exists.
+         */
+        @Test
+        @DisplayName("claimKit on a paid kit with no economy provider says the economy is unavailable")
+        void paidKitWithNoEconomyIsEconomyUnavailable() throws Exception {
+            MockBukkitSupport.bootstrap();
+            EconomyUtils.reset();
+            assertThat(EconomyUtils.isAvailable()).as("no economy provider is registered").isFalse();
+            KitDefinition kit = createTestKit("expensive");
+            kit.setPrice(500);
+            injectKit(service, kit);
+
+            KitService.ClaimResult result = service.claimKit(player, "expensive");
+
+            assertThat(result.name()).isEqualTo("ECONOMY_UNAVAILABLE");
+            verify(mockClaimOperator, never()).insert(any());
+            verify(inventory, never()).addItem(any());
+        }
+
         @Test
         @DisplayName("claimKit skips economy check for free kit")
         void claimFreeKitSkipsEconomy() throws Exception {
