@@ -13,6 +13,7 @@ import com.ultikits.ultitools.utils.EconomyUtils;
 import net.milkbowl.vault.economy.Economy;
 import net.milkbowl.vault.economy.EconomyResponse;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -3462,6 +3463,176 @@ class KitServiceImplTest {
 
             assertThat(service.conflictingFiles("solo")).isEmpty();
             assertThat(service.conflictingFiles("missing")).isEmpty();
+        }
+    }
+
+    // =========================================================================
+    // Reward command failures (UltiKits/UltiKits#25)
+    // =========================================================================
+    /**
+     * A kit's reward commands used to be fired and their results discarded, so a kit whose value is in
+     * its commands could be claimed, recorded and reported as a success while nothing happened. The
+     * maintainer's decision (2026-09-27): report the failure truthfully, do not refund, keep the claim
+     * order (charge, record, give, then commands). A player command's result is checked where it runs;
+     * a console command's when the deferred task runs it. {@code performCommand} returning {@code true}
+     * only means an executor accepted the command, so that is all a pass claims.
+     */
+    @Nested
+    @DisplayName("Reward command failure tests")
+    class RewardCommandFailureTests {
+
+        private Player player;
+        private KitServiceImpl spyService;
+
+        @BeforeEach
+        void setUp() {
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            player = createMockPlayer();
+            when(player.getInventory().getStorageContents()).thenReturn(new ItemStack[36]);
+            // Loading an empty kits folder logs a warning of its own; only the claim's lines matter here.
+            clearInvocations(mockLogger);
+        }
+
+        private KitDefinition rewardKit(List<String> playerCommands, List<String> consoleCommands) throws Exception {
+            KitDefinition kit = createTestKit("reward");
+            kit.setPlayerCommands(playerCommands);
+            kit.setConsoleCommands(consoleCommands);
+            spyService = spy(service);
+            injectKit(spyService, kit);
+            ItemStack item = mock(ItemStack.class);
+            when(item.clone()).thenReturn(item);
+            doReturn(new ItemStack[]{item}).when(spyService).deserializeItems("someBase64Data");
+            return kit;
+        }
+
+        private void assertClaimedAndRecorded(KitService.ClaimResult result) {
+            assertThat(result).as("the claim stands: no refund, no undo").isEqualTo(KitService.ClaimResult.SUCCESS);
+            verify(mockClaimOperator).insert(any(KitClaimData.class));
+        }
+
+        @Test
+        @DisplayName("a player command that is not accepted is reported to the player and logged, and the claim stands")
+        void refusedPlayerCommandIsReported() throws Exception {
+            rewardKit(Collections.singletonList("warp vip"), null);
+            when(player.performCommand("warp vip")).thenReturn(false);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "reward");
+
+            assertClaimedAndRecorded(result);
+            verify(player).sendMessage(ChatColor.RED + String.format(zh("kits.claim.reward_command_failed"), "warp vip"));
+            verify(mockLogger).warn(String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "warp vip", "TestPlayer"));
+        }
+
+        @Test
+        @DisplayName("a player command whose executor throws is reported the same way and does not escape the claim")
+        void throwingPlayerCommandIsReported() throws Exception {
+            rewardKit(Arrays.asList("warp vip", "spawn"), null);
+            when(player.performCommand("warp vip")).thenThrow(new org.bukkit.command.CommandException("boom"));
+            when(player.performCommand("spawn")).thenReturn(true);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "reward");
+
+            assertClaimedAndRecorded(result);
+            verify(player).sendMessage(ChatColor.RED + String.format(zh("kits.claim.reward_command_failed"), "warp vip"));
+            verify(player).performCommand("spawn");
+        }
+
+        @Test
+        @DisplayName("an accepted player command reports nothing")
+        void acceptedPlayerCommandReportsNothing() throws Exception {
+            rewardKit(Collections.singletonList("spawn"), null);
+            when(player.performCommand("spawn")).thenReturn(true);
+
+            assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+
+            verify(player, never()).sendMessage(anyString());
+            verify(mockLogger, never()).warn(anyString());
+        }
+
+        @Test
+        @DisplayName("a console command that is not accepted is logged when the deferred task runs it")
+        void refusedConsoleCommandIsLoggedWhenItRuns() throws Exception {
+            rewardKit(null, Collections.singletonList("lp user {player} parent add vip"));
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                bukkit.when(() -> Bukkit.dispatchCommand(any(), eq("lp user TestPlayer parent add vip"))).thenReturn(false);
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+                verify(mockLogger, never()).warn(anyString());
+
+                runDeferredTask(scheduler);
+            }
+
+            verify(mockLogger).warn(String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "lp user TestPlayer parent add vip", "TestPlayer"));
+        }
+
+        @Test
+        @DisplayName("a console command that throws is logged the same way")
+        void throwingConsoleCommandIsLogged() throws Exception {
+            rewardKit(null, Collections.singletonList("broken"));
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                bukkit.when(() -> Bukkit.dispatchCommand(any(), eq("broken")))
+                        .thenThrow(new org.bukkit.command.CommandException("boom"));
+
+                spyService.claimKit(player, "reward");
+                runDeferredTask(scheduler);
+            }
+
+            verify(mockLogger).warn(String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "broken", "TestPlayer"));
+        }
+
+        @Test
+        @DisplayName("an accepted console command logs nothing")
+        void acceptedConsoleCommandLogsNothing() throws Exception {
+            rewardKit(null, Collections.singletonList("say hi"));
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                bukkit.when(() -> Bukkit.dispatchCommand(any(), eq("say hi"))).thenReturn(true);
+
+                spyService.claimKit(player, "reward");
+                runDeferredTask(scheduler);
+            }
+
+            verify(mockLogger, never()).warn(anyString());
+        }
+
+        @Test
+        @DisplayName("console commands that cannot be scheduled are logged, not dropped silently")
+        void unscheduledConsoleCommandsAreLogged() throws Exception {
+            rewardKit(null, Arrays.asList("say one", "say two"));
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                PluginManager pluginManager = mock(PluginManager.class);
+                bukkit.when(Bukkit::getPluginManager).thenReturn(pluginManager);
+                when(pluginManager.getPlugin("UltiTools")).thenReturn(null);
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+            }
+
+            verify(mockLogger).warn(String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "say one", "TestPlayer"));
+            verify(mockLogger).warn(String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "say two", "TestPlayer"));
+        }
+
+        private BukkitScheduler consoleScheduler(MockedStatic<Bukkit> bukkit) {
+            PluginManager pluginManager = mock(PluginManager.class);
+            Plugin ultiTools = mock(Plugin.class);
+            BukkitScheduler scheduler = mock(BukkitScheduler.class);
+            bukkit.when(Bukkit::getPluginManager).thenReturn(pluginManager);
+            when(pluginManager.getPlugin("UltiTools")).thenReturn(ultiTools);
+            bukkit.when(Bukkit::getScheduler).thenReturn(scheduler);
+            return scheduler;
+        }
+
+        private void runDeferredTask(BukkitScheduler scheduler) {
+            ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+            verify(scheduler).runTask(any(Plugin.class), task.capture());
+            task.getValue().run();
         }
     }
 
