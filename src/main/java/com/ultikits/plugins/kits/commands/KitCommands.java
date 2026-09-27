@@ -343,13 +343,9 @@ public class KitCommands extends BaseCommandExecutor {
             case SYSTEM_DISABLED:
                 // Not reached from /kits claim, which refuses at refusedAsDisabled before the
                 // service is called. It is here because this method is the module's shared renderer
-                // for a claim outcome: a caller added later that does not pre-check would otherwise
-                // fall into default: and tell the player "Error claiming kit" for a kit system the
-                // operator switched off on purpose.
+                // for a claim outcome: a caller added later that does not pre-check must still tell
+                // the player the operator switched the kit system off.
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.disabled"));
-                break;
-            default:
-                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.error"));
                 break;
         }
     }

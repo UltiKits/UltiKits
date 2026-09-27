@@ -4507,8 +4507,7 @@ class KitServiceImplTest {
                     KitService.ClaimResult.PAYMENT_FAILED,
                     KitService.ClaimResult.SYSTEM_DISABLED,
                     KitService.ClaimResult.NOT_RECORDED,
-                    KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED,
-                    KitService.ClaimResult.ERROR
+                    KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED
             );
         }
 

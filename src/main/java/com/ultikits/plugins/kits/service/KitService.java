@@ -51,8 +51,7 @@ public interface KitService {
          * money came back when it did not.
          * 同上，但退款也失败了：玩家已付款且未收到物品，控制台记录了需要手动退款的错误。
          */
-        NOT_RECORDED_REFUND_FAILED,
-        ERROR
+        NOT_RECORDED_REFUND_FAILED
     }
 
     enum CreateResult {

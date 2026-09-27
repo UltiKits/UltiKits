@@ -892,19 +892,6 @@ class KitBrowserGuiTest {
         }
 
         @Test
-        @DisplayName("ERROR sends generic error message")
-        void error() {
-            KitDefinition kit = createKit("broken", "&fBroken", "CHEST", 0, 0);
-            when(kitService.claimKit(player, "broken")).thenReturn(KitService.ClaimResult.ERROR);
-
-            gui.handleKitClick(kit);
-
-            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
-            verify(player).sendMessage(captor.capture());
-            assertThat(captor.getValue()).contains("领取礼包时发生错误");
-        }
-
-        @Test
         @DisplayName("NOT_RECORDED tells the player nothing was charged or given and keeps the browser open (UltiKits/UltiKits#26)")
         void notRecordedSaysNothingWasChargedOrGiven() {
             setEconomyAvailable(true);
@@ -937,20 +924,15 @@ class KitBrowserGuiTest {
         }
 
         /**
-         * Sweep by class, the browser's copy of the command test: a result this switch forgets falls
-         * to {@code default:} and says "Error claiming kit", which is true of no result but
-         * {@code ERROR}.
+         * Sweep by class, the browser's copy of the command test: the switch has no {@code default:},
+         * so a result it forgets would say nothing at all (UltiKits/UltiKits#27).
          */
         @Test
-        @DisplayName("every claim result other than ERROR has its own reply, never the generic error")
+        @DisplayName("every claim result has a reply of its own")
         void everyResultHasItsOwnReply() throws Exception {
-            String generic = CatalogueText.text("zh", "kits.claim.error");
             lenient().when(kitService.formatCooldown(anyLong())).thenReturn("1s");
             KitDefinition kit = createKit("k", "&fK", "CHEST", 0, 0);
             for (KitService.ClaimResult result : KitService.ClaimResult.values()) {
-                if (result == KitService.ClaimResult.ERROR) {
-                    continue;
-                }
                 reset(player);
                 resetDebounce();
                 when(kitService.claimKit(player, "k")).thenReturn(result);
@@ -959,7 +941,7 @@ class KitBrowserGuiTest {
 
                 ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
                 verify(player, atLeastOnce()).sendMessage(captor.capture());
-                assertThat(captor.getAllValues()).as(result.name()).noneMatch(m -> m.contains(generic));
+                assertThat(captor.getAllValues()).as(result.name()).isNotEmpty();
             }
         }
 
@@ -1382,8 +1364,7 @@ class KitBrowserGuiTest {
             ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
             verify(player).sendMessage(captor.capture());
             assertThat(captor.getValue())
-                    .contains("礼包系统当前已关闭")
-                    .doesNotContain("领取礼包时发生错误");
+                    .contains("礼包系统当前已关闭");
         }
 
         @Test

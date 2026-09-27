@@ -221,7 +221,7 @@ class KitCommandsTest {
          * the "insufficient balance" line - the balance check passed, the withdrawal did not.
          */
         @Test
-        @DisplayName("PAYMENT_FAILED sends its own message, neither the generic error nor insufficient balance")
+        @DisplayName("PAYMENT_FAILED sends its own message, not insufficient balance")
         void paymentFailedSendsOwnMessage() {
             when(kitService.claimKit(player, "paid")).thenReturn(KitService.ClaimResult.PAYMENT_FAILED);
 
@@ -231,7 +231,6 @@ class KitCommandsTest {
             verify(player).sendMessage(captor.capture());
             assertThat(captor.getValue())
                     .contains("扣款失败")
-                    .doesNotContain("领取礼包时发生错误")
                     .doesNotContain("余额不足");
         }
 
@@ -262,19 +261,15 @@ class KitCommandsTest {
         }
 
         /**
-         * Sweep by class: a result the switch forgets falls to {@code default:} and says "Error
-         * claiming kit", which is true of no result but {@code ERROR}. Every other result must have a
-         * reply of its own.
+         * Sweep by class: the renderer has no {@code default:} (every outcome has a producer, see
+         * {@code ClaimResultProducerTest}), so a result the switch forgets would say nothing at all.
+         * Every result must have a reply of its own (UltiKits/UltiKits#27).
          */
         @Test
-        @DisplayName("every claim result other than ERROR has its own reply, never the generic error")
+        @DisplayName("every claim result has a reply of its own")
         void everyResultHasItsOwnReply() {
-            String generic = CatalogueText.text("zh", "kits.claim.error");
             lenient().when(kitService.getKit(anyString())).thenReturn(null);
             for (KitService.ClaimResult result : KitService.ClaimResult.values()) {
-                if (result == KitService.ClaimResult.ERROR) {
-                    continue;
-                }
                 reset(player);
                 when(kitService.claimKit(player, "k")).thenReturn(result);
 
@@ -282,20 +277,8 @@ class KitCommandsTest {
 
                 ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
                 verify(player, atLeastOnce()).sendMessage(captor.capture());
-                assertThat(captor.getAllValues()).as(result.name()).noneMatch(m -> m.contains(generic));
+                assertThat(captor.getAllValues()).as(result.name()).isNotEmpty();
             }
-        }
-
-        @Test
-        @DisplayName("ERROR sends generic error message")
-        void errorSendsMessage() {
-            when(kitService.claimKit(player, "broken")).thenReturn(KitService.ClaimResult.ERROR);
-
-            kitCommands.onClaim(player, "broken");
-
-            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
-            verify(player).sendMessage(captor.capture());
-            assertThat(captor.getValue()).contains("领取礼包时发生错误");
         }
     }
 
@@ -929,11 +912,11 @@ class KitCommandsTest {
         }
 
         @Test
-        @DisplayName("SYSTEM_DISABLED from the gateway renders the refusal, not a generic error")
+        @DisplayName("SYSTEM_DISABLED from the gateway renders the refusal")
         void systemDisabledFromTheGatewayIsRendered() {
             // The command gate is left ON deliberately: this is the shape of a future caller that
             // reaches the service without pre-checking, which is the case the gateway guard exists
-            // for. The renderer must name the switch rather than fall into "Error claiming kit".
+            // for. The renderer must name the switch.
             when(kitService.claimKit(player, "starter"))
                     .thenReturn(KitService.ClaimResult.SYSTEM_DISABLED);
 
@@ -942,8 +925,7 @@ class KitCommandsTest {
             ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
             verify(player).sendMessage(captor.capture());
             assertThat(captor.getValue())
-                    .contains("礼包系统当前已关闭")
-                    .doesNotContain("领取礼包时发生错误");
+                    .contains("礼包系统当前已关闭");
         }
 
         @Test

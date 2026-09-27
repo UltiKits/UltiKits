@@ -316,9 +316,6 @@ public class KitBrowserGui extends Gui {
             case SYSTEM_DISABLED:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.disabled"));
                 break;
-            default:
-                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.error"));
-                break;
         }
     }
 

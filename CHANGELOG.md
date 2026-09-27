@@ -18,6 +18,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- The "Error claiming kit" message and the claim outcome behind it were removed: no claim ever
+  produced that outcome, so the message could not be shown. Every claim outcome keeps its own reply.
+  An operator who translated the `kits.claim.error` entry can drop it (UltiKits/UltiKits#27).
+- 删除了「领取礼包时发生错误」消息及其背后的领取结果：没有任何领取会产生这个结果，因此该消息从来无法显示。每种领取结果
+  仍有各自的回复。翻译过 `kits.claim.error` 条目的运维可以删掉它（UltiKits/UltiKits#27）。
 - Four language entries that no code ever displayed were removed from both language files (a
   "Kit System" title, a per-kit "Kit loaded:" line, an "Economy system is not available" message and a
   players-only command message). Nothing an operator or player sees changes. The economy message
