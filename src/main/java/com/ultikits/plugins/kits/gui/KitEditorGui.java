@@ -194,6 +194,16 @@ public class KitEditorGui extends Gui {
      * Gives the player back what they put into the grid, unless Save wrote it into the kit: every item
      * the grid holds beyond the copies it opened with, into their inventory or at their feet when it is
      * full. The library's own {@code onClose} only stops this GUI's scheduled tasks, which is done here too.
+     * <p>
+     * The reverse also has to be reclaimed: {@link #onClick}/{@link #onDrag} let a pre-filled item move
+     * out of the grid into the player's own inventory the same as any other item in this chest-like
+     * editor (removing an item from the grid is how an admin shrinks a kit, and it is meant to stay with
+     * them once Save writes the smaller grid back to the kit). Cancelling never runs Save, so the kit's
+     * stored items are exactly as before -- but the copy already sitting in the player's inventory from
+     * having taken it out mid-edit is not; left alone, it is a free duplicate of an item the kit still
+     * has (UltiKits/UltiKits#38 review of #39). Whatever of {@code openedWith} the grid no longer
+     * accounts for is therefore reclaimed from the player's own inventory below, the same way an added
+     * excess is given to it above, so a cancelled edit costs nothing in either direction.
      */
     @Override
     public void onClose(InventoryCloseEvent event) {
@@ -229,6 +239,24 @@ public class KitEditorGui extends Gui {
                 giveOrDrop(returned);
             }
         }
+        for (ItemStack original : unmatched) {
+            if (original.getAmount() > 0) {
+                reclaimFromPlayer(original);
+            }
+        }
+    }
+
+    /**
+     * Removes {@code missing} from the player's own inventory: a pre-filled quantity the grid no longer
+     * accounts for at close time can only have left through a click or drag {@link #onClick}/
+     * {@link #onDrag} let through, and the only place those can put it is the player's own inventory, so
+     * that is where the duplicate copy this cancelled edit must not leave behind is taken back from.
+     * Silent, and does not drop or substitute anything, if the player no longer holds enough of it --
+     * moved on again (dropped, deposited elsewhere, traded) before the editor closed -- since nothing
+     * further can be reclaimed once an item has left the one place this method is able to look.
+     */
+    private void reclaimFromPlayer(ItemStack missing) {
+        player.getInventory().removeItem(missing);
     }
 
     private void giveOrDrop(ItemStack item) {

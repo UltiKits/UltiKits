@@ -78,6 +78,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 礼包编辑界面（`/kits edit`）现在会保存移动和新增的物品：可以在格子内移动物品、从自己的背包放入物品，保存后写入礼包。
   此前 GUI 库会取消格子内的每一次点击，保存时只是把打开时的物品原样再存一遍。底部按钮行保持固定。未成功保存就关闭
   编辑界面时，玩家放入格子的物品会退还给玩家，而不是随界面一起丢弃（UltiKits/UltiKits#16）。
+- Taking a pre-filled kit item out of the editor's grid and then cancelling (or closing the window
+  any other way that is not a successful Save) no longer leaves the player holding a free duplicate.
+  Cancelling never writes the kit file, so the kit still has the item; whatever the grid opened with
+  that the grid no longer accounts for at close time is now reclaimed from the player's own inventory
+  the same way an item they added is given to it, so a cancelled edit costs nothing in either direction
+  (UltiKits/UltiKits#38 review of #39).
+- 现在在编辑界面的格子中取出预填充的礼包物品后按取消（或以非成功保存的其它方式关闭窗口），不会再让玩家白得一份重复物品。
+  取消操作从不写入礼包文件，因此礼包仍持有该物品；关闭时格子里对不上打开时数量的部分，现在会像找回玩家新增的物品那样
+  从玩家自己的背包中收回，使取消编辑在两个方向上都不产生任何得失（UltiKits/UltiKits#38 复查 #39）。
 - When a kit claim cannot be recorded, the claim is refused and any payment refunded, so a one-time
   kit can no longer be claimed twice after a storage failure. A claim is now charged, then recorded,
   then handed over; if the record cannot be written, nothing is given, no reward command runs and

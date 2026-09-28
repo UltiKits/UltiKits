@@ -354,5 +354,53 @@ class KitEditorGuiInteractionTest {
             assertThat(admin.getInventory().contains(Material.DIAMOND_SWORD)).isFalse();
             assertThat(Collections.singletonList(savedMaterials().get(0))).containsExactly(Material.DIAMOND_SWORD);
         }
+
+        @Test
+        @DisplayName("Cancel after taking a pre-filled kit item into the player's own inventory reclaims it: the item is not duplicated (UltiKits/UltiKits#38 review of #39)")
+        void cancelAfterTakingAPreFilledItemOutDoesNotDuplicateIt() {
+            openEditor();
+            // A plain pickup-then-place, as onClick already lets through both in the grid and in the
+            // player's own inventory: the pre-filled sword leaves the grid for the player's own inventory.
+            assertThat(click(0, ClickType.LEFT, InventoryAction.PICKUP_ALL).isCancelled())
+                    .as("picking up the pre-filled item").isFalse();
+            assertThat(click(FIRST_OWN_RAW_SLOT, ClickType.LEFT, InventoryAction.PLACE_ALL).isCancelled())
+                    .as("placing it in the player's own inventory").isFalse();
+            // The server applies the two uncancelled clicks.
+            grid().setItem(0, null);
+            admin.getInventory().setItem(9, new ItemStack(Material.DIAMOND_SWORD));
+            String before = service.getKit("edited").getItems();
+
+            click(CANCEL_SLOT, ClickType.LEFT, InventoryAction.PICKUP_ALL);
+
+            assertThat(admin.getInventory().contains(Material.DIAMOND_SWORD))
+                    .as("the copy taken out mid-edit is reclaimed, not left with the player as a free duplicate")
+                    .isFalse();
+            assertThat(service.getKit("edited").getItems())
+                    .as("the kit itself is unaffected by a cancelled edit -- it still has its own copy")
+                    .isEqualTo(before);
+        }
+
+        @Test
+        @DisplayName("Cancel after taking part of a pre-filled stack out reclaims only that part")
+        void cancelAfterTakingPartOfAPreFilledStackOutReclaimsOnlyThatPart() {
+            admin.getInventory().clear();
+            admin.getInventory().setItem(0, new ItemStack(Material.ARROW, 10));
+            assertThat(service.createKit(admin, "arrows")).isEqualTo(KitService.CreateResult.SUCCESS);
+            admin.getInventory().clear();
+            new KitEditorGui(admin, plugin, service, service.getKit("arrows")).open();
+
+            // As if 6 of the pre-filled 10 arrows were taken into the player's own inventory, leaving 4
+            // in the grid -- the server applying an uncancelled click or drag the same as elsewhere in
+            // this class.
+            grid().setItem(0, new ItemStack(Material.ARROW, 4));
+            admin.getInventory().setItem(9, new ItemStack(Material.ARROW, 6));
+
+            click(CANCEL_SLOT, ClickType.LEFT, InventoryAction.PICKUP_ALL);
+
+            assertThat(admin.getInventory().all(Material.ARROW).values().stream()
+                    .mapToInt(ItemStack::getAmount).sum())
+                    .as("only the 6 taken out of the stack of 10 are reclaimed, none of the 4 left in the grid")
+                    .isZero();
+        }
     }
 }
