@@ -226,14 +226,28 @@ class KitEditorGuiInteractionTest {
             assertThat(grid().getItem(0).getType()).isEqualTo(Material.DIAMOND_SWORD);
         }
 
+        /**
+         * Not a bug in this test, and not something {@link KitEditorGui#onClick} can fix on its own:
+         * {@code mc.obliviate.inventory.InvListener} (the GUI library, bundled inside {@code UltiTools-API})
+         * only enforces a {@code Gui#onClick} refusal for an own-inventory click when the action is
+         * {@code MOVE_TO_OTHER_INVENTORY}, {@code COLLECT_TO_CURSOR} or {@code UNKNOWN} -- confirmed by
+         * decompiling its shaded classes. {@code onClick} returning {@code false} for {@code DROP_ALL_SLOT}
+         * here is simply not honoured by the library for a slot in the player's own inventory, so a
+         * pre-filled item taken out of the grid first (an ordinary move) and then Q-dropped from there
+         * still reaches the world uncancelled. This is pinned as a known, reported gap
+         * (UltiKits/UltiKits#39 review) rather than silently left unasserted.
+         */
         @Test
-        @DisplayName("Q over the player's own inventory drops their own item as normal, uninvolved with the kit")
-        void dropFromOwnInventoryIsAllowed() {
+        @DisplayName("Q over the player's own inventory is NOT cancelled by this GUI's onClick -- a library limitation, not fixed here (UltiKits/UltiKits#39 review)")
+        void dropFromOwnInventoryIsNotCancelledByOnClickAloneLibraryLimitation() {
             admin.getInventory().setItem(9, new ItemStack(Material.STONE));
             openEditor();
             assertThat(click(FIRST_OWN_RAW_SLOT, ClickType.DROP, InventoryAction.DROP_ALL_SLOT,
                     new ItemStack(Material.STONE)).isCancelled())
-                    .as("Q over the player's own slot").isFalse();
+                    .as("the GUI library does not apply onClick's refusal to a DROP_*_SLOT action on an "
+                            + "own-inventory slot; only MOVE_TO_OTHER_INVENTORY, COLLECT_TO_CURSOR and "
+                            + "UNKNOWN are enforced there")
+                    .isFalse();
         }
     }
 

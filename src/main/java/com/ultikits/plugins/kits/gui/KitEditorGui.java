@@ -161,6 +161,19 @@ public class KitEditorGui extends Gui {
      * free duplicate of a kit item lying in the world with the kit file unchanged. The first two would
      * also pull a button or pane out of place, or push the player's item into a slot that is thrown away
      * on close.
+     * <p>
+     * Q over the PLAYER'S OWN inventory is deliberately not refused here, although a pre-filled item
+     * taken out of the grid first (an ordinary, otherwise-allowed move) can reach the same drop-into-the-
+     * world outcome in two steps. This is not an oversight: the GUI library this class builds on
+     * ({@code mc.obliviate.inventory.InvListener}, bundled inside {@code UltiTools-API}) enforces a
+     * {@code Gui#onClick} refusal for an own-inventory click only when the action is
+     * {@code MOVE_TO_OTHER_INVENTORY}, {@code COLLECT_TO_CURSOR} or {@code UNKNOWN} -- confirmed by
+     * decompiling its shaded classes and by an actual test asserting a {@code DROP_ALL_SLOT} refusal on
+     * an own-inventory slot, which the library silently does not apply. Closing that route needs either a
+     * second, independent listener that does not go through this method, or accepting it as a residual
+     * risk on top of the same "moved on again" ceiling {@link #reclaimFromPlayer} already documents;
+     * that is a decision for the maintainer, not something this method can deliver on its own
+     * (UltiKits/UltiKits#39 review).
      *
      * @return {@code true} to let the click happen / 允许点击时为 {@code true}
      */
