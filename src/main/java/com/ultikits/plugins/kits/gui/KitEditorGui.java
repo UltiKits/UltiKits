@@ -162,18 +162,23 @@ public class KitEditorGui extends Gui {
      * also pull a button or pane out of place, or push the player's item into a slot that is thrown away
      * on close.
      * <p>
-     * Q over the PLAYER'S OWN inventory is deliberately not refused here, although a pre-filled item
-     * taken out of the grid first (an ordinary, otherwise-allowed move) can reach the same drop-into-the-
-     * world outcome in two steps. This is not an oversight: the GUI library this class builds on
-     * ({@code mc.obliviate.inventory.InvListener}, bundled inside {@code UltiTools-API}) enforces a
-     * {@code Gui#onClick} refusal for an own-inventory click only when the action is
+     * A fourth, {@code CLONE_STACK} (a Creative-mode middle-click), is refused for the grid the same way:
+     * unlike the other three, it does not even remove the original from its slot, so reconciliation never
+     * sees anything missing to reclaim from the free copy Bukkit places on the cursor.
+     * <p>
+     * All four are refused for the grid, where the GUI library this class builds on
+     * ({@code mc.obliviate.inventory.InvListener}, bundled inside {@code UltiTools-API}) always honours a
+     * {@code Gui#onClick} refusal, regardless of the action. Q over the PLAYER'S OWN inventory is
+     * deliberately NOT refused here, even though a pre-filled item taken out of the grid first (an
+     * ordinary, otherwise-allowed move) can reach the grid-drop or grid-clone outcome in two steps instead
+     * of one: that library only honours a refusal for an own-inventory click when the action is
      * {@code MOVE_TO_OTHER_INVENTORY}, {@code COLLECT_TO_CURSOR} or {@code UNKNOWN} -- confirmed by
-     * decompiling its shaded classes and by an actual test asserting a {@code DROP_ALL_SLOT} refusal on
-     * an own-inventory slot, which the library silently does not apply. Closing that route needs either a
-     * second, independent listener that does not go through this method, or accepting it as a residual
-     * risk on top of the same "moved on again" ceiling {@link #reclaimFromPlayer} already documents;
-     * that is a decision for the maintainer, not something this method can deliver on its own
-     * (UltiKits/UltiKits#39 review).
+     * decompiling its shaded classes and by an actual test asserting a {@code DROP_ALL_SLOT} refusal on an
+     * own-inventory slot, which the library silently does not apply; the same applies to {@code
+     * CLONE_STACK} there. Closing that route needs either a second, independent listener that does not go
+     * through this method, or accepting it as a residual risk on top of the same "moved on again" ceiling
+     * {@link #reclaimFromPlayer} already documents; that is a decision for the maintainer, not something
+     * this method can deliver on its own (UltiKits/UltiKits#39 review).
      *
      * @return {@code true} to let the click happen / 允许点击时为 {@code true}
      */
@@ -187,7 +192,8 @@ public class KitEditorGui extends Gui {
             return false;
         }
         if (inGrid && (event.getAction() == InventoryAction.DROP_ONE_SLOT
-                || event.getAction() == InventoryAction.DROP_ALL_SLOT)) {
+                || event.getAction() == InventoryAction.DROP_ALL_SLOT
+                || event.getAction() == InventoryAction.CLONE_STACK)) {
             return false;
         }
         if (event.getAction() == InventoryAction.COLLECT_TO_CURSOR && matchesControlRow(top, event.getCursor())) {

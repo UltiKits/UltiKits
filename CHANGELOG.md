@@ -101,14 +101,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   从它可能所在的任何位置收回：玩家自己的背包（常见情形），或者——如果是在拖动途中按 Esc 关闭窗口、物品尚未放置时——
   仍停留在光标上；这种情况下也会在物品被服务器交还给玩家之前收回。取消编辑现在在两个方向上都不产生任何得失
   （UltiKits/UltiKits#38 复查 #39）。
-- Pressing Q (or Ctrl+Q) over a pre-filled item in the editor's grid no longer does anything. That
-  action drops the item into the world, a place the reconciliation above cannot see or reach, so
-  cancelling afterward left the kit file unchanged and a free duplicate of its item lying on the
-  ground. Q over the player's own inventory is unaffected -- it drops their own item as normal
+- Pressing Q (or Ctrl+Q), or Creative-mode middle-clicking (clone), over a pre-filled item in the
+  editor's grid no longer does anything. The first drops the item into the world, a place the
+  reconciliation above cannot see or reach; the second leaves the original in place and puts a free
+  copy on the cursor, so reconciliation never even sees anything missing to reclaim. Either way,
+  cancelling afterward left the kit file unchanged and a free duplicate of its item, on the ground or
+  in the player's inventory. Both are refused only for the grid: the GUI library this editor is built
+  on only honours a refusal there, not for a click confined to the player's own inventory, where a
+  pre-filled item taken out first (an ordinary move) and then Q-dropped or cloned still reaches the
+  same outcome in two steps -- a known limitation reported for a decision, not fixed here
   (UltiKits/UltiKits#39 review).
-- 现在在编辑界面的格子中对预填充物品按 Q（或 Ctrl+Q）不再产生任何效果。该操作会把物品扔进世界，是上面的找回机制既
-  看不到也够不到的地方，此前取消编辑会让礼包文件保持不变，同时地上多出一份该物品的重复品。对玩家自己背包中的物品按 Q
-  不受影响，仍会正常丢出玩家自己的物品（UltiKits/UltiKits#39 复查）。
+- 现在在编辑界面的格子中对预填充物品按 Q（或 Ctrl+Q），或在创造模式下按住鼠标中键（复制），都不再产生任何效果。前者会把
+  物品扔进世界，是上面的找回机制既看不到也够不到的地方；后者会保留原物品不动、在光标上放一份免费副本，因此找回机制根本
+  不会发现有任何缺失需要收回。无论哪一种，此前取消编辑都会让礼包文件保持不变，同时多出一份该物品的重复品——落在地上，
+  或进了玩家的背包。两者都只在格子内被拒绝：本编辑界面所基于的 GUI 库只在格子内才会执行这类拒绝，对于完全发生在玩家
+  自己背包内的点击则不会——先把预填充物品移出格子（一次普通操作），再在背包内按 Q 丢弃或克隆，仍会在两步之内达到同样的
+  结果；这是已知的限制，已上报供决策，本次未修复（UltiKits/UltiKits#39 复查）。
 - When a kit claim cannot be recorded, the claim is refused and any payment refunded, so a one-time
   kit can no longer be claimed twice after a storage failure. A claim is now charged, then recorded,
   then handed over; if the record cannot be written, nothing is given, no reward command runs and

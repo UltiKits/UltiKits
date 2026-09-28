@@ -226,6 +226,16 @@ class KitEditorGuiInteractionTest {
             assertThat(grid().getItem(0).getType()).isEqualTo(Material.DIAMOND_SWORD);
         }
 
+        @Test
+        @DisplayName("A Creative-mode middle-click (clone) on a pre-filled grid slot is cancelled: it leaves the original untouched, so reconciliation would never see anything missing to reclaim (UltiKits/UltiKits#39 review)")
+        void cloneFromTheGridIsCancelled() {
+            openEditor();
+            assertThat(click(0, ClickType.MIDDLE, InventoryAction.CLONE_STACK, grid().getItem(0)).isCancelled())
+                    .as("middle-click (clone) over the pre-filled item").isTrue();
+            // The kit item is still exactly where it was: the click was not applied.
+            assertThat(grid().getItem(0).getType()).isEqualTo(Material.DIAMOND_SWORD);
+        }
+
         /**
          * Not a bug in this test, and not something {@link KitEditorGui#onClick} can fix on its own:
          * {@code mc.obliviate.inventory.InvListener} (the GUI library, bundled inside {@code UltiTools-API})
