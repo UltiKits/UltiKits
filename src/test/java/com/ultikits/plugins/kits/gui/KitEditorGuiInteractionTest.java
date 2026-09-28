@@ -16,6 +16,7 @@ import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.DragType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.Inventory;
@@ -377,6 +378,38 @@ class KitEditorGuiInteractionTest {
                     .isFalse();
             assertThat(service.getKit("edited").getItems())
                     .as("the kit itself is unaffected by a cancelled edit -- it still has its own copy")
+                    .isEqualTo(before);
+        }
+
+        @Test
+        @DisplayName("Closing while a pre-filled item is still on the cursor (picked up but not yet placed) reclaims it too, not only from a settled inventory slot (UltiKits/UltiKits#39 review)")
+        void closingWhileAPreFilledItemIsStillOnTheCursorDoesNotDuplicateIt() {
+            openEditor();
+            assertThat(click(0, ClickType.LEFT, InventoryAction.PICKUP_ALL).isCancelled())
+                    .as("picking up the pre-filled item onto the cursor").isFalse();
+            // The server applies the pickup: the sword leaves grid slot 0 for the cursor, and stays
+            // there -- Esc (or any other non-save close) can happen mid-drag, before any placement click.
+            grid().setItem(0, null);
+            InventoryView view = admin.getOpenInventory();
+            view.setCursor(new ItemStack(Material.DIAMOND_SWORD));
+            String before = service.getKit("edited").getItems();
+
+            // Fired directly, as click() and drag() above do, rather than through
+            // PlayerMock#closeInventory(): that method unconditionally nulls the player's cursor field
+            // right after the event, which is MockBukkit's own simplified close simulation (the real
+            // server instead deposits it into the inventory) and would erase the very evidence this row
+            // checks regardless of whether onClose reclaimed anything.
+            InventoryCloseEvent event = new InventoryCloseEvent(view, InventoryCloseEvent.Reason.PLAYER);
+            server.getPluginManager().callEvent(event);
+
+            ItemStack cursorAfterClose = view.getCursor();
+            boolean cursorIsEmpty = cursorAfterClose == null || cursorAfterClose.getType() == Material.AIR;
+            assertThat(cursorIsEmpty)
+                    .as("the copy still on the cursor when the window closed is reclaimed, not left on it "
+                            + "for the real server to hand back to the player")
+                    .isTrue();
+            assertThat(service.getKit("edited").getItems())
+                    .as("the kit itself is unaffected by a cancelled edit")
                     .isEqualTo(before);
         }
 

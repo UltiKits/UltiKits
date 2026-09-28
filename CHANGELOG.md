@@ -81,12 +81,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Taking a pre-filled kit item out of the editor's grid and then cancelling (or closing the window
   any other way that is not a successful Save) no longer leaves the player holding a free duplicate.
   Cancelling never writes the kit file, so the kit still has the item; whatever the grid opened with
-  that the grid no longer accounts for at close time is now reclaimed from the player's own inventory
-  the same way an item they added is given to it, so a cancelled edit costs nothing in either direction
-  (UltiKits/UltiKits#38 review of #39).
+  that the grid no longer accounts for at close time is now reclaimed the same way an item they added
+  is given back to them, from wherever it could be: the player's own inventory (the common case), or
+  still on the cursor if Esc closed the window mid-drag, before it was placed anywhere -- reclaimed
+  there too, before the server would otherwise hand it back to the player once the window finishes
+  closing. A cancelled edit now costs nothing in either direction (UltiKits/UltiKits#38 review of #39).
 - 现在在编辑界面的格子中取出预填充的礼包物品后按取消（或以非成功保存的其它方式关闭窗口），不会再让玩家白得一份重复物品。
-  取消操作从不写入礼包文件，因此礼包仍持有该物品；关闭时格子里对不上打开时数量的部分，现在会像找回玩家新增的物品那样
-  从玩家自己的背包中收回，使取消编辑在两个方向上都不产生任何得失（UltiKits/UltiKits#38 复查 #39）。
+  取消操作从不写入礼包文件，因此礼包仍持有该物品；关闭时格子里对不上打开时数量的部分，现在会像找回玩家新增的物品那样，
+  从它可能所在的任何位置收回：玩家自己的背包（常见情形），或者——如果是在拖动途中按 Esc 关闭窗口、物品尚未放置时——
+  仍停留在光标上；这种情况下也会在物品被服务器交还给玩家之前收回。取消编辑现在在两个方向上都不产生任何得失
+  （UltiKits/UltiKits#38 复查 #39）。
 - When a kit claim cannot be recorded, the claim is refused and any payment refunded, so a one-time
   kit can no longer be claimed twice after a storage failure. A claim is now charged, then recorded,
   then handed over; if the record cannot be written, nothing is given, no reward command runs and

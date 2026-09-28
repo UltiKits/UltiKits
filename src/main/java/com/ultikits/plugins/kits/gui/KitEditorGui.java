@@ -202,8 +202,16 @@ public class KitEditorGui extends Gui {
      * stored items are exactly as before -- but the copy already sitting in the player's inventory from
      * having taken it out mid-edit is not; left alone, it is a free duplicate of an item the kit still
      * has (UltiKits/UltiKits#38 review of #39). Whatever of {@code openedWith} the grid no longer
-     * accounts for is therefore reclaimed from the player's own inventory below, the same way an added
-     * excess is given to it above, so a cancelled edit costs nothing in either direction.
+     * accounts for is therefore reclaimed below, the same way an added excess is given back above, so a
+     * cancelled edit costs nothing in either direction.
+     * <p>
+     * A picked-up item can be in exactly one of three places when this fires, because {@link #onClick}/
+     * {@link #onDrag} refuse anything that would put it anywhere else: still in the grid (accounted for
+     * above), in the player's own inventory (the common case, reclaimed from there below), or on the
+     * cursor -- picked up but not yet placed anywhere when Esc closed the window mid-drag, which Bukkit
+     * hands back to the player's inventory once this handler returns. Left unreclaimed, that third place
+     * duplicates the item exactly as the second one did, so it is matched against {@code unmatched}
+     * first, before anything is taken from the inventory itself.
      */
     @Override
     public void onClose(InventoryCloseEvent event) {
@@ -239,6 +247,7 @@ public class KitEditorGui extends Gui {
                 giveOrDrop(returned);
             }
         }
+        reclaimFromCursor(event, unmatched);
         for (ItemStack original : unmatched) {
             if (original.getAmount() > 0) {
                 reclaimFromPlayer(original);
@@ -247,13 +256,50 @@ public class KitEditorGui extends Gui {
     }
 
     /**
-     * Removes {@code missing} from the player's own inventory: a pre-filled quantity the grid no longer
-     * accounts for at close time can only have left through a click or drag {@link #onClick}/
-     * {@link #onDrag} let through, and the only place those can put it is the player's own inventory, so
+     * Matches {@code unmatched} against whatever the player is still holding on the cursor, and strips
+     * out whatever matches before Bukkit hands the cursor back to the player's inventory once this
+     * handler returns -- the one place a picked-up pre-filled item can be that is not the grid or the
+     * player's already-settled inventory (see {@link #onClose}'s own note on the three places it can be).
+     * A cursor holding something the player added themselves, or only partly a reclaimed item, keeps
+     * whatever remains after the match.
+     */
+    private void reclaimFromCursor(InventoryCloseEvent event, List<ItemStack> unmatched) {
+        ItemStack cursor = event.getView().getCursor();
+        if (cursor == null || cursor.getType() == Material.AIR) {
+            return;
+        }
+        int remaining = cursor.getAmount();
+        for (ItemStack original : unmatched) {
+            if (remaining == 0) {
+                break;
+            }
+            if (original.getAmount() > 0 && original.isSimilar(cursor)) {
+                int matched = Math.min(remaining, original.getAmount());
+                original.setAmount(original.getAmount() - matched);
+                remaining -= matched;
+            }
+        }
+        if (remaining == cursor.getAmount()) {
+            return;
+        }
+        if (remaining <= 0) {
+            event.getView().setCursor(null);
+        } else {
+            ItemStack updatedCursor = cursor.clone();
+            updatedCursor.setAmount(remaining);
+            event.getView().setCursor(updatedCursor);
+        }
+    }
+
+    /**
+     * Removes {@code missing} from the player's own inventory: a pre-filled quantity that
+     * {@link #reclaimFromCursor} did not already account for on the cursor, which a click or drag
+     * {@link #onClick}/{@link #onDrag} let through can only have put in the player's own inventory, so
      * that is where the duplicate copy this cancelled edit must not leave behind is taken back from.
      * Silent, and does not drop or substitute anything, if the player no longer holds enough of it --
      * moved on again (dropped, deposited elsewhere, traded) before the editor closed -- since nothing
-     * further can be reclaimed once an item has left the one place this method is able to look.
+     * further can be reclaimed once an item has left the two places this method and
+     * {@link #reclaimFromCursor} are able to look.
      */
     private void reclaimFromPlayer(ItemStack missing) {
         player.getInventory().removeItem(missing);
