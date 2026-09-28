@@ -481,5 +481,31 @@ class KitEditorGuiInteractionTest {
                     .as("only the 6 taken out of the stack of 10 are reclaimed, none of the 4 left in the grid")
                     .isZero();
         }
+
+        @Test
+        @DisplayName("A full inventory reclaims the missing kit copy before returning the player's own item, so it lands in the freed slot instead of being dropped (UltiKits/UltiKits#39 review)")
+        void cancelWithAFullInventoryPlacesTheReturnedItemInTheFreedSlotInsteadOfDroppingIt() {
+            // Fill every slot Inventory#addItem can place into (36 main+hotbar, plus armor and off-hand
+            // on this GUI library's PlayerInventory), then simulate a hotbar swap: the pre-filled sword
+            // left the grid for slot 0 of the player's own inventory, and the personal item that was
+            // there is now in the grid instead. Nothing frees a slot on its own -- the swap is a
+            // straight exchange.
+            for (int i = 0; i < admin.getInventory().getSize(); i++) {
+                admin.getInventory().setItem(i, new ItemStack(Material.STONE));
+            }
+            admin.getInventory().setItem(0, new ItemStack(Material.DIAMOND_SWORD));
+            openEditor();
+            grid().setItem(0, new ItemStack(Material.GOLDEN_APPLE));
+
+            admin.closeInventory();
+
+            assertThat(admin.getInventory().contains(Material.GOLDEN_APPLE))
+                    .as("the player's own item was placed in the slot freed by reclaiming the kit's copy "
+                            + "first, not dropped at their feet for want of room")
+                    .isTrue();
+            assertThat(admin.getInventory().contains(Material.DIAMOND_SWORD))
+                    .as("the reclaimed kit copy is gone from the player's inventory")
+                    .isFalse();
+        }
     }
 }

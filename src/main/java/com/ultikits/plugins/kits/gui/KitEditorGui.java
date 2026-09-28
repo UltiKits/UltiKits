@@ -241,6 +241,14 @@ public class KitEditorGui extends Gui {
      * hands back to the player's inventory once this handler returns. Left unreclaimed, that third place
      * duplicates the item exactly as the second one did, so it is matched against {@code unmatched}
      * first, before anything is taken from the inventory itself.
+     * <p>
+     * Reclaiming runs before giving anything back, not after: a full inventory that swapped a personal
+     * item into the grid for a pre-filled one has no free slot for that personal item until the kit's own
+     * copy is removed from wherever it ended up. Handing the personal item back first would drop it at
+     * the player's feet -- exposed to despawning or another player picking it up -- for want of the exact
+     * slot the reclaim below is about to free, so every excess item the grid holds is collected into
+     * {@code toReturn} and not handed over until after both reclaims have run (UltiKits/UltiKits#39
+     * review).
      */
     @Override
     public void onClose(InventoryCloseEvent event) {
@@ -254,6 +262,7 @@ public class KitEditorGui extends Gui {
         for (ItemStack original : openedWith) {
             unmatched.add(original.clone());
         }
+        List<ItemStack> toReturn = new ArrayList<>();
         for (int i = 0; i < ITEM_SLOTS && i < grid.getSize(); i++) {
             ItemStack item = grid.getItem(i);
             if (item == null || item.getType() == Material.AIR) {
@@ -273,7 +282,7 @@ public class KitEditorGui extends Gui {
             if (added > 0) {
                 ItemStack returned = item.clone();
                 returned.setAmount(added);
-                giveOrDrop(returned);
+                toReturn.add(returned);
             }
         }
         reclaimFromCursor(event, unmatched);
@@ -281,6 +290,9 @@ public class KitEditorGui extends Gui {
             if (original.getAmount() > 0) {
                 reclaimFromPlayer(original);
             }
+        }
+        for (ItemStack returned : toReturn) {
+            giveOrDrop(returned);
         }
     }
 

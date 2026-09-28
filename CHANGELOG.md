@@ -117,6 +117,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   或进了玩家的背包。两者都只在格子内被拒绝：本编辑界面所基于的 GUI 库只在格子内才会执行这类拒绝，对于完全发生在玩家
   自己背包内的点击则不会——先把预填充物品移出格子（一次普通操作），再在背包内按 Q 丢弃或克隆，仍会在两步之内达到同样的
   结果；这是已知的限制，已上报供决策，本次未修复（UltiKits/UltiKits#39 复查）。
+- Cancelling the editor with a full inventory now reclaims the kit's own copy before handing back an
+  item the player added, so the returned item lands in the slot the reclaim just freed instead of
+  being dropped at the player's feet for want of room. Before, the order was reversed: a personal item
+  swapped into the grid for a pre-filled one could be dropped on the ground -- exposed to despawning or
+  another player picking it up -- even though the exact slot it needed was about to be freed one step
+  later (UltiKits/UltiKits#39 review).
+- 现在在背包已满的情况下取消编辑，会先收回礼包自身的物品副本，再退还玩家新增的物品，使被退还的物品落入刚刚腾出的格位，
+  而不是因为没有空位被丢在玩家脚下。此前顺序相反：把个人物品与预填充物品互换进格子后，即使下一步就会腾出所需的那个格位，
+  该个人物品仍可能被丢在地上——面临消失或被他人拾取的风险（UltiKits/UltiKits#39 复查）。
 - When a kit claim cannot be recorded, the claim is refused and any payment refunded, so a one-time
   kit can no longer be claimed twice after a storage failure. A claim is now charged, then recorded,
   then handed over; if the record cannot be written, nothing is given, no reward command runs and
