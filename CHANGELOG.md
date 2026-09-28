@@ -58,6 +58,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 礼包奖励命令未能执行时，现在会如实报告，而不是被忽略。以玩家身份执行的命令若不存在、被拒绝或出错，会告诉玩家是哪项
   奖励没有执行；无论玩家命令还是控制台命令，失败都会记录一条写明礼包、命令和玩家的警告。领取仍然有效且不退款，运维可
   手动补发。此前两类命令的结果都被丢弃，领取直接报告成功（UltiKits/UltiKits#25）。
+- A console reward command whose scheduling itself fails (`UltiTools` registered but disabled between
+  the lookup and the scheduling call, or the scheduler otherwise refuses the task) is now logged the
+  same way an unschedulable one already was, and every console command after it in the kit's list is
+  still attempted. Before, that failure escaped the claim after payment, recording and item delivery
+  had already run, produced no warning for that command, and silently skipped every console command
+  after it in the list (UltiKits/UltiKits#39 review of #25).
+- 现在控制台奖励命令的调度本身失败时（`UltiTools` 在查找之后、调度之前被禁用，或调度器出于其它原因拒绝该任务），
+  会像既有的「无法调度」情形一样记录日志，且该礼包列表中排在它之后的控制台命令仍会继续尝试执行。此前该失败会在扣款、
+  记录和物品发放都已完成之后逃出领取流程，既不为该命令记录任何警告，也会静默跳过列表中排在它之后的所有控制台命令
+  （UltiKits/UltiKits#39 复查 #25）。
 - `/kits list` and the "Insufficient balance, requires …" reply now write a kit's price in the server
   economy's own format, as the kit browser already did. Before, they printed a hard-coded `$` and the
   raw number (`($100.0)`), so a server whose currency is not dollars showed one price two ways
@@ -91,6 +101,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   从它可能所在的任何位置收回：玩家自己的背包（常见情形），或者——如果是在拖动途中按 Esc 关闭窗口、物品尚未放置时——
   仍停留在光标上；这种情况下也会在物品被服务器交还给玩家之前收回。取消编辑现在在两个方向上都不产生任何得失
   （UltiKits/UltiKits#38 复查 #39）。
+- Pressing Q (or Ctrl+Q) over a pre-filled item in the editor's grid no longer does anything. That
+  action drops the item into the world, a place the reconciliation above cannot see or reach, so
+  cancelling afterward left the kit file unchanged and a free duplicate of its item lying on the
+  ground. Q over the player's own inventory is unaffected -- it drops their own item as normal
+  (UltiKits/UltiKits#39 review).
+- 现在在编辑界面的格子中对预填充物品按 Q（或 Ctrl+Q）不再产生任何效果。该操作会把物品扔进世界，是上面的找回机制既
+  看不到也够不到的地方，此前取消编辑会让礼包文件保持不变，同时地上多出一份该物品的重复品。对玩家自己背包中的物品按 Q
+  不受影响，仍会正常丢出玩家自己的物品（UltiKits/UltiKits#39 复查）。
 - When a kit claim cannot be recorded, the claim is refused and any payment refunded, so a one-time
   kit can no longer be claimed twice after a storage failure. A claim is now charged, then recorded,
   then handed over; if the record cannot be written, nothing is given, no reward command runs and

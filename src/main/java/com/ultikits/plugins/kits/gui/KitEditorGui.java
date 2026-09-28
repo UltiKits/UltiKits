@@ -151,10 +151,16 @@ public class KitEditorGui extends Gui {
 
     /**
      * Lets a click through in the grid and in the player's own inventory, and refuses it on the bottom
-     * row. Two actions reach the bottom row from elsewhere and are refused when they would: a shift-click
-     * from the player's inventory stacks onto a matching top-inventory item, and a double-click collects
-     * matching items from the whole view onto the cursor - either would pull a button or pane out of
-     * place, or push the player's item into a slot that is thrown away on close.
+     * row. Three actions reach outside the slot they were clicked on and are refused when they would
+     * leave the grid a way {@link #onClose}'s reconciliation cannot see: a shift-click from the player's
+     * inventory that would stack onto a matching top-inventory item, a double-click that collects
+     * matching items from the whole view onto the cursor, and Q (or Ctrl+Q) over a grid slot, which drops
+     * that slot's item into the world rather than moving it anywhere {@link #onClose} still accounts for
+     * -- reconciliation matches the grid, the player's inventory and the cursor (UltiKits/UltiKits#39
+     * review), but a dropped item is gone from all three, and closing without saving would then leave a
+     * free duplicate of a kit item lying in the world with the kit file unchanged. The first two would
+     * also pull a button or pane out of place, or push the player's item into a slot that is thrown away
+     * on close.
      *
      * @return {@code true} to let the click happen / 允许点击时为 {@code true}
      */
@@ -165,6 +171,10 @@ public class KitEditorGui extends Gui {
         boolean inGrid = rawSlot >= 0 && rawSlot < ITEM_SLOTS;
         boolean inOwnInventory = rawSlot >= top.getSize();
         if (!inGrid && !inOwnInventory) {
+            return false;
+        }
+        if (inGrid && (event.getAction() == InventoryAction.DROP_ONE_SLOT
+                || event.getAction() == InventoryAction.DROP_ALL_SLOT)) {
             return false;
         }
         if (event.getAction() == InventoryAction.COLLECT_TO_CURSOR && matchesControlRow(top, event.getCursor())) {

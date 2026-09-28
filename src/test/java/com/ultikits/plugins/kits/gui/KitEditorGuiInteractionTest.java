@@ -213,6 +213,28 @@ class KitEditorGuiInteractionTest {
             openEditor();
             assertThat(drag(new ItemStack(Material.STONE, 2), 3, FIRST_OWN_RAW_SLOT + 1).isCancelled()).isFalse();
         }
+
+        @Test
+        @DisplayName("Q over a pre-filled grid slot is cancelled: it would drop the item into the world, a place reconciliation cannot reach (UltiKits/UltiKits#39 review)")
+        void dropFromTheGridIsCancelled() {
+            openEditor();
+            assertThat(click(0, ClickType.DROP, InventoryAction.DROP_ALL_SLOT, grid().getItem(0)).isCancelled())
+                    .as("Ctrl+Q over the pre-filled item").isTrue();
+            assertThat(click(0, ClickType.DROP, InventoryAction.DROP_ONE_SLOT, grid().getItem(0)).isCancelled())
+                    .as("Q over the pre-filled item").isTrue();
+            // The kit item is still exactly where it was: neither click was applied.
+            assertThat(grid().getItem(0).getType()).isEqualTo(Material.DIAMOND_SWORD);
+        }
+
+        @Test
+        @DisplayName("Q over the player's own inventory drops their own item as normal, uninvolved with the kit")
+        void dropFromOwnInventoryIsAllowed() {
+            admin.getInventory().setItem(9, new ItemStack(Material.STONE));
+            openEditor();
+            assertThat(click(FIRST_OWN_RAW_SLOT, ClickType.DROP, InventoryAction.DROP_ALL_SLOT,
+                    new ItemStack(Material.STONE)).isCancelled())
+                    .as("Q over the player's own slot").isFalse();
+        }
     }
 
     @Nested

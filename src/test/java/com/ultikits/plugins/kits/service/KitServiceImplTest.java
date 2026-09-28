@@ -3775,6 +3775,30 @@ class KitServiceImplTest {
                     "reward", "say two", "TestPlayer"));
         }
 
+        @Test
+        @DisplayName("a console command whose scheduling itself throws is logged, not dropped silently, and a later command in the list still runs (UltiKits/UltiKits#39 review)")
+        void unschedulableConsoleCommandIsLoggedAndDoesNotAbortLaterCommands() throws Exception {
+            rewardKit(null, Arrays.asList("broken schedule", "say two"));
+            RuntimeException schedulingFailure = new RuntimeException("scheduler rejected the task");
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                // UltiTools is registered (consoleScheduler's own plugin lookup succeeds), but the
+                // scheduler itself refuses every task -- as it does for a plugin that is registered but
+                // disabled -- so runTask throws before the task it would have run ever exists.
+                doThrow(schedulingFailure).when(scheduler).runTask(any(Plugin.class), any(Runnable.class));
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+            }
+
+            verify(mockLogger).warn(schedulingFailure, String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "broken schedule", "TestPlayer"));
+            // The first command's scheduling failure must not abort the loop before the second is even
+            // attempted -- it also throws here (the same stub applies to every runTask call), and is
+            // logged the same way rather than silently skipped.
+            verify(mockLogger).warn(schedulingFailure, String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "say two", "TestPlayer"));
+        }
+
         private BukkitScheduler consoleScheduler(MockedStatic<Bukkit> bukkit) {
             PluginManager pluginManager = mock(PluginManager.class);
             Plugin ultiTools = mock(Plugin.class);

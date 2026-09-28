@@ -1145,6 +1145,15 @@ public class KitServiceImpl implements KitService {
      * player, the kit and the command rather than reported to the player (UltiKits/UltiKits#25). A
      * command that cannot be scheduled at all is logged the same way instead of being dropped.
      * <p>
+     * {@code runTask} itself can throw before the task it would have run ever exists - {@code UltiTools}
+     * found above can still be registered but disabled between that lookup and this call, and the
+     * scheduler then refuses every task for it. Uncaught, that throw would escape this method (and
+     * {@code claimKit} above it) after payment, recording and item delivery already ran, skip logging a
+     * warning for this command, and abort the loop before any command after it in the list is even
+     * attempted - the same silent drop the {@code ultiToolsPlugin == null} branch above already guards
+     * against, just reached a different way (UltiKits/UltiKits#39 review). Caught and logged the same
+     * way, so one unschedulable command costs only itself.
+     * <p>
      * 延后一刻以控制台身份执行奖励命令，执行时检查结果，失败则记录警告。
      */
     private void executeConsoleCommands(Player player, KitDefinition kit) {
@@ -1160,12 +1169,16 @@ public class KitServiceImpl implements KitService {
                 logger.warn(consoleCommandFailure(kit, processed, playerName));
                 continue;
             }
-            Bukkit.getScheduler().runTask(ultiToolsPlugin, () -> {
-                RewardRun run = RewardRun.of(() -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), processed));
-                if (!run.ran) {
-                    run.log(logger, consoleCommandFailure(kit, processed, playerName));
-                }
-            });
+            try {
+                Bukkit.getScheduler().runTask(ultiToolsPlugin, () -> {
+                    RewardRun run = RewardRun.of(() -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), processed));
+                    if (!run.ran) {
+                        run.log(logger, consoleCommandFailure(kit, processed, playerName));
+                    }
+                });
+            } catch (RuntimeException e) {
+                logger.warn(e, consoleCommandFailure(kit, processed, playerName));
+            }
         }
     }
 
