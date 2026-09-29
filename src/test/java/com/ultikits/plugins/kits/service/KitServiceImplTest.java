@@ -13,6 +13,7 @@ import com.ultikits.ultitools.utils.EconomyUtils;
 import net.milkbowl.vault.economy.Economy;
 import net.milkbowl.vault.economy.EconomyResponse;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -33,6 +34,8 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -1248,6 +1251,28 @@ class KitServiceImplTest {
             verify(mockEconomy, never()).withdrawPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble());
         }
 
+        /**
+         * With no economy provider the player's balance is never read and no balance would do, so the
+         * claim must not say "Insufficient balance": it has its own outcome, and nothing is charged,
+         * recorded or given (UltiKits/UltiKits#32).
+         */
+        @Test
+        @DisplayName("claimKit on a paid kit with no economy provider says the economy is unavailable")
+        void paidKitWithNoEconomyIsEconomyUnavailable() throws Exception {
+            MockBukkitSupport.bootstrap();
+            EconomyUtils.reset();
+            assertThat(EconomyUtils.isAvailable()).as("no economy provider is registered").isFalse();
+            KitDefinition kit = createTestKit("expensive");
+            kit.setPrice(500);
+            injectKit(service, kit);
+
+            KitService.ClaimResult result = service.claimKit(player, "expensive");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.ECONOMY_UNAVAILABLE);
+            verify(mockClaimOperator, never()).insert(any());
+            verify(inventory, never()).addItem(any());
+        }
+
         @Test
         @DisplayName("claimKit skips economy check for free kit")
         void claimFreeKitSkipsEconomy() throws Exception {
@@ -2325,6 +2350,50 @@ class KitServiceImplTest {
             assertThat(player.getInventory().getStorageContents()).containsExactly(before);
             assertThat(count(Material.COBBLESTONE)).isZero();
             verify(mockClaimOperator, never()).insert(any(KitClaimData.class));
+        }
+
+        /**
+         * Paper 1.21.1 and earlier put an over-sized stack into an empty slot up to the INVENTORY's maximum
+         * (99 by default), not the item's, so 70 cobblestone fit one empty slot there; the fit check,
+         * modelling only the later behaviour, refused that claim (UltiKits/UltiKits#38). The capacity is
+         * probed once at start; these fix it per server behaviour.
+         */
+        @Test
+        @DisplayName("on a server whose empty slots take the inventory's maximum, 70 cobblestone fit one free slot")
+        void inventoryMaxServerFitsAnOversizedStackInOneSlot() throws Exception {
+            leaveFreeSlots(1);
+            player.getInventory().setMaxStackSize(99);
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 70));
+            spyService.useEmptySlotCapacity(KitServiceImpl.EmptySlotCapacity.INVENTORY_MAX);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "bigstone");
+
+            assertThat(result).isEqualTo(KitService.ClaimResult.SUCCESS);
+            assertThat(balance[0]).isEqualTo(400.0);
+        }
+
+        @Test
+        @DisplayName("on a server whose empty slots take the item's maximum, the same claim is refused before any charge")
+        void itemMaxServerRefusesTheSameClaim() throws Exception {
+            leaveFreeSlots(1);
+            player.getInventory().setMaxStackSize(99);
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 70));
+            spyService.useEmptySlotCapacity(KitServiceImpl.EmptySlotCapacity.ITEM_MAX);
+
+            assertThat(spyService.claimKit(player, "bigstone")).isEqualTo(KitService.ClaimResult.INVENTORY_FULL);
+            assertThat(balance[0]).isEqualTo(500.0);
+        }
+
+        @Test
+        @DisplayName("on a server whose empty slots take the inventory's maximum, that maximum still caps a slot")
+        void inventoryMaxServerStillCapsAtTheInventoryMaximum() throws Exception {
+            leaveFreeSlots(1);
+            player.getInventory().setMaxStackSize(99);
+            KitServiceImpl spyService = serviceWithKit("bigstone", new ItemStack(Material.COBBLESTONE, 128));
+            spyService.useEmptySlotCapacity(KitServiceImpl.EmptySlotCapacity.INVENTORY_MAX);
+
+            assertThat(spyService.claimKit(player, "bigstone")).isEqualTo(KitService.ClaimResult.INVENTORY_FULL);
+            assertThat(balance[0]).isEqualTo(500.0);
         }
 
         @Test
@@ -3444,6 +3513,310 @@ class KitServiceImplTest {
     }
 
     // =========================================================================
+    // Empty-slot capacity probe (UltiKits/UltiKits#38)
+    // =========================================================================
+    /**
+     * The probe adds one over-sized stack to an empty scratch inventory and reads how much landed in the
+     * first slot. The scratch inventory here answers the way each server version's {@code addItem} does.
+     */
+    @Nested
+    @DisplayName("Empty-slot capacity probe tests")
+    class EmptySlotCapacityProbeTests {
+
+        @BeforeEach
+        void setUp() {
+            MockBukkitSupport.bootstrap(); // ItemStack needs a server
+        }
+
+        /** A 9-slot scratch inventory with maximum 99 whose addItem puts at most {@code perEmptySlot} in slot 0. */
+        private org.bukkit.inventory.Inventory scratch(int inventoryMax, java.util.function.IntUnaryOperator perEmptySlot) {
+            org.bukkit.inventory.Inventory inventory = mock(org.bukkit.inventory.Inventory.class);
+            ItemStack[] slots = new ItemStack[9];
+            when(inventory.getMaxStackSize()).thenReturn(inventoryMax);
+            lenient().when(inventory.addItem(any(ItemStack[].class))).thenAnswer(inv -> {
+                ItemStack added = inv.getArgument(0);
+                ItemStack first = added.clone();
+                first.setAmount(perEmptySlot.applyAsInt(added.getAmount()));
+                slots[0] = first;
+                return new HashMap<Integer, ItemStack>();
+            });
+            lenient().when(inventory.getItem(0)).thenAnswer(inv -> slots[0]);
+            return inventory;
+        }
+
+        @Test
+        @DisplayName("a server that fills an empty slot to the inventory's maximum (Paper 1.21.1) is read as INVENTORY_MAX")
+        void readsInventoryMaxBehaviour() {
+            org.bukkit.inventory.Inventory paper1211 = scratch(99, amount -> Math.min(amount, 99));
+
+            assertThat(KitServiceImpl.probeEmptySlotCapacity(paper1211))
+                    .isEqualTo(KitServiceImpl.EmptySlotCapacity.INVENTORY_MAX);
+        }
+
+        @Test
+        @DisplayName("a server that fills an empty slot to the item's maximum (Paper 1.21.4) is read as ITEM_MAX")
+        void readsItemMaxBehaviour() {
+            org.bukkit.inventory.Inventory paper1214 = scratch(99, amount -> Math.min(amount, 64));
+
+            assertThat(KitServiceImpl.probeEmptySlotCapacity(paper1214))
+                    .isEqualTo(KitServiceImpl.EmptySlotCapacity.ITEM_MAX);
+        }
+
+        @Test
+        @DisplayName("an inventory maximum no larger than the item's cannot tell them apart: ITEM_MAX, nothing added")
+        void inventoryMaxNotAboveItemMaxIsItemMax() {
+            org.bukkit.inventory.Inventory legacy = scratch(64, amount -> Math.min(amount, 64));
+
+            assertThat(KitServiceImpl.probeEmptySlotCapacity(legacy))
+                    .isEqualTo(KitServiceImpl.EmptySlotCapacity.ITEM_MAX);
+            verify(legacy, never()).addItem(any(ItemStack[].class));
+        }
+
+        @Test
+        @DisplayName("the service probes the running server once, at construction")
+        void serviceProbesAtConstruction() {
+            new File(tempDir, "kits").mkdirs();
+            // MockBukkit's own addItem fills to the item's maximum, which is also the fallback, so the
+            // server's scratch inventory is made to answer like Paper 1.21.1 to see the probe's result.
+            org.bukkit.inventory.Inventory paper1211 = scratch(99, amount -> Math.min(amount, 99));
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class, CALLS_REAL_METHODS)) {
+                bukkit.when(() -> Bukkit.createInventory(isNull(), eq(9))).thenReturn(paper1211);
+
+                service = createService();
+            }
+
+            assertThat(service.emptySlotCapacity()).isEqualTo(KitServiceImpl.EmptySlotCapacity.INVENTORY_MAX);
+            verify(paper1211).addItem(any(ItemStack[].class));
+        }
+
+        @Test
+        @DisplayName("with no server to probe the service keeps the item-maximum model")
+        void noServerKeepsItemMax() {
+            MockBukkitSupport.shutdown();
+            new File(tempDir, "kits").mkdirs();
+
+            service = createService();
+
+            assertThat(service.emptySlotCapacity()).isEqualTo(KitServiceImpl.EmptySlotCapacity.ITEM_MAX);
+        }
+    }
+
+    // =========================================================================
+    // Reward command failures (UltiKits/UltiKits#25)
+    // =========================================================================
+    /**
+     * A kit's reward commands used to be fired and their results discarded, so a kit whose value is in
+     * its commands could be claimed, recorded and reported as a success while nothing happened. The
+     * maintainer's decision (2026-09-27): report the failure truthfully, do not refund, keep the claim
+     * order (charge, record, give, then commands). A player command's result is checked where it runs;
+     * a console command's when the deferred task runs it. {@code performCommand} returning {@code true}
+     * only means an executor accepted the command, so that is all a pass claims.
+     */
+    @Nested
+    @DisplayName("Reward command failure tests")
+    class RewardCommandFailureTests {
+
+        private Player player;
+        private KitServiceImpl spyService;
+
+        @BeforeEach
+        void setUp() {
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            player = createMockPlayer();
+            when(player.getInventory().getStorageContents()).thenReturn(new ItemStack[36]);
+            // Loading an empty kits folder logs a warning of its own; only the claim's lines matter here.
+            clearInvocations(mockLogger);
+        }
+
+        private KitDefinition rewardKit(List<String> playerCommands, List<String> consoleCommands) throws Exception {
+            KitDefinition kit = createTestKit("reward");
+            kit.setPlayerCommands(playerCommands);
+            kit.setConsoleCommands(consoleCommands);
+            spyService = spy(service);
+            injectKit(spyService, kit);
+            ItemStack item = mock(ItemStack.class);
+            when(item.clone()).thenReturn(item);
+            doReturn(new ItemStack[]{item}).when(spyService).deserializeItems("someBase64Data");
+            return kit;
+        }
+
+        private void assertClaimedAndRecorded(KitService.ClaimResult result) {
+            assertThat(result).as("the claim stands: no refund, no undo").isEqualTo(KitService.ClaimResult.SUCCESS);
+            verify(mockClaimOperator).insert(any(KitClaimData.class));
+        }
+
+        @Test
+        @DisplayName("a player command that is not accepted is reported to the player and logged, and the claim stands")
+        void refusedPlayerCommandIsReported() throws Exception {
+            rewardKit(Collections.singletonList("warp vip"), null);
+            when(player.performCommand("warp vip")).thenReturn(false);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "reward");
+
+            assertClaimedAndRecorded(result);
+            verify(player).sendMessage(ChatColor.RED + String.format(zh("kits.claim.reward_command_failed"), "warp vip"));
+            verify(mockLogger).warn(String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "warp vip", "TestPlayer"));
+        }
+
+        @Test
+        @DisplayName("a player command whose executor throws is reported the same way and does not escape the claim")
+        void throwingPlayerCommandIsReported() throws Exception {
+            rewardKit(Arrays.asList("warp vip", "spawn"), null);
+            when(player.performCommand("warp vip")).thenThrow(new org.bukkit.command.CommandException("boom"));
+            when(player.performCommand("spawn")).thenReturn(true);
+
+            KitService.ClaimResult result = spyService.claimKit(player, "reward");
+
+            assertClaimedAndRecorded(result);
+            verify(player).sendMessage(ChatColor.RED + String.format(zh("kits.claim.reward_command_failed"), "warp vip"));
+            verify(player).performCommand("spawn");
+        }
+
+        @Test
+        @DisplayName("a reward command that throws is logged with the exception, so the operator sees why")
+        void throwingRewardCommandLogsTheException() throws Exception {
+            rewardKit(Collections.singletonList("warp vip"), Collections.singletonList("broken"));
+            org.bukkit.command.CommandException playerFailure = new org.bukkit.command.CommandException("player boom");
+            org.bukkit.command.CommandException consoleFailure = new org.bukkit.command.CommandException("console boom");
+            when(player.performCommand("warp vip")).thenThrow(playerFailure);
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                bukkit.when(() -> Bukkit.dispatchCommand(any(), eq("broken"))).thenThrow(consoleFailure);
+
+                spyService.claimKit(player, "reward");
+                runDeferredTask(scheduler);
+            }
+
+            verify(mockLogger).warn(playerFailure, String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "warp vip", "TestPlayer"));
+            verify(mockLogger).warn(consoleFailure, String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "broken", "TestPlayer"));
+        }
+
+        @Test
+        @DisplayName("an accepted player command reports nothing")
+        void acceptedPlayerCommandReportsNothing() throws Exception {
+            rewardKit(Collections.singletonList("spawn"), null);
+            when(player.performCommand("spawn")).thenReturn(true);
+
+            assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+
+            verify(player, never()).sendMessage(anyString());
+            verify(mockLogger, never()).warn(anyString());
+        }
+
+        @Test
+        @DisplayName("a console command that is not accepted is logged when the deferred task runs it")
+        void refusedConsoleCommandIsLoggedWhenItRuns() throws Exception {
+            rewardKit(null, Collections.singletonList("lp user {player} parent add vip"));
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                bukkit.when(() -> Bukkit.dispatchCommand(any(), eq("lp user TestPlayer parent add vip"))).thenReturn(false);
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+                verify(mockLogger, never()).warn(anyString());
+
+                runDeferredTask(scheduler);
+            }
+
+            verify(mockLogger).warn(String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "lp user TestPlayer parent add vip", "TestPlayer"));
+        }
+
+        @Test
+        @DisplayName("a console command that throws is logged the same way")
+        void throwingConsoleCommandIsLogged() throws Exception {
+            rewardKit(null, Collections.singletonList("broken"));
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                bukkit.when(() -> Bukkit.dispatchCommand(any(), eq("broken")))
+                        .thenThrow(new org.bukkit.command.CommandException("boom"));
+
+                spyService.claimKit(player, "reward");
+                runDeferredTask(scheduler);
+            }
+
+            verify(mockLogger).warn(any(Throwable.class), eq(String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "broken", "TestPlayer")));
+        }
+
+        @Test
+        @DisplayName("an accepted console command logs nothing")
+        void acceptedConsoleCommandLogsNothing() throws Exception {
+            rewardKit(null, Collections.singletonList("say hi"));
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                bukkit.when(() -> Bukkit.dispatchCommand(any(), eq("say hi"))).thenReturn(true);
+
+                spyService.claimKit(player, "reward");
+                runDeferredTask(scheduler);
+            }
+
+            verify(mockLogger, never()).warn(anyString());
+        }
+
+        @Test
+        @DisplayName("console commands that cannot be scheduled are logged, not dropped silently")
+        void unscheduledConsoleCommandsAreLogged() throws Exception {
+            rewardKit(null, Arrays.asList("say one", "say two"));
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                PluginManager pluginManager = mock(PluginManager.class);
+                bukkit.when(Bukkit::getPluginManager).thenReturn(pluginManager);
+                when(pluginManager.getPlugin("UltiTools")).thenReturn(null);
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+            }
+
+            verify(mockLogger).warn(String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "say one", "TestPlayer"));
+            verify(mockLogger).warn(String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "say two", "TestPlayer"));
+        }
+
+        @Test
+        @DisplayName("a console command whose scheduling itself throws is logged, not dropped silently, and a later command in the list still runs (UltiKits/UltiKits#39 review)")
+        void unschedulableConsoleCommandIsLoggedAndDoesNotAbortLaterCommands() throws Exception {
+            rewardKit(null, Arrays.asList("broken schedule", "say two"));
+            RuntimeException schedulingFailure = new RuntimeException("scheduler rejected the task");
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                // UltiTools is registered (consoleScheduler's own plugin lookup succeeds), but the
+                // scheduler itself refuses every task -- as it does for a plugin that is registered but
+                // disabled -- so runTask throws before the task it would have run ever exists.
+                doThrow(schedulingFailure).when(scheduler).runTask(any(Plugin.class), any(Runnable.class));
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+            }
+
+            verify(mockLogger).warn(schedulingFailure, String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "broken schedule", "TestPlayer"));
+            // The first command's scheduling failure must not abort the loop before the second is even
+            // attempted -- it also throws here (the same stub applies to every runTask call), and is
+            // logged the same way rather than silently skipped.
+            verify(mockLogger).warn(schedulingFailure, String.format(zh("kits.log.console_reward_command_failed"),
+                    "reward", "say two", "TestPlayer"));
+        }
+
+        private BukkitScheduler consoleScheduler(MockedStatic<Bukkit> bukkit) {
+            PluginManager pluginManager = mock(PluginManager.class);
+            Plugin ultiTools = mock(Plugin.class);
+            BukkitScheduler scheduler = mock(BukkitScheduler.class);
+            bukkit.when(Bukkit::getPluginManager).thenReturn(pluginManager);
+            when(pluginManager.getPlugin("UltiTools")).thenReturn(ultiTools);
+            bukkit.when(Bukkit::getScheduler).thenReturn(scheduler);
+            return scheduler;
+        }
+
+        private void runDeferredTask(BukkitScheduler scheduler) {
+            ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+            verify(scheduler).runTask(any(Plugin.class), task.capture());
+            task.getValue().run();
+        }
+    }
+
+    // =========================================================================
     // Command Execution Tests
     // =========================================================================
     @Nested
@@ -4141,6 +4514,72 @@ class KitServiceImplTest {
     }
 
     // =========================================================================
+    // The example kit follows the server's language (UltiKits/UltiKits#33)
+    // =========================================================================
+    /**
+     * The example kit is copied once, when the kits folder does not exist yet. It used to be one file
+     * with a Chinese name and lore whatever {@code language} said; the maintainer's decision
+     * (2026-09-25) is one example per language, the one matching {@code language} copied at first
+     * start, and existing installs left as they are.
+     */
+    @Nested
+    @DisplayName("Example kit language tests")
+    class ExampleKitLanguageTests {
+
+        private YamlConfiguration firstStartExample(String language) {
+            when(plugin.getLanguageCode()).thenReturn(language);
+            service = createService();
+            File example = new File(tempDir, "kits/starter.yml");
+            assertThat(example).as("the example kit was copied at first start").exists();
+            return YamlConfiguration.loadConfiguration(example);
+        }
+
+        private boolean hasCjk(String text) {
+            return text.codePoints().anyMatch(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN);
+        }
+
+        @Test
+        @DisplayName("language: en copies an English example kit")
+        void englishServerGetsTheEnglishExample() {
+            YamlConfiguration example = firstStartExample("en");
+
+            assertThat(example.getString("displayName")).isEqualTo("&aStarter Kit");
+            assertThat(example.getStringList("description")).isNotEmpty().noneMatch(this::hasCjk);
+        }
+
+        @Test
+        @DisplayName("language: zh copies the Chinese example kit")
+        void chineseServerGetsTheChineseExample() {
+            YamlConfiguration example = firstStartExample("zh");
+
+            assertThat(example.getString("displayName")).isEqualTo("&a新手礼包");
+            assertThat(example.getStringList("description")).isNotEmpty().allMatch(this::hasCjk);
+        }
+
+        @Test
+        @DisplayName("a language this module does not ship falls back to the English example, as its messages do")
+        void unsupportedLanguageFallsBackToEnglish() {
+            YamlConfiguration example = firstStartExample("fr");
+
+            assertThat(example.getString("displayName")).isEqualTo("&aStarter Kit");
+        }
+
+        @Test
+        @DisplayName("an existing kits folder is left as it is: nothing is copied")
+        void existingInstallIsUntouched() throws Exception {
+            File kitsFolder = new File(tempDir, "kits");
+            assertThat(kitsFolder.mkdirs()).isTrue();
+            File own = new File(kitsFolder, "own.yml");
+            Files.write(own.toPath(), "displayName: \"&fOwn\"\n".getBytes(StandardCharsets.UTF_8));
+            when(plugin.getLanguageCode()).thenReturn("en");
+
+            service = createService();
+
+            assertThat(kitsFolder.list()).containsExactly("own.yml");
+        }
+    }
+
+    // =========================================================================
     // ClaimKit Deserialization Edge Cases
     // =========================================================================
     @Nested
@@ -4508,7 +4947,7 @@ class KitServiceImplTest {
                     KitService.ClaimResult.SYSTEM_DISABLED,
                     KitService.ClaimResult.NOT_RECORDED,
                     KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED,
-                    KitService.ClaimResult.ERROR
+                    KitService.ClaimResult.ECONOMY_UNAVAILABLE
             );
         }
 

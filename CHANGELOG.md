@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The example kit created on first start now follows the server's `language`: an English server gets
+  a `Starter Kit` with English lore, a Chinese one `新手礼包`, and a language the module has no
+  example for gets the English one. Before, the one shipped example was Chinese under every language.
+  Existing installs are not affected: the example is copied only when the kits folder does not exist
+  yet (UltiKits/UltiKits#33).
+- 首次启动时创建的示例礼包现在跟随服务器的 `language`：英文服务器得到英文说明的 `Starter Kit`，中文服务器得到
+  `新手礼包`，模块没有示例的语言使用英文版。此前唯一的示例在任何语言下都是中文。已有安装不受影响：只有礼包文件夹尚不
+  存在时才会复制示例（UltiKits/UltiKits#33）。
 - Language keys were renamed from Chinese sentences to ASCII keys (for example `kits.claim.success`).
   An operator who edited this module's `lang/en.json` or `lang/zh.json` must re-apply those edits to
   the new keys; until then the renamed messages show the new built-in text. A server whose language
@@ -18,6 +26,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- The "Error claiming kit" message and the claim outcome behind it were removed: no claim ever
+  produced that outcome, so the message could not be shown. Every claim outcome keeps its own reply.
+  An operator who translated the `kits.claim.error` entry can drop it (UltiKits/UltiKits#27).
+- 删除了「领取礼包时发生错误」消息及其背后的领取结果：没有任何领取会产生这个结果，因此该消息从来无法显示。每种领取结果
+  仍有各自的回复。翻译过 `kits.claim.error` 条目的运维可以删掉它（UltiKits/UltiKits#27）。
 - Four language entries that no code ever displayed were removed from both language files (a
   "Kit System" title, a per-kit "Kit loaded:" line, an "Economy system is not available" message and a
   players-only command message). Nothing an operator or player sees changes. The economy message
@@ -29,6 +42,90 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A kit claim is no longer refused with "Inventory full" on Paper 1.21.1 and earlier when an
+  over-sized stack would fit. Those versions fill an empty slot up to the inventory's maximum (99), not
+  the item's (64); the module now probes which behaviour the server has once at start and counts empty
+  slots accordingly. Nothing was lost before: the claim was refused before any charge
+  (UltiKits/UltiKits#38).
+- 在 Paper 1.21.1 及更早版本上，放得下的超量物品堆不再被误判为「背包已满」而拒绝领取。这些版本向空格放入物品时按背包上限
+  （99）而不是物品上限（64）放置；模块现在会在启动时探测一次服务器的实际行为并据此计算空格。此前不会丢失物品：领取在扣款
+  前就被拒绝（UltiKits/UltiKits#38）。
+- A kit reward command that does not run is now reported instead of being ignored. A player command
+  that is unknown, refused or throws tells the player which reward did not run; every failed reward
+  command, player or console, logs a warning naming the kit, the command and the player. The claim
+  still stands and is not refunded, so an operator can make the reward good by hand. Before, both
+  results were discarded and the claim reported plain success (UltiKits/UltiKits#25).
+- 礼包奖励命令未能执行时，现在会如实报告，而不是被忽略。以玩家身份执行的命令若不存在、被拒绝或出错，会告诉玩家是哪项
+  奖励没有执行；无论玩家命令还是控制台命令，失败都会记录一条写明礼包、命令和玩家的警告。领取仍然有效且不退款，运维可
+  手动补发。此前两类命令的结果都被丢弃，领取直接报告成功（UltiKits/UltiKits#25）。
+- A console reward command whose scheduling itself fails (`UltiTools` registered but disabled between
+  the lookup and the scheduling call, or the scheduler otherwise refuses the task) is now logged the
+  same way an unschedulable one already was, and every console command after it in the kit's list is
+  still attempted. Before, that failure escaped the claim after payment, recording and item delivery
+  had already run, produced no warning for that command, and silently skipped every console command
+  after it in the list (UltiKits/UltiKits#39 review of #25).
+- 现在控制台奖励命令的调度本身失败时（`UltiTools` 在查找之后、调度之前被禁用，或调度器出于其它原因拒绝该任务），
+  会像既有的「无法调度」情形一样记录日志，且该礼包列表中排在它之后的控制台命令仍会继续尝试执行。此前该失败会在扣款、
+  记录和物品发放都已完成之后逃出领取流程，既不为该命令记录任何警告，也会静默跳过列表中排在它之后的所有控制台命令
+  （UltiKits/UltiKits#39 复查 #25）。
+- `/kits list` and the "Insufficient balance, requires …" reply now write a kit's price in the server
+  economy's own format, as the kit browser already did. Before, they printed a hard-coded `$` and the
+  raw number (`($100.0)`), so a server whose currency is not dollars showed one price two ways
+  (UltiKits/UltiKits#34).
+- `/kits list` 和「余额不足，需要 …」回复现在按服务器经济系统自己的格式显示礼包价格，与礼包浏览界面一致。此前它们写死
+  `$` 并显示原始数字（`($100.0)`），货币不是美元的服务器上同一价格会有两种写法（UltiKits/UltiKits#34）。
+- A paid kit claimed on a server with no economy plugin now says so ("This kit has a price, but the
+  server has no economy plugin to pay it with"), and the kit browser shows "No economy on this server"
+  for it. Before, both said "Insufficient balance", which no balance could fix and which hid the missing
+  economy (UltiKits/UltiKits#32).
+- 在没有经济插件的服务器上领取付费礼包时，现在会如实提示（「此礼包需要付费，但服务器没有可用的经济插件」），礼包浏览界面
+  显示「服务器没有经济系统」。此前两处都显示「余额不足」，但任何余额都无法满足，也掩盖了经济系统缺失（UltiKits/UltiKits#32）。
+- The kit editor (`/kits edit`) now saves moves and additions: items can be moved within its grid and
+  added from the player's own inventory, and Save writes them into the kit. Before, the GUI library
+  cancelled every click in the grid, so Save re-saved the items the editor opened with. The bottom row
+  of buttons stays fixed. When the editor closes without a successful save, the items the player put
+  into the grid go back to the player instead of being thrown away (UltiKits/UltiKits#16).
+- 礼包编辑界面（`/kits edit`）现在会保存移动和新增的物品：可以在格子内移动物品、从自己的背包放入物品，保存后写入礼包。
+  此前 GUI 库会取消格子内的每一次点击，保存时只是把打开时的物品原样再存一遍。底部按钮行保持固定。未成功保存就关闭
+  编辑界面时，玩家放入格子的物品会退还给玩家，而不是随界面一起丢弃（UltiKits/UltiKits#16）。
+- Taking a pre-filled kit item out of the editor's grid and then cancelling (or closing the window
+  any other way that is not a successful Save) no longer leaves the player holding a free duplicate.
+  Cancelling never writes the kit file, so the kit still has the item; whatever the grid opened with
+  that the grid no longer accounts for at close time is now reclaimed the same way an item they added
+  is given back to them, from wherever it could be: the player's own inventory (the common case), or
+  still on the cursor if Esc closed the window mid-drag, before it was placed anywhere -- reclaimed
+  there too, before the server would otherwise hand it back to the player once the window finishes
+  closing. A cancelled edit now costs nothing in either direction (UltiKits/UltiKits#38 review of #39).
+- 现在在编辑界面的格子中取出预填充的礼包物品后按取消（或以非成功保存的其它方式关闭窗口），不会再让玩家白得一份重复物品。
+  取消操作从不写入礼包文件，因此礼包仍持有该物品；关闭时格子里对不上打开时数量的部分，现在会像找回玩家新增的物品那样，
+  从它可能所在的任何位置收回：玩家自己的背包（常见情形），或者——如果是在拖动途中按 Esc 关闭窗口、物品尚未放置时——
+  仍停留在光标上；这种情况下也会在物品被服务器交还给玩家之前收回。取消编辑现在在两个方向上都不产生任何得失
+  （UltiKits/UltiKits#38 复查 #39）。
+- Pressing Q (or Ctrl+Q), or Creative-mode middle-clicking (clone), over a pre-filled item in the
+  editor's grid no longer does anything. The first drops the item into the world, a place the
+  reconciliation above cannot see or reach; the second leaves the original in place and puts a free
+  copy on the cursor, so reconciliation never even sees anything missing to reclaim. Either way,
+  cancelling afterward left the kit file unchanged and a free duplicate of its item, on the ground or
+  in the player's inventory. Both are refused only for the grid: the GUI library this editor is built
+  on only honours a refusal there, not for a click confined to the player's own inventory, where a
+  pre-filled item taken out first (an ordinary move) and then Q-dropped or cloned still reaches the
+  same outcome in two steps -- a known limitation reported for a decision, not fixed here
+  (UltiKits/UltiKits#39 review).
+- 现在在编辑界面的格子中对预填充物品按 Q（或 Ctrl+Q），或在创造模式下按住鼠标中键（复制），都不再产生任何效果。前者会把
+  物品扔进世界，是上面的找回机制既看不到也够不到的地方；后者会保留原物品不动、在光标上放一份免费副本，因此找回机制根本
+  不会发现有任何缺失需要收回。无论哪一种，此前取消编辑都会让礼包文件保持不变，同时多出一份该物品的重复品——落在地上，
+  或进了玩家的背包。两者都只在格子内被拒绝：本编辑界面所基于的 GUI 库只在格子内才会执行这类拒绝，对于完全发生在玩家
+  自己背包内的点击则不会——先把预填充物品移出格子（一次普通操作），再在背包内按 Q 丢弃或克隆，仍会在两步之内达到同样的
+  结果；这是已知的限制，已上报供决策，本次未修复（UltiKits/UltiKits#39 复查）。
+- Cancelling the editor with a full inventory now reclaims the kit's own copy before handing back an
+  item the player added, so the returned item lands in the slot the reclaim just freed instead of
+  being dropped at the player's feet for want of room. Before, the order was reversed: a personal item
+  swapped into the grid for a pre-filled one could be dropped on the ground -- exposed to despawning or
+  another player picking it up -- even though the exact slot it needed was about to be freed one step
+  later (UltiKits/UltiKits#39 review).
+- 现在在背包已满的情况下取消编辑，会先收回礼包自身的物品副本，再退还玩家新增的物品，使被退还的物品落入刚刚腾出的格位，
+  而不是因为没有空位被丢在玩家脚下。此前顺序相反：把个人物品与预填充物品互换进格子后，即使下一步就会腾出所需的那个格位，
+  该个人物品仍可能被丢在地上——面临消失或被他人拾取的风险（UltiKits/UltiKits#39 复查）。
 - When a kit claim cannot be recorded, the claim is refused and any payment refunded, so a one-time
   kit can no longer be claimed twice after a storage failure. A claim is now charged, then recorded,
   then handed over; if the record cannot be written, nothing is given, no reward command runs and

@@ -2,6 +2,7 @@ package com.ultikits.plugins.kits.gui;
 
 import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.model.KitDefinition;
+import com.ultikits.plugins.kits.model.KitPrice;
 import com.ultikits.plugins.kits.service.KitService;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
 import com.ultikits.ultitools.utils.EconomyUtils;
@@ -211,7 +212,7 @@ public class KitBrowserGui extends Gui {
             if (kit.isFree()) {
                 lore.add(ChatColor.GRAY + plugin.i18n("kits.gui.price") + ": " + ChatColor.GREEN + plugin.i18n("kits.gui.price_free"));
             } else {
-                String priceStr = EconomyUtils.isAvailable() ? EconomyUtils.format(kit.getPrice()) : String.valueOf(kit.getPrice());
+                String priceStr = KitPrice.format(kit.getPrice());
                 lore.add(ChatColor.GRAY + plugin.i18n("kits.gui.price") + ": " + ChatColor.GOLD + priceStr);
             }
 
@@ -275,7 +276,7 @@ public class KitBrowserGui extends Gui {
             case SUCCESS:
                 player.sendMessage(ChatColor.GREEN + String.format(plugin.i18n("kits.claim.success"), kit.getDisplayName()));
                 if (!kit.isFree() && EconomyUtils.isAvailable()) {
-                    player.sendMessage(ChatColor.YELLOW + String.format(plugin.i18n("kits.claim.charged"), EconomyUtils.format(kit.getPrice())));
+                    player.sendMessage(ChatColor.YELLOW + String.format(plugin.i18n("kits.claim.charged"), KitPrice.format(kit.getPrice())));
                 }
                 player.closeInventory();
                 break;
@@ -290,6 +291,9 @@ public class KitBrowserGui extends Gui {
                 break;
             case INSUFFICIENT_FUNDS:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.insufficient_funds"));
+                break;
+            case ECONOMY_UNAVAILABLE:
+                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.economy_unavailable"));
                 break;
             case PAYMENT_FAILED:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.payment_failed"));
@@ -316,9 +320,6 @@ public class KitBrowserGui extends Gui {
             case SYSTEM_DISABLED:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.disabled"));
                 break;
-            default:
-                player.sendMessage(ChatColor.RED + plugin.i18n("kits.claim.error"));
-                break;
         }
     }
 
@@ -330,7 +331,11 @@ public class KitBrowserGui extends Gui {
 
         // Check economy
         if (!kit.isFree()) {
-            if (!EconomyUtils.isAvailable() || !EconomyUtils.has(player, kit.getPrice())) {
+            // The same two outcomes the claim gives, in the same order (UltiKits/UltiKits#32).
+            if (!EconomyUtils.isAvailable()) {
+                return ChatColor.RED + plugin.i18n("kits.status.economy_unavailable");
+            }
+            if (!EconomyUtils.has(player, kit.getPrice())) {
                 return ChatColor.RED + plugin.i18n("kits.status.insufficient_funds");
             }
         }

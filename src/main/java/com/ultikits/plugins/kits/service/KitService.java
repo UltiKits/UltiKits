@@ -52,7 +52,14 @@ public interface KitService {
          * 同上，但退款也失败了：玩家已付款且未收到物品，控制台记录了需要手动退款的错误。
          */
         NOT_RECORDED_REFUND_FAILED,
-        ERROR
+        /**
+         * The kit has a price and the server has no economy provider (no Vault, or Vault with no
+         * economy plugin), so no balance would do: nothing was charged, recorded or given. Separate
+         * from {@link #INSUFFICIENT_FUNDS}, which says the player's balance is too low - a balance this
+         * case never reads (UltiKits/UltiKits#32).
+         * 礼包需要付费但服务器没有可用的经济系统：未扣款、未记录、未发放。
+         */
+        ECONOMY_UNAVAILABLE
     }
 
     enum CreateResult {

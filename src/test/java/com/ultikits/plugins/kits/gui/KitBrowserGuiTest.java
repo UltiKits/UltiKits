@@ -12,7 +12,9 @@ import mc.obliviate.inventory.Icon;
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Material;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.ServicePriority;
@@ -502,14 +504,15 @@ class KitBrowserGuiTest {
         }
 
         @Test
-        @DisplayName("economy unavailable with paid kit shows balance insufficient")
+        @DisplayName("economy unavailable with paid kit says so, not insufficient balance (UltiKits/UltiKits#32)")
         void economyUnavailable() throws Exception {
             setEconomyAvailable(false);
             KitDefinition kit = createKit("paid", "&6Paid", "CHEST", 100.0, 0);
 
             String result = gui.getStatusText(kit);
 
-            assertThat(result).contains("余额不足");
+            assertThat(result).isEqualTo(ChatColor.RED + CatalogueText.text("zh", "kits.status.economy_unavailable"));
+            assertThat(result).doesNotContain("余额不足");
         }
 
         @Test
@@ -838,6 +841,21 @@ class KitBrowserGuiTest {
         }
 
         @Test
+        @DisplayName("ECONOMY_UNAVAILABLE says the server has no economy and keeps the browser open (UltiKits/UltiKits#32)")
+        void economyUnavailable() {
+            KitDefinition kit = createKit("premium", "&6Premium", "CHEST", 500.0, 0);
+            when(kitService.claimKit(player, "premium")).thenReturn(KitService.ClaimResult.ECONOMY_UNAVAILABLE);
+
+            gui.handleKitClick(kit);
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + CatalogueText.text("zh", "kits.claim.economy_unavailable"));
+            verify(player, never()).closeInventory();
+        }
+
+        @Test
         @DisplayName("ALREADY_CLAIMED sends already claimed message")
         void alreadyClaimed() {
             KitDefinition kit = createKit("once", "&fOnce", "CHEST", 0, 0);
@@ -892,19 +910,6 @@ class KitBrowserGuiTest {
         }
 
         @Test
-        @DisplayName("ERROR sends generic error message")
-        void error() {
-            KitDefinition kit = createKit("broken", "&fBroken", "CHEST", 0, 0);
-            when(kitService.claimKit(player, "broken")).thenReturn(KitService.ClaimResult.ERROR);
-
-            gui.handleKitClick(kit);
-
-            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
-            verify(player).sendMessage(captor.capture());
-            assertThat(captor.getValue()).contains("领取礼包时发生错误");
-        }
-
-        @Test
         @DisplayName("NOT_RECORDED tells the player nothing was charged or given and keeps the browser open (UltiKits/UltiKits#26)")
         void notRecordedSaysNothingWasChargedOrGiven() {
             setEconomyAvailable(true);
@@ -937,20 +942,15 @@ class KitBrowserGuiTest {
         }
 
         /**
-         * Sweep by class, the browser's copy of the command test: a result this switch forgets falls
-         * to {@code default:} and says "Error claiming kit", which is true of no result but
-         * {@code ERROR}.
+         * Sweep by class, the browser's copy of the command test: the switch has no {@code default:},
+         * so a result it forgets would say nothing at all (UltiKits/UltiKits#27).
          */
         @Test
-        @DisplayName("every claim result other than ERROR has its own reply, never the generic error")
+        @DisplayName("every claim result has a reply of its own")
         void everyResultHasItsOwnReply() throws Exception {
-            String generic = CatalogueText.text("zh", "kits.claim.error");
             lenient().when(kitService.formatCooldown(anyLong())).thenReturn("1s");
             KitDefinition kit = createKit("k", "&fK", "CHEST", 0, 0);
             for (KitService.ClaimResult result : KitService.ClaimResult.values()) {
-                if (result == KitService.ClaimResult.ERROR) {
-                    continue;
-                }
                 reset(player);
                 resetDebounce();
                 when(kitService.claimKit(player, "k")).thenReturn(result);
@@ -959,7 +959,7 @@ class KitBrowserGuiTest {
 
                 ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
                 verify(player, atLeastOnce()).sendMessage(captor.capture());
-                assertThat(captor.getAllValues()).as(result.name()).noneMatch(m -> m.contains(generic));
+                assertThat(captor.getAllValues()).as(result.name()).isNotEmpty();
             }
         }
 
@@ -1034,170 +1034,138 @@ class KitBrowserGuiTest {
     @DisplayName("OnOpen Tests")
     class OnOpenTests {
 
+        // Every test here asserts on the icons the page actually registered (Gui#getItems()), the way
+        // ConfiguredPageSizeTests does: the kit slots, the previous-page arrow (slot 45), the page
+        // indicator (slot 49) and the next-page arrow (slot 53). Before, seven of them called onOpen
+        // and ended, so they passed whatever it rendered (UltiKits/UltiKits#29).
+
+        private static final int PREV_SLOT = 45;
+        private static final int INDICATOR_SLOT = 49;
+        private static final int NEXT_SLOT = 53;
+
+        private KitBrowserGui openWith(int page, List<KitDefinition> kits) throws Exception {
+            setEconomyAvailable(false);
+            KitBrowserGui target = page == 0 ? gui : new KitBrowserGui(player, plugin, kitService, config, page);
+            when(kitService.getAvailableKits(player)).thenReturn(kits);
+            lenient().when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
+            injectGuiInventory(target);
+
+            target.onOpen(mock(org.bukkit.event.inventory.InventoryOpenEvent.class));
+
+            verify(kitService).getAvailableKits(player);
+            return target;
+        }
+
+        private void assertArrow(KitBrowserGui target, int slot, String key) {
+            assertThat(target.getItems()).as("an arrow in slot " + slot).containsKey(slot);
+            ItemStack arrow = target.getItems().get(slot).getItem();
+            assertThat(arrow.getType()).isEqualTo(Material.ARROW);
+            assertThat(arrow.getItemMeta().getDisplayName())
+                    .isEqualTo(ChatColor.YELLOW + CatalogueText.text("zh", key));
+        }
+
+        private void assertNoIcon(KitBrowserGui target, int slot) {
+            assertThat(target.getItems()).as("no icon in slot " + slot).doesNotContainKey(slot);
+        }
+
+        private void assertPage(KitBrowserGui target, int current, int total) {
+            assertThat(pageIndicatorTextOf(target))
+                    .isEqualTo(ChatColor.WHITE + String.format(CatalogueText.text("zh", "kits.gui.page"), current, total));
+        }
+
         @Test
         @DisplayName("onOpen populates separator row and page indicator for empty kit list")
         void onOpenEmptyKits() throws Exception {
-            setEconomyAvailable(false);
-            when(kitService.getAvailableKits(player)).thenReturn(Collections.emptyList());
-            injectGuiInventory(gui);
+            KitBrowserGui page = openWith(0, Collections.emptyList());
 
-            org.bukkit.event.inventory.InventoryOpenEvent event =
-                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
-
-            gui.onOpen(event);
-
-            verify(kitService).getAvailableKits(player);
+            assertThat(kitSlotsOf(page)).isEmpty();
+            assertThat(page.getItems().keySet()).containsAll(slotRange(36, 45));
+            assertPage(page, 1, 1);
         }
 
         @Test
         @DisplayName("onOpen shows kits on first page")
         void onOpenWithKits() throws Exception {
-            setEconomyAvailable(false);
             KitDefinition kit1 = createKit("starter", "&aStarter", "CHEST", 0, 0);
             KitDefinition kit2 = createKit("vip", "&6VIP", "DIAMOND", 100, 0);
-            when(kitService.getAvailableKits(player)).thenReturn(Arrays.asList(kit1, kit2));
-            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
-            injectGuiInventory(gui);
 
-            org.bukkit.event.inventory.InventoryOpenEvent event =
-                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
+            KitBrowserGui page = openWith(0, Arrays.asList(kit1, kit2));
 
-            gui.onOpen(event);
-
-            verify(kitService).getAvailableKits(player);
+            assertThat(kitSlotsOf(page)).isEqualTo(slotRange(0, 2));
+            assertThat(page.getItems().get(0).getItem().getItemMeta().getDisplayName()).contains("Starter");
+            assertThat(page.getItems().get(1).getItem().getType()).isEqualTo(Material.DIAMOND);
         }
 
         @Test
         @DisplayName("onOpen does not show prev button on first page")
         void noPrevButtonOnFirstPage() throws Exception {
-            setEconomyAvailable(false);
-            when(kitService.getAvailableKits(player)).thenReturn(Collections.emptyList());
-            injectGuiInventory(gui);
+            KitBrowserGui page = openWith(0, freeKits(30));
 
-            org.bukkit.event.inventory.InventoryOpenEvent event =
-                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
-
-            gui.onOpen(event);
-
-            // Page 0 means no previous page button -- just verify no crash
+            assertNoIcon(page, PREV_SLOT);
+            assertPage(page, 1, 2);
         }
 
         @Test
         @DisplayName("onOpen does not show next button when all kits fit on one page")
         void noNextButtonSinglePage() throws Exception {
-            setEconomyAvailable(false);
-            List<KitDefinition> kits = new ArrayList<>();
-            for (int i = 0; i < 5; i++) {
-                KitDefinition k = createKit("kit" + i, "&fKit" + i, "CHEST", 0, 0);
-                kits.add(k);
-            }
-            when(kitService.getAvailableKits(player)).thenReturn(kits);
-            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
-            injectGuiInventory(gui);
+            KitBrowserGui page = openWith(0, freeKits(5));
 
-            org.bukkit.event.inventory.InventoryOpenEvent event =
-                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
-
-            gui.onOpen(event);
+            assertThat(kitSlotsOf(page)).isEqualTo(slotRange(0, 5));
+            assertNoIcon(page, NEXT_SLOT);
+            assertNoIcon(page, PREV_SLOT);
+            assertPage(page, 1, 1);
         }
 
         @Test
         @DisplayName("onOpen shows next button when kits exceed one page")
         void nextButtonWhenMultiplePages() throws Exception {
-            setEconomyAvailable(false);
-            List<KitDefinition> kits = new ArrayList<>();
-            for (int i = 0; i < 30; i++) {
-                KitDefinition k = createKit("kit" + i, "&fKit" + i, "CHEST", 0, 0);
-                kits.add(k);
-            }
-            when(kitService.getAvailableKits(player)).thenReturn(kits);
-            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
-            injectGuiInventory(gui);
+            KitBrowserGui page = openWith(0, freeKits(30));
 
-            org.bukkit.event.inventory.InventoryOpenEvent event =
-                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
-
-            gui.onOpen(event);
+            assertArrow(page, NEXT_SLOT, "kits.gui.next_page");
+            assertThat(kitSlotsOf(page)).isEqualTo(slotRange(0, 28));
         }
 
         @Test
         @DisplayName("onOpen page 1 shows prev button")
         void prevButtonOnPageOne() throws Exception {
-            setEconomyAvailable(false);
-            KitBrowserGui page1Gui = new KitBrowserGui(player, plugin, kitService, config, 1);
-            injectGuiInventory(page1Gui);
+            KitBrowserGui page = openWith(1, freeKits(30));
 
-            List<KitDefinition> kits = new ArrayList<>();
-            for (int i = 0; i < 30; i++) {
-                KitDefinition k = createKit("kit" + i, "&fKit" + i, "CHEST", 0, 0);
-                kits.add(k);
-            }
-            when(kitService.getAvailableKits(player)).thenReturn(kits);
-            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
-
-            org.bukkit.event.inventory.InventoryOpenEvent event =
-                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
-
-            page1Gui.onOpen(event);
+            assertArrow(page, PREV_SLOT, "kits.gui.previous_page");
+            assertThat(kitSlotsOf(page)).isEqualTo(slotRange(0, 2));
+            assertThat(page.getItems().get(0).getItem().getItemMeta().getDisplayName()).contains("Kit28");
         }
 
         @Test
         @DisplayName("onOpen correctly calculates total pages")
         void correctTotalPages() throws Exception {
-            setEconomyAvailable(false);
-            List<KitDefinition> kits = new ArrayList<>();
-            for (int i = 0; i < 56; i++) {
-                KitDefinition k = createKit("kit" + i, "&fKit" + i, "CHEST", 0, 0);
-                kits.add(k);
-            }
-            when(kitService.getAvailableKits(player)).thenReturn(kits);
-            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
-            injectGuiInventory(gui);
+            assertPage(openWith(0, freeKits(56)), 1, 2);
+        }
 
-            org.bukkit.event.inventory.InventoryOpenEvent event =
-                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
-
-            gui.onOpen(event);
+        @Test
+        @DisplayName("onOpen correctly calculates total pages one kit past a full page")
+        void correctTotalPagesPastABoundary() throws Exception {
+            assertPage(openWith(0, freeKits(57)), 1, 3);
         }
 
         @Test
         @DisplayName("onOpen last page does not show next button")
         void lastPageNoNextButton() throws Exception {
-            setEconomyAvailable(false);
-            KitBrowserGui lastPageGui = new KitBrowserGui(player, plugin, kitService, config, 1);
-            injectGuiInventory(lastPageGui);
+            KitBrowserGui page = openWith(1, freeKits(30));
 
-            List<KitDefinition> kits = new ArrayList<>();
-            for (int i = 0; i < 30; i++) {
-                KitDefinition k = createKit("kit" + i, "&fKit" + i, "CHEST", 0, 0);
-                kits.add(k);
-            }
-            when(kitService.getAvailableKits(player)).thenReturn(kits);
-            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
-
-            org.bukkit.event.inventory.InventoryOpenEvent event =
-                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
-
-            lastPageGui.onOpen(event);
+            assertNoIcon(page, NEXT_SLOT);
+            assertPage(page, 2, 2);
         }
 
         @Test
         @DisplayName("onOpen handles exactly 28 kits (one full page)")
         void exactlyOnePage() throws Exception {
-            setEconomyAvailable(false);
-            List<KitDefinition> kits = new ArrayList<>();
-            for (int i = 0; i < 28; i++) {
-                KitDefinition k = createKit("kit" + i, "&fKit" + i, "CHEST", 0, 0);
-                kits.add(k);
-            }
-            when(kitService.getAvailableKits(player)).thenReturn(kits);
-            when(kitService.getRemainingCooldown(eq(player), any(KitDefinition.class))).thenReturn(0L);
-            injectGuiInventory(gui);
+            KitBrowserGui page = openWith(0, freeKits(28));
 
-            org.bukkit.event.inventory.InventoryOpenEvent event =
-                    mock(org.bukkit.event.inventory.InventoryOpenEvent.class);
-
-            gui.onOpen(event);
+            assertThat(kitSlotsOf(page)).isEqualTo(slotRange(0, 28));
+            assertNoIcon(page, NEXT_SLOT);
+            assertNoIcon(page, PREV_SLOT);
+            assertPage(page, 1, 1);
+            assertThat(page.getItems()).containsKey(INDICATOR_SLOT);
         }
     }
 
@@ -1382,8 +1350,7 @@ class KitBrowserGuiTest {
             ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
             verify(player).sendMessage(captor.capture());
             assertThat(captor.getValue())
-                    .contains("礼包系统当前已关闭")
-                    .doesNotContain("领取礼包时发生错误");
+                    .contains("礼包系统当前已关闭");
         }
 
         @Test

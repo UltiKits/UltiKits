@@ -39,6 +39,9 @@ import java.util.stream.Collectors;
 @Service
 public class KitServiceImpl implements KitService {
 
+    /** The example kit copied when the jar ships none for the server's language. */
+    private static final String EXAMPLE_KIT_FALLBACK = "kits/en/starter.yml";
+
     private final UltiToolsPlugin plugin;
     /**
      * The module's live configuration object, not a snapshot of its values. {@code ConfigManager}
@@ -63,12 +66,30 @@ public class KitServiceImpl implements KitService {
      */
     private final Set<String> refusalWarnedKits = Collections.synchronizedSet(new LinkedHashSet<>());
     private DataOperator<KitClaimData> claimOperator;
+    /**
+     * How {@code addItem} fills an empty slot with an over-sized stack on this server, probed once at
+     * construction (see {@link #probeEmptySlotCapacity}); {@link #fitsInStorage} counts empty slots by it.
+     */
+    private EmptySlotCapacity emptySlotCapacity;
+
+    /**
+     * How many of an over-sized stack the server's {@code addItem} puts into one empty slot.
+     * <p>
+     * 服务器 {@code addItem} 向空格放入超量物品堆时，每格最多放多少。
+     */
+    enum EmptySlotCapacity {
+        /** The stack's own maximum, capped by the inventory's. */
+        ITEM_MAX,
+        /** The inventory's maximum, whatever the stack's own is. */
+        INVENTORY_MAX
+    }
 
     public KitServiceImpl(UltiToolsPlugin plugin, KitsConfig config) {
         this.plugin = plugin;
         this.config = config;
         this.logger = plugin.getLogger();
         this.claimOperator = plugin.getDataOperator(KitClaimData.class);
+        this.emptySlotCapacity = probeRunningServer();
         loadKits();
     }
 
@@ -529,14 +550,17 @@ public class KitServiceImpl implements KitService {
         if (kit.hasLevelRequirement() && player.getLevel() < kit.getLevelRequired()) {
             return ClaimResult.INSUFFICIENT_LEVEL;
         }
-        if (!kit.isFree() && !canAfford(player, kit.getPrice())) {
-            return ClaimResult.INSUFFICIENT_FUNDS;
+        if (!kit.isFree()) {
+            // No provider means no balance to compare: saying "insufficient balance" would be untrue
+            // and hide the missing economy from the player and the operator (UltiKits/UltiKits#32).
+            if (!EconomyUtils.isAvailable()) {
+                return ClaimResult.ECONOMY_UNAVAILABLE;
+            }
+            if (!EconomyUtils.has(player, kit.getPrice())) {
+                return ClaimResult.INSUFFICIENT_FUNDS;
+            }
         }
         return null;
-    }
-
-    private boolean canAfford(Player player, double price) {
-        return EconomyUtils.isAvailable() && EconomyUtils.has(player, price);
     }
 
     @Nullable
@@ -557,7 +581,9 @@ public class KitServiceImpl implements KitService {
      * player holds and those an earlier stack of this kit started - and then takes empty slots, every
      * slot holding at most the stack's <b>own</b> maximum stack size ({@link ItemStack#getMaxStackSize()},
      * which reads a {@code max_stack_size} component), capped by the inventory's maximum when that is
-     * lower.
+     * lower - except that an EMPTY slot holds what this server's {@code addItem} puts there, which on Paper
+     * 1.21.1 and earlier is the inventory's maximum whatever the stack's own is; {@link
+     * #emptySlotCapacity}, probed at construction, says which (UltiKits/UltiKits#38).
      * <p>
      * One slot per stack was not the answer: a stack larger than its maximum - which another plugin, or
      * a component, can put into an inventory that {@code /kits create} then captures - is split across
@@ -569,6 +595,58 @@ public class KitServiceImpl implements KitService {
      * <p>
      * 按背包实际的放置方式判断能否放下：先补满相同物品的未满堆，再占用空格，每格上限为物品堆自身的最大堆叠数。
      */
+    /** Sets how empty slots are counted; a seam for tests. */
+    void useEmptySlotCapacity(EmptySlotCapacity capacity) {
+        this.emptySlotCapacity = capacity;
+    }
+
+    /** The empty-slot capacity in use. */
+    EmptySlotCapacity emptySlotCapacity() {
+        return emptySlotCapacity;
+    }
+
+    /**
+     * Works out how this server's {@code addItem} fills an empty slot with an over-sized stack: adds one
+     * stack a single item larger than its maximum to an empty scratch inventory and reads how many landed
+     * in the first slot. Paper 1.21.1 and earlier fill an empty slot up to the inventory's maximum (99 by
+     * default since 1.20.5); Paper 1.21.4 up to the smaller of the item's and the inventory's
+     * (UltiKits/UltiKits#38). An inventory maximum no larger than the item's makes the two the same, so
+     * nothing is added.
+     * <p>
+     * 用临时背包探测服务器 {@code addItem} 向空格放入超量物品堆时每格的上限。
+     *
+     * @param scratch an empty inventory the probe may fill / 可供探测填充的空背包
+     * @return the capacity {@code addItem} uses / 服务器使用的空格容量
+     */
+    static EmptySlotCapacity probeEmptySlotCapacity(org.bukkit.inventory.Inventory scratch) {
+        ItemStack probe = new ItemStack(Material.COBBLESTONE);
+        int itemMax = probe.getMaxStackSize();
+        if (scratch.getMaxStackSize() <= itemMax) {
+            return EmptySlotCapacity.ITEM_MAX;
+        }
+        probe.setAmount(itemMax + 1);
+        scratch.addItem(probe);
+        ItemStack first = scratch.getItem(0);
+        return first != null && first.getAmount() > itemMax
+                ? EmptySlotCapacity.INVENTORY_MAX : EmptySlotCapacity.ITEM_MAX;
+    }
+
+    /**
+     * Probes the running server, or keeps {@link EmptySlotCapacity#ITEM_MAX} when there is none to probe
+     * (a unit test) or the probe fails: that model can only refuse a claim that would fit, never pass one
+     * that does not, and whatever it gets wrong is dropped at the player's feet rather than lost.
+     */
+    private static EmptySlotCapacity probeRunningServer() {
+        if (Bukkit.getServer() == null) {
+            return EmptySlotCapacity.ITEM_MAX;
+        }
+        try {
+            return probeEmptySlotCapacity(Bukkit.createInventory(null, 9));
+        } catch (RuntimeException e) {
+            return EmptySlotCapacity.ITEM_MAX;
+        }
+    }
+
     private boolean fitsInStorage(Player player, ItemStack[] items) {
         ItemStack[] contents = player.getInventory().getStorageContents();
         int inventoryMax = player.getInventory().getMaxStackSize();
@@ -589,6 +667,10 @@ public class KitServiceImpl implements KitService {
             if (inventoryMax > 0) {
                 perSlot = Math.min(perSlot, inventoryMax);
             }
+            // An empty slot holds what this server's addItem puts there: the capped item maximum, or on
+            // Paper 1.21.1 and earlier the inventory's maximum (UltiKits/UltiKits#38).
+            int perEmptySlot = emptySlotCapacity == EmptySlotCapacity.INVENTORY_MAX && inventoryMax > 0
+                    ? inventoryMax : perSlot;
             int remaining = Math.max(1, item.getAmount());
             for (int i = 0; i < slots.length && remaining > 0; i++) {
                 if (slots[i] != null && amounts[i] < perSlot && slots[i].isSimilar(item)) {
@@ -600,7 +682,7 @@ public class KitServiceImpl implements KitService {
             for (int i = 0; i < slots.length && remaining > 0; i++) {
                 if (slots[i] == null) {
                     slots[i] = item;
-                    amounts[i] = Math.min(perSlot, remaining);
+                    amounts[i] = Math.min(perEmptySlot, remaining);
                     remaining -= amounts[i];
                 }
             }
@@ -634,7 +716,10 @@ public class KitServiceImpl implements KitService {
      * are free ({@link #fitsInStorage}), and {@code addItem}'s leftovers are dropped
      * (UltiKits/UltiKits#24). The reward commands run last, after the record, because they are the
      * step most likely to throw ({@code player.performCommand} propagates a third-party executor's
-     * {@code CommandException}).
+     * {@code CommandException}). A reward command that does not run is reported, not undone - the
+     * maintainer's decision of 2026-09-27 (UltiKits/UltiKits#25): the claim keeps its record and its
+     * price, the player is told which reward did not run, and the console names the player, the kit
+     * and the command so an operator can make it good by hand.
      * <p>
      * What this order costs, as the decision accepted it: while the claim table cannot be written,
      * nobody can claim a kit; and if the refund fails too, the player has paid for nothing until an
@@ -667,8 +752,8 @@ public class KitServiceImpl implements KitService {
             return refuseUnrecordedClaim(player, kit);
         }
         giveOrDrop(player, items);
-        executePlayerCommands(player, kit.getPlayerCommands());
-        executeConsoleCommands(player, kit.getConsoleCommands());
+        executePlayerCommands(player, kit);
+        executeConsoleCommands(player, kit);
         return ClaimResult.SUCCESS;
     }
 
@@ -1000,8 +1085,24 @@ public class KitServiceImpl implements KitService {
         }
     }
 
+    /**
+     * Copies the example kit into a kits folder this start just created - the jar's example for the
+     * server's {@code language}, or the English one when the module ships none for it, which is the
+     * fallback its messages use too. One example per language is the maintainer's decision of
+     * 2026-09-25: the single shipped file had a Chinese name and lore under {@code language: en}
+     * (UltiKits/UltiKits#33). A folder that already exists is never touched, so existing installs keep
+     * the kit they have.
+     * <p>
+     * 首次启动时按服务器语言复制示例礼包；没有对应语言时使用英文版；已有的礼包文件夹不受影响。
+     */
     private void copyExampleKit(File folder) {
-        try (InputStream is = plugin.getClass().getClassLoader().getResourceAsStream("kits/starter.yml")) {
+        ClassLoader loader = KitServiceImpl.class.getClassLoader();
+        String language = plugin.getLanguageCode();
+        String resource = EXAMPLE_KIT_FALLBACK;
+        if (language != null && loader.getResource("kits/" + language + "/starter.yml") != null) {
+            resource = "kits/" + language + "/starter.yml";
+        }
+        try (InputStream is = loader.getResourceAsStream(resource)) {
             File exampleFile = new File(folder, "starter.yml");
             if (is != null && !exampleFile.exists()) {
                 Files.copy(is, exampleFile.toPath());
@@ -1011,29 +1112,109 @@ public class KitServiceImpl implements KitService {
         }
     }
 
-    private void executePlayerCommands(Player player, List<String> commands) {
+    /**
+     * Runs the kit's player commands as the player and checks each result where it is available.
+     * {@code performCommand} answers {@code false} for an unknown command or one whose executor refused
+     * it, and a third-party executor can throw; either way the reward did not run, so the player is told
+     * which one and the console gets a warning naming the player, the kit and the command. The claim
+     * stands - no refund, no undo (UltiKits/UltiKits#25). {@code true} only means an executor accepted
+     * the command, so that is all a pass claims.
+     * <p>
+     * 以玩家身份执行奖励命令并检查结果；未执行的命令会告知玩家并记录警告，领取不撤销、不退款。
+     */
+    private void executePlayerCommands(Player player, KitDefinition kit) {
+        List<String> commands = kit.getPlayerCommands();
         if (commands == null || commands.isEmpty()) {
             return;
         }
         for (String cmd : commands) {
             String processed = cmd.replace("{player}", player.getName());
-            player.performCommand(processed);
+            RewardRun run = RewardRun.of(() -> player.performCommand(processed));
+            if (!run.ran) {
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.reward_command_failed"),
+                        processed));
+                run.log(logger, String.format(plugin.i18n("kits.log.player_reward_command_failed"), kit.getName(),
+                        processed, player.getName()));
+            }
         }
     }
 
-    private void executeConsoleCommands(Player player, List<String> commands) {
+    /**
+     * Runs the kit's console commands one tick later, as the module always has, and checks each result
+     * when the deferred task runs it - the claim has returned by then, so a failure is logged with the
+     * player, the kit and the command rather than reported to the player (UltiKits/UltiKits#25). A
+     * command that cannot be scheduled at all is logged the same way instead of being dropped.
+     * <p>
+     * {@code runTask} itself can throw before the task it would have run ever exists - {@code UltiTools}
+     * found above can still be registered but disabled between that lookup and this call, and the
+     * scheduler then refuses every task for it. Uncaught, that throw would escape this method (and
+     * {@code claimKit} above it) after payment, recording and item delivery already ran, skip logging a
+     * warning for this command, and abort the loop before any command after it in the list is even
+     * attempted - the same silent drop the {@code ultiToolsPlugin == null} branch above already guards
+     * against, just reached a different way (UltiKits/UltiKits#39 review). Caught and logged the same
+     * way, so one unschedulable command costs only itself.
+     * <p>
+     * 延后一刻以控制台身份执行奖励命令，执行时检查结果，失败则记录警告。
+     */
+    private void executeConsoleCommands(Player player, KitDefinition kit) {
+        List<String> commands = kit.getConsoleCommands();
         if (commands == null || commands.isEmpty()) {
             return;
         }
+        String playerName = player.getName();
         org.bukkit.plugin.Plugin ultiToolsPlugin = Bukkit.getPluginManager().getPlugin("UltiTools");
-        if (ultiToolsPlugin == null) {
-            return;
-        }
         for (String cmd : commands) {
-            String processed = cmd.replace("{player}", player.getName());
-            String finalCmd = processed;
-            Bukkit.getScheduler().runTask(ultiToolsPlugin, () ->
-                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), finalCmd));
+            String processed = cmd.replace("{player}", playerName);
+            if (ultiToolsPlugin == null) {
+                logger.warn(consoleCommandFailure(kit, processed, playerName));
+                continue;
+            }
+            try {
+                Bukkit.getScheduler().runTask(ultiToolsPlugin, () -> {
+                    RewardRun run = RewardRun.of(() -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), processed));
+                    if (!run.ran) {
+                        run.log(logger, consoleCommandFailure(kit, processed, playerName));
+                    }
+                });
+            } catch (RuntimeException e) {
+                logger.warn(e, consoleCommandFailure(kit, processed, playerName));
+            }
+        }
+    }
+
+    private String consoleCommandFailure(KitDefinition kit, String command, String playerName) {
+        return String.format(plugin.i18n("kits.log.console_reward_command_failed"), kit.getName(), command,
+                playerName);
+    }
+
+    /**
+     * The outcome of dispatching one reward command: whether it was accepted, and the exception it threw
+     * if it threw one, so the warning carries the reason an executor gave (a third-party plugin's own
+     * error) rather than only the fact.
+     */
+    private static final class RewardRun {
+        private final boolean ran;
+        private final RuntimeException thrown;
+
+        private RewardRun(boolean ran, RuntimeException thrown) {
+            this.ran = ran;
+            this.thrown = thrown;
+        }
+
+        static RewardRun of(java.util.function.BooleanSupplier dispatch) {
+            try {
+                return new RewardRun(dispatch.getAsBoolean(), null);
+            } catch (RuntimeException e) {
+                return new RewardRun(false, e);
+            }
+        }
+
+        void log(PluginLogger logger, String message) {
+            if (thrown == null) {
+                logger.warn(message);
+            } else {
+                logger.warn(thrown, message);
+            }
         }
     }
 }
