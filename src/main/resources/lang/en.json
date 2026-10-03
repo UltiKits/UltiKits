@@ -60,6 +60,7 @@
   "kits.disabled": "The kit system is currently disabled on this server",
   "kits.log.invalid_icon": "Failed to load kit: %s - invalid icon: %s",
   "kits.log.negative_value": "Kit %s: %s is %s, which cannot be negative - using the default, %s, instead.",
+  "kits.log.not_a_number": "Kit %s: %s is %s, which is not a number - using the default, %s, instead.",
   "kits.log.payment_refused": "Kit '%s' was not delivered to %s: the economy refused to withdraw %s. Further refusals for this kit are not logged until the kits are reloaded.",
   "kits.log.serialize_failed": "Failed to serialize kit items: %s",
   "kits.log.deserialize_failed": "Failed to deserialize kit items: %s",

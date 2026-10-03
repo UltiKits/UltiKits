@@ -714,9 +714,10 @@ public class KitServiceImpl implements KitService {
      * Then the items: every stack lands in the inventory or is dropped at the player's feet, never
      * discarded - {@link #claimKit} refuses before charging unless the slots each stack really needs
      * are free ({@link #fitsInStorage}), and {@code addItem}'s leftovers are dropped
-     * (UltiKits/UltiKits#24). The reward commands run last, after the record, because they are the
-     * step most likely to throw ({@code player.performCommand} propagates a third-party executor's
-     * {@code CommandException}). A reward command that does not run is reported, not undone - the
+     * (UltiKits/UltiKits#24). The reward commands are scheduled last, after the record, and run on the
+     * next tick, because they are the step most likely to throw ({@code player.performCommand}
+     * propagates a third-party executor's {@code CommandException}) and one may open or close an
+     * inventory, which the click that started this claim must be finished with first. A reward command that does not run is reported, not undone - the
      * maintainer's decision of 2026-09-27 (UltiKits/UltiKits#25): the claim keeps its record and its
      * price, the player is told which reward did not run, and the console names the player, the kit
      * and the command so an operator can make it good by hand.
@@ -963,23 +964,31 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
-     * A number that cannot be negative, as the kit file wrote it. A negative value is refused: one
-     * warning names the kit, the key and the value as written, and the key's default is used, so a
-     * typo such as {@code price: -5} is told to the operator instead of being read as "free".
+     * A number that cannot be negative, read from the kit file. A value the module cannot use is
+     * refused: one warning names the kit, the key and the value (the YAML parser's text for it, which is
+     * the file's own for the usual spellings), and the key's default, {@code 0}, is used - so a typo such
+     * as {@code price: -5} or {@code price: "250"} (a quoted number is text to YAML) is told to the
+     * operator instead of silently making the kit free. A key that is absent or empty is the default
+     * without a warning. Bukkit's {@code getDouble}/{@code getInt}/{@code getLong} cannot tell the two
+     * apart, which is why the raw value is read here.
      * <p>
-     * 礼包文件里不能为负的数值；负数会被拒绝：警告点名礼包、键和原值，并改用该键的默认值。
+     * 礼包文件里不能为负的数值；负数和非数字都会被拒绝：警告点名礼包、键和原值，并改用默认值 0；未填写则静默使用默认值。
      */
-    private double nonNegative(String kitName, String key, YamlConfiguration config, double value, double fallback) {
-        if (value >= 0) {
-            return value;
+    private double nonNegativeNumber(String kitName, String key, YamlConfiguration config) {
+        Object written = config.get(key);
+        if (written == null) {
+            return 0;
         }
-        logger.warn(String.format(plugin.i18n("kits.log.negative_value"), kitName, key,
-                String.valueOf(config.get(key)), formatDefault(fallback)));
-        return fallback;
-    }
-
-    private static String formatDefault(double fallback) {
-        return fallback == Math.rint(fallback) ? String.valueOf((long) fallback) : String.valueOf(fallback);
+        if (!(written instanceof Number)) {
+            logger.warn(String.format(plugin.i18n("kits.log.not_a_number"), kitName, key, written, 0));
+            return 0;
+        }
+        double value = ((Number) written).doubleValue();
+        if (value < 0) {
+            logger.warn(String.format(plugin.i18n("kits.log.negative_value"), kitName, key, written, 0));
+            return 0;
+        }
+        return value;
     }
 
     @Nullable
@@ -996,12 +1005,11 @@ public class KitServiceImpl implements KitService {
             }
             kit.setDescription(config.getStringList("description"));
             String kitName = kitNameOf(file);
-            kit.setPrice(nonNegative(kitName, "price", config, config.getDouble("price", 0), 0));
-            kit.setLevelRequired((int) nonNegative(kitName, "levelRequired", config,
-                    config.getInt("levelRequired", 0), 0));
+            kit.setPrice(nonNegativeNumber(kitName, "price", config));
+            kit.setLevelRequired((int) nonNegativeNumber(kitName, "levelRequired", config));
             kit.setPermission(config.getString("permission", ""));
             kit.setReBuyable(config.getBoolean("reBuyable", false));
-            kit.setCooldown((long) nonNegative(kitName, "cooldown", config, config.getLong("cooldown", 0), 0));
+            kit.setCooldown((long) nonNegativeNumber(kitName, "cooldown", config));
             kit.setPlayerCommands(config.getStringList("playerCommands"));
             kit.setConsoleCommands(config.getStringList("consoleCommands"));
             kit.setItems(config.getString("items", ""));
@@ -1168,6 +1176,12 @@ public class KitServiceImpl implements KitService {
             }
             try {
                 Bukkit.getScheduler().runTask(ultiToolsPlugin, () -> {
+                    // A player who disconnected since the claim cannot run a command: the executor would
+                    // still accept it, so it would pass as run while nothing happened. Report it as not run.
+                    if (!player.isOnline()) {
+                        reportPlayerCommandNotRun(player, kit, processed, null);
+                        return;
+                    }
                     RewardRun run = RewardRun.of(() -> player.performCommand(processed));
                     if (!run.ran) {
                         reportPlayerCommandNotRun(player, kit, processed, run.thrown);
