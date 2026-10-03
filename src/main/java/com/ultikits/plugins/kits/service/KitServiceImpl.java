@@ -1135,29 +1135,60 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
-     * Runs the kit's player commands as the player and checks each result where it is available.
+     * Runs the kit's player commands as the player, one tick later like the console commands, and checks
+     * each result when the deferred task runs it. {@code claimKit} is called from the kit browser's click
+     * handler, and a reward command that is itself a module command now runs its body at dispatch
+     * (UltiTools-Reborn#541): run inline, a command that opens another GUI would open it inside the
+     * {@code InventoryClickEvent} that Paper does not allow to open or close an inventory, and the
+     * browser's own {@code closeInventory()} after a success would then close it again (UltiKits/UltiKits#41).
+     * Deferred, the claim has returned and the click has finished by the time the commands run, and the
+     * commands still run in list order, before the console commands.
+     * <p>
      * {@code performCommand} answers {@code false} for an unknown command or one whose executor refused
      * it, and a third-party executor can throw; either way the reward did not run, so the player is told
      * which one and the console gets a warning naming the player, the kit and the command. The claim
      * stands - no refund, no undo (UltiKits/UltiKits#25). {@code true} only means an executor accepted
-     * the command, so that is all a pass claims.
+     * the command, so that is all a pass claims. A command that cannot be scheduled at all is reported
+     * the same way instead of being dropped, and does not stop the commands after it.
      * <p>
-     * 以玩家身份执行奖励命令并检查结果；未执行的命令会告知玩家并记录警告，领取不撤销、不退款。
+     * 延后一刻以玩家身份执行奖励命令，执行时检查结果：礼包界面的点击处理里不能直接运行会开关界面的命令；
+     * 未执行的命令会告知玩家并记录警告，领取不撤销、不退款。
      */
     private void executePlayerCommands(Player player, KitDefinition kit) {
         List<String> commands = kit.getPlayerCommands();
         if (commands == null || commands.isEmpty()) {
             return;
         }
+        org.bukkit.plugin.Plugin ultiToolsPlugin = Bukkit.getPluginManager().getPlugin("UltiTools");
         for (String cmd : commands) {
             String processed = cmd.replace("{player}", player.getName());
-            RewardRun run = RewardRun.of(() -> player.performCommand(processed));
-            if (!run.ran) {
-                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.reward_command_failed"),
-                        processed));
-                run.log(logger, String.format(plugin.i18n("kits.log.player_reward_command_failed"), kit.getName(),
-                        processed, player.getName()));
+            if (ultiToolsPlugin == null) {
+                reportPlayerCommandNotRun(player, kit, processed, null);
+                continue;
             }
+            try {
+                Bukkit.getScheduler().runTask(ultiToolsPlugin, () -> {
+                    RewardRun run = RewardRun.of(() -> player.performCommand(processed));
+                    if (!run.ran) {
+                        reportPlayerCommandNotRun(player, kit, processed, run.thrown);
+                    }
+                });
+            } catch (RuntimeException e) {
+                reportPlayerCommandNotRun(player, kit, processed, e);
+            }
+        }
+    }
+
+    private void reportPlayerCommandNotRun(Player player, KitDefinition kit, String processed,
+                                           @Nullable RuntimeException thrown) {
+        player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.reward_command_failed"),
+                processed));
+        String message = String.format(plugin.i18n("kits.log.player_reward_command_failed"), kit.getName(),
+                processed, player.getName());
+        if (thrown == null) {
+            logger.warn(message);
+        } else {
+            logger.warn(thrown, message);
         }
     }
 

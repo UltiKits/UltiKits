@@ -42,6 +42,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A kit's player reward commands (`playerCommands`) now run one tick after the claim, like its console
+  commands, instead of inside the claim. Claiming from the kit browser ran them inside the inventory
+  click, where a reward command that opens another GUI could not open it, or had it closed again at once
+  by the browser's own close after a successful claim. The commands still run in list order and before the
+  console commands; a command that does not run is still reported to the player and logged, now one tick
+  later (UltiKits/UltiKits#41).
+- 礼包的玩家奖励命令（`playerCommands`）现在和控制台命令一样，在领取后的下一刻执行，而不是在领取过程中执行。从礼包界面点击领取时，
+  命令此前在背包点击事件内运行，会打开其他界面的奖励命令可能打不开，或在领取成功后被礼包界面自己的关闭立即关掉。命令仍按
+  列表顺序、先于控制台命令执行；未执行的命令仍会告知玩家并记录警告，只是晚一刻（UltiKits/UltiKits#41）。
 - A negative `price`, `cooldown` or `levelRequired` in a kit file is no longer read as "none" without a
   word. Before, `price: -5` made the kit free, `levelRequired: -1` removed the level requirement and a
   negative `cooldown` removed the cooldown, none of them logged. Now loading the kit logs one warning
