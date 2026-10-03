@@ -42,6 +42,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A negative `price`, `cooldown` or `levelRequired` in a kit file is no longer read as "none" without a
+  word. Before, `price: -5` made the kit free, `levelRequired: -1` removed the level requirement and a
+  negative `cooldown` removed the cooldown, none of them logged. Now loading the kit logs one warning
+  naming the kit, the key and the value as written, and uses that key's default (`0`) instead; `0`
+  and positive values are unchanged (UltiKits/UltiKits#40).
+- 礼包文件里负数的 `price`、`cooldown` 或 `levelRequired` 不再被无声地当作「没有」。此前 `price: -5` 会让礼包免费，
+  `levelRequired: -1` 取消等级要求，负数 `cooldown` 取消冷却，且都不记录日志。现在加载礼包时会记录一条警告，点名礼包、
+  键和原值，并改用该键的默认值（`0`）；`0` 和正数不变（UltiKits/UltiKits#40）。
 - A kit claim is no longer refused with "Inventory full" on Paper 1.21.1 and earlier when an
   over-sized stack would fit. Those versions fill an empty slot up to the inventory's maximum (99), not
   the item's (64); the module now probes which behaviour the server has once at start and counts empty

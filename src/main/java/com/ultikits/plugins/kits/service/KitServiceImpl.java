@@ -962,6 +962,26 @@ public class KitServiceImpl implements KitService {
         }
     }
 
+    /**
+     * A number that cannot be negative, as the kit file wrote it. A negative value is refused: one
+     * warning names the kit, the key and the value as written, and the key's default is used, so a
+     * typo such as {@code price: -5} is told to the operator instead of being read as "free".
+     * <p>
+     * 礼包文件里不能为负的数值；负数会被拒绝：警告点名礼包、键和原值，并改用该键的默认值。
+     */
+    private double nonNegative(String kitName, String key, YamlConfiguration config, double value, double fallback) {
+        if (value >= 0) {
+            return value;
+        }
+        logger.warn(String.format(plugin.i18n("kits.log.negative_value"), kitName, key,
+                String.valueOf(config.get(key)), formatDefault(fallback)));
+        return fallback;
+    }
+
+    private static String formatDefault(double fallback) {
+        return fallback == Math.rint(fallback) ? String.valueOf((long) fallback) : String.valueOf(fallback);
+    }
+
     @Nullable
     KitDefinition parseKitFile(File file) {
         try {
@@ -975,11 +995,13 @@ public class KitServiceImpl implements KitService {
                 kit.setDisplayName(displayName);
             }
             kit.setDescription(config.getStringList("description"));
-            kit.setPrice(config.getDouble("price", 0));
-            kit.setLevelRequired(config.getInt("levelRequired", 0));
+            String kitName = kitNameOf(file);
+            kit.setPrice(nonNegative(kitName, "price", config, config.getDouble("price", 0), 0));
+            kit.setLevelRequired((int) nonNegative(kitName, "levelRequired", config,
+                    config.getInt("levelRequired", 0), 0));
             kit.setPermission(config.getString("permission", ""));
             kit.setReBuyable(config.getBoolean("reBuyable", false));
-            kit.setCooldown(config.getLong("cooldown", 0));
+            kit.setCooldown((long) nonNegative(kitName, "cooldown", config, config.getLong("cooldown", 0), 0));
             kit.setPlayerCommands(config.getStringList("playerCommands"));
             kit.setConsoleCommands(config.getStringList("consoleCommands"));
             kit.setItems(config.getString("items", ""));

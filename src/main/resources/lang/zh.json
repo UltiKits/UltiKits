@@ -59,6 +59,7 @@
   "kits.status.level_too_low": "等级不足",
   "kits.disabled": "礼包系统当前已关闭",
   "kits.log.invalid_icon": "加载礼包失败: %s - 图标无效: %s",
+  "kits.log.negative_value": "礼包 %s：%s 的值 %s 不能为负数，已改用默认值 %s。",
   "kits.log.payment_refused": "礼包 '%s' 未发放给 %s：经济系统拒绝扣款 %s。在重新加载礼包之前，该礼包的后续拒绝不再记录。",
   "kits.log.serialize_failed": "序列化礼包物品失败: %s",
   "kits.log.deserialize_failed": "反序列化礼包物品失败: %s",
