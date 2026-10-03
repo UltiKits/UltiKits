@@ -197,6 +197,7 @@ class KitServiceImplTest {
         when(player.getName()).thenReturn("TestPlayer");
         when(player.getUniqueId()).thenReturn(UUID.fromString("00000000-0000-0000-0000-000000000001"));
         when(player.getLevel()).thenReturn(10);
+        when(player.isOnline()).thenReturn(true);
         PlayerInventory inventory = mock(PlayerInventory.class);
         when(player.getInventory()).thenReturn(inventory);
         return player;
@@ -3865,19 +3866,40 @@ class KitServiceImplTest {
         @Test
         @DisplayName("player commands run before the console commands, as they did when both ran in the claim")
         void playerCommandsRunBeforeConsoleCommands() throws Exception {
-            rewardKit(Collections.singletonList("warp vip"), Collections.singletonList("say hi"));
-            when(player.performCommand("warp vip")).thenReturn(true);
+            rewardKit(Arrays.asList("warp vip", "spawn"), Arrays.asList("say hi", "say bye"));
+            List<String> ran = new ArrayList<>();
+            when(player.performCommand(anyString())).thenAnswer(inv -> ran.add("player:" + inv.getArgument(0)));
             try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
                 BukkitScheduler scheduler = consoleScheduler(bukkit);
-                bukkit.when(() -> Bukkit.dispatchCommand(any(), eq("say hi"))).thenReturn(true);
+                bukkit.when(() -> Bukkit.dispatchCommand(any(), anyString()))
+                        .thenAnswer(inv -> ran.add("console:" + inv.getArgument(1)));
 
                 assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+                assertThat(ran).as("nothing runs inside the claim").isEmpty();
                 runDeferredTask(scheduler);
-
-                InOrder order = inOrder(player);
-                order.verify(player).performCommand("warp vip");
-                bukkit.verify(() -> Bukkit.dispatchCommand(any(), eq("say hi")));
             }
+
+            assertThat(ran).containsExactly("player:warp vip", "player:spawn", "console:say hi", "console:say bye");
+        }
+
+        @Test
+        @DisplayName("a player who has left by the next tick: their reward commands are not run and are logged as not run")
+        void playerWhoLeftBeforeTheTickIsLogged() throws Exception {
+            rewardKit(Arrays.asList("warp vip", "spawn"), null);
+            when(player.performCommand(anyString())).thenReturn(true);
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+                when(player.isOnline()).thenReturn(false); // the client disconnected before the next tick
+
+                runDeferredTask(scheduler);
+            }
+
+            verify(player, never()).performCommand(anyString());
+            verify(mockLogger).warn(String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "warp vip", "TestPlayer"));
+            verify(mockLogger).warn(String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "spawn", "TestPlayer"));
         }
 
         @Test
@@ -4549,6 +4571,37 @@ class KitServiceImplTest {
             assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("price").contains("-1.5"));
             assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("levelRequired").contains("-2"));
             assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("cooldown").contains("-3"));
+        }
+
+        @Test
+        @DisplayName("a value that is not a number is refused the same way: quoted \"250\", words, a boolean - the default is used and the warning names the value")
+        void nonNumericValuesAreRefusedAndNamed() throws IOException {
+            KitDefinition quoted = service.parseKitFile(kitFileWith("quoted", "price: \"250\"\n"));
+            KitDefinition words = service.parseKitFile(kitFileWith("words", "cooldown: 1h\nlevelRequired: ten\n"));
+            KitDefinition flag = service.parseKitFile(kitFileWith("flag", "price: yes\n"));
+
+            assertThat(quoted.getPrice()).isEqualTo(0.0);
+            assertThat(words.getCooldown()).isEqualTo(0L);
+            assertThat(words.getLevelRequired()).isEqualTo(0);
+            assertThat(flag.getPrice()).isEqualTo(0.0);
+            ArgumentCaptor<String> warned = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, times(4)).warn(warned.capture());
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("quoted").contains("price").contains("250"));
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("words").contains("cooldown").contains("1h"));
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("words").contains("levelRequired").contains("ten"));
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("flag").contains("price").contains("true"));
+        }
+
+        @Test
+        @DisplayName("control: a key that is absent or empty is the default without a warning")
+        void absentKeysAreTheDefaultSilently() throws IOException {
+            KitDefinition absent = service.parseKitFile(kitFileWith("absent", "icon: CHEST\n"));
+            KitDefinition empty = service.parseKitFile(kitFileWith("empty", "price:\ncooldown:\n"));
+
+            assertThat(absent.getPrice()).isEqualTo(0.0);
+            assertThat(empty.getPrice()).isEqualTo(0.0);
+            assertThat(empty.getCooldown()).isEqualTo(0L);
+            verifyNoInteractions(mockLogger);
         }
 
         @Test
