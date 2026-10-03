@@ -4326,6 +4326,123 @@ class KitServiceImplTest {
     }
 
     // =========================================================================
+    // A negative number in a kit file is refused and named (UltiKits#40)
+    // =========================================================================
+    @Nested
+    @DisplayName("A negative price, cooldown or levelRequired in a kit file")
+    class NegativeKitValueTests {
+
+        private File kitFileWith(String name, String body) throws IOException {
+            File kitsFolder = new File(tempDir, "kits");
+            kitsFolder.mkdirs();
+            File kitFile = new File(kitsFolder, name + ".yml");
+            Files.write(kitFile.toPath(), body.getBytes(StandardCharsets.UTF_8));
+            return kitFile;
+        }
+
+        @BeforeEach
+        void setUp() {
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            // Constructing the service logged its own "no kit files" lines; the tests read only what follows.
+            clearInvocations(mockLogger);
+        }
+
+        @Test
+        @DisplayName("a negative price is refused: the default price is used and one warning names the kit, the key and the value")
+        void negativePriceIsRefusedAndNamed() throws IOException {
+            File file = kitFileWith("Paidkit", "price: -5\nlevelRequired: 3\ncooldown: 60\n");
+
+            KitDefinition kit = service.parseKitFile(file);
+
+            assertThat(kit).isNotNull();
+            assertThat(kit.getPrice()).isEqualTo(0.0);
+            // The other keys of the same file are untouched.
+            assertThat(kit.getLevelRequired()).isEqualTo(3);
+            assertThat(kit.getCooldown()).isEqualTo(60L);
+            ArgumentCaptor<String> warned = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger).warn(warned.capture());
+            assertThat(warned.getValue()).contains("paidkit").contains("price").contains("-5").contains("0");
+            verifyNoMoreInteractions(mockLogger);
+        }
+
+        @Test
+        @DisplayName("a negative levelRequired is refused: no level requirement is not what the file said, so the warning names it")
+        void negativeLevelRequiredIsRefusedAndNamed() throws IOException {
+            File file = kitFileWith("lvl", "price: 10\nlevelRequired: -1\n");
+
+            KitDefinition kit = service.parseKitFile(file);
+
+            assertThat(kit).isNotNull();
+            assertThat(kit.getLevelRequired()).isEqualTo(0);
+            assertThat(kit.getPrice()).isEqualTo(10.0);
+            ArgumentCaptor<String> warned = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger).warn(warned.capture());
+            assertThat(warned.getValue()).contains("lvl").contains("levelRequired").contains("-1");
+            verifyNoMoreInteractions(mockLogger);
+        }
+
+        @Test
+        @DisplayName("a negative cooldown is refused: the default cooldown is used and the warning names the value")
+        void negativeCooldownIsRefusedAndNamed() throws IOException {
+            File file = kitFileWith("cd", "cooldown: -3600\nreBuyable: true\n");
+
+            KitDefinition kit = service.parseKitFile(file);
+
+            assertThat(kit).isNotNull();
+            assertThat(kit.getCooldown()).isEqualTo(0L);
+            assertThat(kit.isReBuyable()).isTrue();
+            ArgumentCaptor<String> warned = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger).warn(warned.capture());
+            assertThat(warned.getValue()).contains("cd").contains("cooldown").contains("-3600");
+            verifyNoMoreInteractions(mockLogger);
+        }
+
+        @Test
+        @DisplayName("each refused key is named on its own line, so a file with three negatives yields three warnings")
+        void everyNegativeKeyIsNamed() throws IOException {
+            File file = kitFileWith("allbad", "price: -1.5\nlevelRequired: -2\ncooldown: -3\n");
+
+            KitDefinition kit = service.parseKitFile(file);
+
+            assertThat(kit).isNotNull();
+            ArgumentCaptor<String> warned = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, times(3)).warn(warned.capture());
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("price").contains("-1.5"));
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("levelRequired").contains("-2"));
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("cooldown").contains("-3"));
+        }
+
+        @Test
+        @DisplayName("control: zero and positive values load as written, with no warning")
+        void zeroAndPositiveValuesAreKept() throws IOException {
+            KitDefinition zero = service.parseKitFile(kitFileWith("zero", "price: 0\nlevelRequired: 0\ncooldown: 0\n"));
+            KitDefinition positive = service.parseKitFile(
+                    kitFileWith("positive", "price: 12.5\nlevelRequired: 4\ncooldown: 90\n"));
+
+            assertThat(zero.getPrice()).isEqualTo(0.0);
+            assertThat(zero.getLevelRequired()).isEqualTo(0);
+            assertThat(zero.getCooldown()).isEqualTo(0L);
+            assertThat(positive.getPrice()).isEqualTo(12.5);
+            assertThat(positive.getLevelRequired()).isEqualTo(4);
+            assertThat(positive.getCooldown()).isEqualTo(90L);
+            verifyNoInteractions(mockLogger);
+        }
+
+        @Test
+        @DisplayName("the warning reaches the console when the kit is loaded by loadKits() as well")
+        void loadKitsWarns() throws IOException {
+            kitFileWith("viaload", "price: -9\n");
+
+            service.loadKits();
+
+            assertThat(service.getKit("viaload")).isNotNull();
+            verify(mockLogger).warn(contains("viaload"));
+        }
+    }
+
+    // =========================================================================
     // SaveKitItems Filter Tests
     // =========================================================================
     @Nested
