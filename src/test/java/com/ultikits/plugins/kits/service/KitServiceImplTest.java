@@ -176,6 +176,22 @@ class KitServiceImplTest {
         return mockEconomy;
     }
 
+    /**
+     * With a live MockBukkit server: registers the plugin named {@code UltiTools} that the service
+     * schedules its reward commands for (UltiKits/UltiKits#41). Without it the service reports the
+     * commands as not run, exactly as on a server where the framework plugin is missing.
+     */
+    private static void registerUltiToolsPlugin() {
+        if (Bukkit.getPluginManager().getPlugin("UltiTools") == null) {
+            MockBukkit.createMockPlugin("UltiTools");
+        }
+    }
+
+    /** With a live MockBukkit server: runs the tasks scheduled so far, as the next server tick does. */
+    private static void runDeferredTasks() {
+        MockBukkit.getMock().getScheduler().performOneTick();
+    }
+
     private Player createMockPlayer() {
         Player player = mock(Player.class);
         when(player.getName()).thenReturn("TestPlayer");
@@ -1982,8 +1998,12 @@ class KitServiceImplTest {
             KitDefinition kit = buildPaidKit("rewarded", true);
             kit.setPlayerCommands(Collections.singletonList("warp vip"));
             KitServiceImpl spyService = serviceWithKits(kit);
+            registerUltiToolsPlugin();
 
             assertThat(spyService.claimKit(player, "rewarded")).isEqualTo(KitService.ClaimResult.SUCCESS);
+            // Reward commands run on the next tick, after the claim has returned (UltiKits/UltiKits#41).
+            verify(player, never()).performCommand(anyString());
+            runDeferredTasks();
 
             InOrder order = inOrder(inventory, mockClaimOperator, player);
             order.verify(mockClaimOperator).insert(any(KitClaimData.class));
@@ -2087,6 +2107,7 @@ class KitServiceImplTest {
             }).when(mockClaimOperator).update(any(KitClaimData.class));
 
             Economy economy = setupMockEconomy();
+            registerUltiToolsPlugin();
             when(economy.has(any(org.bukkit.OfflinePlayer.class), anyDouble()))
                     .thenAnswer(inv -> balance[0] >= (Double) inv.getArgument(1));
             when(economy.withdrawPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble())).thenAnswer(inv -> {
@@ -2148,6 +2169,7 @@ class KitServiceImplTest {
             assertThat(balanceAtWrite).containsExactly(400.0); // charged before the record, as decided
             assertThat(balance[0]).isEqualTo(500.0);          // and refunded after it failed
             assertThat(given).isEmpty();
+            runDeferredTasks(); // a command scheduled by a refused claim would run now
             assertThat(commandsRun).isEmpty();
             assertThat(rows).isEmpty();
         }
@@ -2164,6 +2186,9 @@ class KitServiceImplTest {
             assertThat(spyService.claimKit(player, "vip")).isEqualTo(KitService.ClaimResult.ALREADY_CLAIMED);
 
             assertThat(given).containsExactly(kitItem);
+            // The command was scheduled, not run, inside the claim (UltiKits/UltiKits#41); the tick runs it, once.
+            assertThat(commandsRun).isEmpty();
+            runDeferredTasks();
             assertThat(commandsRun).containsExactly("reward vip");
             assertThat(rows).hasSize(1);
             assertThat(balance[0]).isEqualTo(400.0);
@@ -2187,6 +2212,7 @@ class KitServiceImplTest {
             assertThat(spyService.claimKit(player, "daily")).isEqualTo(KitService.ClaimResult.SUCCESS);
             long firstClaim = rows.get(0).getLastClaim();
             given.clear();
+            runDeferredTasks();
             commandsRun.clear();
 
             writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
@@ -2195,6 +2221,7 @@ class KitServiceImplTest {
             assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
             assertThat(balance[0]).isEqualTo(400.0); // the first claim's charge only
             assertThat(given).isEmpty();
+            runDeferredTasks(); // a command scheduled by a refused claim would run now
             assertThat(commandsRun).isEmpty();
             assertThat(rows).hasSize(1);
             assertThat(rows.get(0).getClaimCount()).isEqualTo(1);
@@ -2226,6 +2253,7 @@ class KitServiceImplTest {
 
             assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
             assertThat(given).isEmpty();
+            runDeferredTasks(); // a command scheduled by a refused claim would run now
             assertThat(commandsRun).isEmpty();
             assertThat(rows).isEmpty();
             assertThat(balance[0]).isEqualTo(500.0);
@@ -2262,6 +2290,7 @@ class KitServiceImplTest {
             assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED);
             assertThat(balance[0]).isEqualTo(400.0);
             assertThat(given).isEmpty();
+            runDeferredTasks(); // a command scheduled by a refused claim would run now
             assertThat(commandsRun).isEmpty();
             assertThat(errors()).anyMatch(line -> line.contains(player.getName())
                     && line.contains("vipcrate") && line.contains(String.valueOf(PRICE)));
@@ -3651,8 +3680,12 @@ class KitServiceImplTest {
         void refusedPlayerCommandIsReported() throws Exception {
             rewardKit(Collections.singletonList("warp vip"), null);
             when(player.performCommand("warp vip")).thenReturn(false);
-
-            KitService.ClaimResult result = spyService.claimKit(player, "reward");
+            KitService.ClaimResult result;
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                result = spyService.claimKit(player, "reward");
+                runDeferredTask(scheduler);
+            }
 
             assertClaimedAndRecorded(result);
             verify(player).sendMessage(ChatColor.RED + String.format(zh("kits.claim.reward_command_failed"), "warp vip"));
@@ -3666,8 +3699,12 @@ class KitServiceImplTest {
             rewardKit(Arrays.asList("warp vip", "spawn"), null);
             when(player.performCommand("warp vip")).thenThrow(new org.bukkit.command.CommandException("boom"));
             when(player.performCommand("spawn")).thenReturn(true);
-
-            KitService.ClaimResult result = spyService.claimKit(player, "reward");
+            KitService.ClaimResult result;
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                result = spyService.claimKit(player, "reward");
+                runDeferredTask(scheduler);
+            }
 
             assertClaimedAndRecorded(result);
             verify(player).sendMessage(ChatColor.RED + String.format(zh("kits.claim.reward_command_failed"), "warp vip"));
@@ -3700,9 +3737,13 @@ class KitServiceImplTest {
         void acceptedPlayerCommandReportsNothing() throws Exception {
             rewardKit(Collections.singletonList("spawn"), null);
             when(player.performCommand("spawn")).thenReturn(true);
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+                runDeferredTask(scheduler);
+            }
 
-            assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
-
+            verify(player).performCommand("spawn");
             verify(player, never()).sendMessage(anyString());
             verify(mockLogger, never()).warn(anyString());
         }
@@ -3799,6 +3840,85 @@ class KitServiceImplTest {
                     "reward", "say two", "TestPlayer"));
         }
 
+        @Test
+        @DisplayName("player commands are scheduled for the next tick, not run inside the claim: a click handler never runs one (UltiKits/UltiKits#41)")
+        void playerCommandsAreDeferredOutOfTheClaim() throws Exception {
+            rewardKit(Arrays.asList("warp vip", "msg {player} hi"), null);
+            when(player.performCommand(anyString())).thenReturn(true);
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+
+                // The claim has returned - the browser's click handler is about to finish - and no command ran.
+                verify(player, never()).performCommand(anyString());
+                verify(scheduler, times(2)).runTask(any(Plugin.class), any(Runnable.class));
+
+                runDeferredTask(scheduler);
+            }
+
+            InOrder order = inOrder(player);
+            order.verify(player).performCommand("warp vip");
+            order.verify(player).performCommand("msg TestPlayer hi");
+        }
+
+        @Test
+        @DisplayName("player commands run before the console commands, as they did when both ran in the claim")
+        void playerCommandsRunBeforeConsoleCommands() throws Exception {
+            rewardKit(Collections.singletonList("warp vip"), Collections.singletonList("say hi"));
+            when(player.performCommand("warp vip")).thenReturn(true);
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                bukkit.when(() -> Bukkit.dispatchCommand(any(), eq("say hi"))).thenReturn(true);
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+                runDeferredTask(scheduler);
+
+                InOrder order = inOrder(player);
+                order.verify(player).performCommand("warp vip");
+                bukkit.verify(() -> Bukkit.dispatchCommand(any(), eq("say hi")));
+            }
+        }
+
+        @Test
+        @DisplayName("player commands that cannot be scheduled are reported to the player and logged, not dropped silently")
+        void unscheduledPlayerCommandsAreReported() throws Exception {
+            rewardKit(Arrays.asList("warp vip", "spawn"), null);
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                PluginManager pluginManager = mock(PluginManager.class);
+                bukkit.when(Bukkit::getPluginManager).thenReturn(pluginManager);
+                when(pluginManager.getPlugin("UltiTools")).thenReturn(null);
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+            }
+
+            verify(player, never()).performCommand(anyString());
+            verify(player).sendMessage(ChatColor.RED + String.format(zh("kits.claim.reward_command_failed"), "warp vip"));
+            verify(player).sendMessage(ChatColor.RED + String.format(zh("kits.claim.reward_command_failed"), "spawn"));
+            verify(mockLogger).warn(String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "warp vip", "TestPlayer"));
+            verify(mockLogger).warn(String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "spawn", "TestPlayer"));
+        }
+
+        @Test
+        @DisplayName("a player command whose scheduling itself throws is logged with the exception and a later command is still attempted")
+        void unschedulablePlayerCommandDoesNotAbortLaterCommands() throws Exception {
+            rewardKit(Arrays.asList("warp vip", "spawn"), null);
+            RuntimeException schedulingFailure = new RuntimeException("scheduler rejected the task");
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                doThrow(schedulingFailure).when(scheduler).runTask(any(Plugin.class), any(Runnable.class));
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+            }
+
+            verify(mockLogger).warn(schedulingFailure, String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "warp vip", "TestPlayer"));
+            verify(mockLogger).warn(schedulingFailure, String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "spawn", "TestPlayer"));
+        }
+
         private BukkitScheduler consoleScheduler(MockedStatic<Bukkit> bukkit) {
             PluginManager pluginManager = mock(PluginManager.class);
             Plugin ultiTools = mock(Plugin.class);
@@ -3809,10 +3929,13 @@ class KitServiceImplTest {
             return scheduler;
         }
 
+        /** Runs every task scheduled so far, in the order it was scheduled, as the next tick does. */
         private void runDeferredTask(BukkitScheduler scheduler) {
             ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
-            verify(scheduler).runTask(any(Plugin.class), task.capture());
-            task.getValue().run();
+            verify(scheduler, atLeastOnce()).runTask(any(Plugin.class), task.capture());
+            for (Runnable r : task.getAllValues()) {
+                r.run();
+            }
         }
     }
 
@@ -3850,7 +3973,21 @@ class KitServiceImplTest {
             PlayerInventory inventory = player.getInventory();
             when(inventory.getStorageContents()).thenReturn(new ItemStack[36]);
 
-            spyService.claimKit(player, "cmdkit");
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                PluginManager pluginManager = mock(PluginManager.class);
+                BukkitScheduler scheduler = mock(BukkitScheduler.class);
+                bukkit.when(Bukkit::getPluginManager).thenReturn(pluginManager);
+                when(pluginManager.getPlugin("UltiTools")).thenReturn(mock(Plugin.class));
+                bukkit.when(Bukkit::getScheduler).thenReturn(scheduler);
+
+                spyService.claimKit(player, "cmdkit");
+
+                // Scheduled for the next tick (UltiKits/UltiKits#41), then run in list order.
+                verify(player, never()).performCommand(anyString());
+                ArgumentCaptor<Runnable> tasks = ArgumentCaptor.forClass(Runnable.class);
+                verify(scheduler, times(2)).runTask(any(Plugin.class), tasks.capture());
+                tasks.getAllValues().forEach(Runnable::run);
+            }
 
             verify(player).performCommand("spawn");
             verify(player).performCommand("msg TestPlayer Welcome!");
