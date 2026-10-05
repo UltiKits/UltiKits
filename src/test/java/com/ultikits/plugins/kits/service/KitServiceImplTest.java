@@ -3280,6 +3280,59 @@ class KitServiceImplTest {
             assertThat(warning.getAllValues()).anyMatch(line -> line.contains("latin") && line.contains("UTF-8"));
         }
 
+        /**
+         * An operator's edit that lands between the editor's write and the re-read after it must not be adopted as
+         * "the file as loaded": the next save would then pass the fingerprint check and write over that edit. The
+         * re-read is adopted only when it is this save's own result (local Codex run 2 on PR #42, P2).
+         */
+        @Test
+        @DisplayName("an operator edit landing between the save and its re-read is not adopted: the next save is refused, the edit stays")
+        void anEditBetweenTheWriteAndTheReReadIsNotAdopted() throws Exception {
+            File file = writeKit("vip.yml", HAND_WRITTEN);
+            KitServiceImpl spyService = spy(createService());
+            doReturn("first-items").doReturn("second-items").when(spyService).serializeItems(any(ItemStack[].class));
+            doAnswer(invocation -> {
+                // The operator saves the file in the window after the gate's write.
+                String now = read(file);
+                Files.write(file.toPath(), now.replaceAll("(?m)^items: .*$", "items: hand-items")
+                        .getBytes(StandardCharsets.UTF_8));
+                return invocation.callRealMethod();
+            }).doCallRealMethod().when(spyService).readSnapshot(any(File.class));
+
+            assertThat(save(spyService, "vip")).isEqualTo(KitService.SaveResult.SUCCESS);
+            String edited = read(file);
+            assertThat(edited).as("control: the operator's edit landed").contains("items: hand-items");
+
+            KitService.SaveResult second = save(spyService, "vip");
+
+            assertThat(second.name()).isEqualTo("FILE_CHANGED_ON_DISK");
+            assertThat(read(file)).as("the operator's edit stays").isEqualTo(edited);
+        }
+
+        /** As above, for an edit of another key: the in-memory kit does not hold it, so the next save asks for a reload. */
+        @Test
+        @DisplayName("an edit of another key landing between the save and its re-read is not adopted either")
+        void anEditOfAnotherKeyBetweenTheWriteAndTheReReadIsNotAdopted() throws Exception {
+            File file = writeKit("vip.yml", HAND_WRITTEN);
+            KitServiceImpl spyService = spy(createService());
+            doReturn("first-items").doReturn("second-items").when(spyService).serializeItems(any(ItemStack[].class));
+            doAnswer(invocation -> {
+                Files.write(file.toPath(), read(file).replace("note: keep me", "note: changed in the window")
+                        .getBytes(StandardCharsets.UTF_8));
+                return invocation.callRealMethod();
+            }).doCallRealMethod().when(spyService).readSnapshot(any(File.class));
+
+            assertThat(save(spyService, "vip")).isEqualTo(KitService.SaveResult.SUCCESS);
+            String edited = read(file);
+
+            assertThat(save(spyService, "vip").name()).isEqualTo("FILE_CHANGED_ON_DISK");
+            assertThat(read(file)).isEqualTo(edited);
+            // Control: after a reload the save goes through and keeps the edit.
+            spyService.reload();
+            assertThat(save(spyService, "vip")).isEqualTo(KitService.SaveResult.SUCCESS);
+            assertThat(read(file)).contains("note: changed in the window");
+        }
+
         /** A kit created with /kits create can be edited at once, without a reload, and its new file has every key. */
         @Test
         @DisplayName("a kit just created by /kits create has every key in its file and can be edited at once")
