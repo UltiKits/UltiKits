@@ -400,6 +400,37 @@ class KitEditorGuiTest {
             verify(player).closeInventory();
         }
 
+        /**
+         * Every save result has its own reply: only FAILED renders the generic "Error saving kit", and only SUCCESS
+         * renders "Saved kit", so a result added later cannot fall silently into the generic error (gate-1 top-up
+         * P3-3 of plan 17-72).
+         */
+        @Test
+        @DisplayName("every SaveResult other than FAILED has a reply of its own")
+        void everySaveResultHasItsOwnReply() {
+            String generic = ChatColor.RED + CatalogueText.text("zh", "kits.editor.save_error");
+            String saved = String.format(CatalogueText.text("zh", "kits.editor.saved"), "testkit");
+            lenient().when(kitService.conflictingFiles("testkit")).thenReturn(Arrays.asList("TestKit.yml", "testkit.yml"));
+            for (int i = 0; i < 45; i++) {
+                lenient().when(topInventory.getItem(i)).thenReturn(null);
+            }
+            java.util.Set<String> replies = new java.util.HashSet<>();
+            for (KitService.SaveResult result : KitService.SaveResult.values()) {
+                org.mockito.Mockito.clearInvocations(player);
+                when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(result);
+
+                gui.handleSave();
+
+                ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+                verify(player).sendMessage(captor.capture());
+                String reply = captor.getValue();
+                assertThat(reply.equals(generic)).as(result + " renders the generic error").isEqualTo(result == KitService.SaveResult.FAILED);
+                assertThat(reply.contains(saved)).as(result + " renders success").isEqualTo(result == KitService.SaveResult.SUCCESS);
+                replies.add(reply);
+            }
+            assertThat(replies).as("one distinct reply per result").hasSize(KitService.SaveResult.values().length);
+        }
+
         @Test
         @DisplayName("SYSTEM_DISABLED renders the switch refusal, not the generic error")
         void systemDisabledRendersTheRefusal() {
