@@ -1,7 +1,9 @@
 package com.ultikits.plugins.kits.model;
 
+import com.ultikits.ultitools.config.OperatorFiles;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,6 +28,15 @@ public class KitDefinition {
      */
     @EqualsAndHashCode.Exclude
     private boolean displayNameFromCatalogue;
+    /**
+     * The kit file exactly as this kit was read from it (or as {@code /kits create} wrote it), or {@code null}
+     * when it could not be read as UTF-8 text. The kit editor writes the kit's {@code items} against this
+     * snapshot only, so a file edited on disk since then is never written over (UltiKits/UltiKits#43). Not
+     * part of the kit's value and never written anywhere.
+     */
+    @EqualsAndHashCode.Exclude
+    @ToString.Exclude
+    private transient OperatorFiles.Snapshot loadedFrom;
 
     /** Sets a display name that belongs to the kit, and is therefore saved with it. */
     public void setDisplayName(String displayName) {

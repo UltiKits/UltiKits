@@ -5,6 +5,7 @@ import com.ultikits.plugins.kits.entity.KitClaimData;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
 import com.ultikits.ultitools.annotations.Service;
+import com.ultikits.ultitools.config.OperatorFiles;
 import com.ultikits.ultitools.exceptions.DataAccessException;
 import com.ultikits.ultitools.interfaces.DataOperator;
 import com.ultikits.ultitools.interfaces.impl.logger.PluginLogger;
@@ -12,6 +13,7 @@ import com.ultikits.ultitools.utils.EconomyUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -287,7 +289,7 @@ public class KitServiceImpl implements KitService {
 
     /**
      * The kit name a file in the kits folder loads as. The one mapping {@link #loadKits()},
-     * {@link #deleteKit}, {@link #saveKitToFile} and {@link #createKitFile} share, so "the kit's file" is decided in one place:
+     * {@link #deleteKit}, {@link #saveKitItems} and {@link #createKitFile} share, so "the kit's file" is decided in one place:
      * rebuilding a path from the kit's name missed a file whose name has capitals.
      * <p>
      * 文件对应的礼包名；加载、删除和保存共用这一映射。
@@ -408,7 +410,19 @@ public class KitServiceImpl implements KitService {
      * command has already passed by the time Save is pressed and cannot stop a write while the
      * system is off. Guarding the gateway covers the editor and any writer added later.
      * <p>
-     * 保存入口处执行总开关：编辑界面的生命周期长于打开它的命令，命令处的检查拦不住之后的保存。
+     * <b>Why it cannot overwrite operator content.</b> A kit file is created by the operator, and an
+     * explicit edit writes only the part it edits (maintainer decision of 2026-10-04, "what code may
+     * write, by file type"): this writes the kit's {@code items} key and nothing else, through the
+     * framework's {@link OperatorFiles#write}, against the file exactly as the kit was loaded from it.
+     * The framework publishes the file only when every other line - comments, other keys, unknown keys,
+     * values this module replaced in memory when it loaded them - is byte-identical to that snapshot and
+     * the file still holds the snapshot's bytes. A file edited, replaced or deleted since the load
+     * answers {@link SaveResult#FILE_CHANGED_ON_DISK}; one the framework cannot write that way (YAML
+     * anchors, a layout it cannot keep) answers {@link SaveResult#REFUSED}. Either way nothing is
+     * written and the live kit keeps the items the file holds (UltiKits/UltiKits#43).
+     * <p>
+     * 保存入口处执行总开关。只写该礼包的 {@code items}，并且只在文件仍是加载时的内容时写入；文件中的注释、
+     * 其他键和加载时被替换的值保持原样；文件在加载后被改过或无法安全写入时什么也不写。
      *
      * @param kitName the kit to write / 目标礼包名
      * @param items   its new contents / 新的物品内容
@@ -439,17 +453,70 @@ public class KitServiceImpl implements KitService {
         if (!conflictingFiles(kit.getName()).isEmpty()) {
             return SaveResult.FILE_CONFLICT;
         }
+        return writeItems(kit, serialized);
+    }
 
-        // The live kit keeps the new items only when the file took them: after a failed save the
-        // editor reports the failure, so a claim must still hand out what the file holds.
-        String previous = kit.getItems();
-        kit.setItems(serialized);
-        if (!saveKitToFile(kit.getName(), kit)) {
-            kit.setItems(previous);
-            // The writer also refuses a second file that appeared after the check above.
-            return conflictingFiles(kit.getName()).isEmpty() ? SaveResult.FAILED : SaveResult.FILE_CONFLICT;
+    /**
+     * Writes {@code serialized} as the kit's {@code items} into the file the kit was loaded from, and
+     * nothing else (see {@link #saveKitItems}). The live kit takes the new items only when the file did:
+     * after any other outcome the editor reports it, so a claim must still hand out what the file holds.
+     */
+    private SaveResult writeItems(KitDefinition kit, String serialized) {
+        String name = kit.getName();
+        OperatorFiles.Snapshot loadedFrom = kit.getLoadedFrom();
+        if (loadedFrom == null) {
+            // Loaded through Bukkit's reader, which replaces what it cannot decode: writing only the items
+            // would need the rest of the file re-encoded, which is not the operator's text any more.
+            logger.warn(String.format(plugin.i18n("kits.log.save_unread_file"), name,
+                    kitsFolder().getAbsolutePath()));
+            return SaveResult.REFUSED;
         }
-        return SaveResult.SUCCESS;
+        // A folder that cannot be listed gives no way to know whether a second file now loads as this
+        // kit, and one that several files define has no single file to write.
+        List<File> files = kitFilesOf(name);
+        if (files == null) {
+            logger.error(String.format(plugin.i18n("kits.log.kits_folder_unreadable_save"),
+                    kitsFolder().getAbsolutePath(), name));
+            return SaveResult.FAILED;
+        }
+        if (files.size() > 1) {
+            return SaveResult.FILE_CONFLICT;
+        }
+        OperatorFiles.WriteResult result;
+        try {
+            result = OperatorFiles.write(loadedFrom,
+                    Collections.<List<String>, Object>singletonMap(Collections.singletonList("items"), serialized));
+        } catch (IOException e) {
+            logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
+            return SaveResult.FAILED;
+        }
+        switch (result) {
+            case WRITTEN:
+            case UNCHANGED:
+                kit.setItems(serialized);
+                // The next save is checked against the file as this one left it. A read that fails keeps the
+                // old snapshot, which no longer matches the file, so that save is refused, never written over.
+                OperatorFiles.Snapshot written = readSnapshot(loadedFrom.getFile());
+                if (written != null) {
+                    kit.setLoadedFrom(written);
+                }
+                return SaveResult.SUCCESS;
+            case FILE_CHANGED:
+                return SaveResult.FILE_CHANGED_ON_DISK;
+            default:
+                // The framework's WARNING names the file, the key and the reason.
+                return SaveResult.REFUSED;
+        }
+    }
+
+    /** The file's text and fingerprint, or {@code null} when it cannot be read as UTF-8 text. */
+    @Nullable
+    private static OperatorFiles.Snapshot readSnapshot(File file) {
+        try {
+            return OperatorFiles.read(file);
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     @Override
@@ -991,12 +1058,20 @@ public class KitServiceImpl implements KitService {
         return value;
     }
 
+    /**
+     * Reads one kit file. The file is read once, as a snapshot the kit keeps for the editor's save
+     * ({@link #saveKitItems}), and parsed from that text, so the values and the snapshot are the same
+     * bytes. A file that cannot be read as UTF-8 text, or does not parse, is read the way it always was -
+     * by Bukkit's reader - and loads exactly as before; only the editor's save then refuses it.
+     */
     @Nullable
     KitDefinition parseKitFile(File file) {
         try {
-            YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
+            OperatorFiles.Snapshot snapshot = readSnapshot(file);
+            YamlConfiguration config = snapshot == null ? YamlConfiguration.loadConfiguration(file) : parse(snapshot, file);
 
             KitDefinition kit = new KitDefinition();
+            kit.setLoadedFrom(snapshot);
             String displayName = config.getString("displayName");
             if (displayName == null) {
                 kit.useCatalogueDisplayName("&7" + plugin.i18n("kits.kit.default_display_name"));
@@ -1031,50 +1106,25 @@ public class KitServiceImpl implements KitService {
         }
     }
 
-    /**
-     * Writes a kit's whole file - the file the kit loads from, or {@code <name>.yml} when none does - from the
-     * in-memory kit. Fails when the kits folder cannot be listed or several files load as the kit.
-     */
-    boolean saveKitToFile(String name, KitDefinition kit) {
+    /** The snapshot's text as YAML; text that does not parse goes through Bukkit's own reader, as before. */
+    private static YamlConfiguration parse(OperatorFiles.Snapshot snapshot, File file) {
+        YamlConfiguration config = new YamlConfiguration();
         try {
-            // Write the file the kit loads from, so a save lands where the next reload reads it; a new
-            // kit gets "<name>.yml". A folder that cannot be listed gives no way to know which file that
-            // is, and a kit that several files define has no single one, so both fail rather than
-            // writing a file beside the real one.
-            List<File> targets = kitFilesOf(name);
-            if (targets == null) {
-                logger.error(String.format(plugin.i18n("kits.log.kits_folder_unreadable_save"),
-                        kitsFolder().getAbsolutePath(), name));
-                return false;
-            }
-            if (targets.size() > 1) {
-                // Never write one of several files a kit loads from (see conflictingFiles).
-                return false;
-            }
-            if (targets.isEmpty()) {
-                File newFile = kitFileFor(name);
-                if (newFile == null) {
-                    logger.error(String.format(plugin.i18n("kits.log.kit_name_outside_folder"), name,
-                            kitsFolder().getAbsolutePath()));
-                    return false;
-                }
-                targets = Collections.singletonList(newFile);
-            }
-            YamlConfiguration config = kitYaml(kit);
-            for (File kitFile : targets) {
-                config.save(kitFile);
-            }
-            return true;
-        } catch (IOException e) {
-            logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
-            return false;
+            config.loadFromString(snapshot.getText());
+            return config;
+        } catch (InvalidConfigurationException e) {
+            return YamlConfiguration.loadConfiguration(file);
         }
     }
 
     /**
      * Creates a new kit's file, {@code <name>.yml}, holding every key of the kit - the operator's explicit create
-     * action ({@code /kits create}). A file that already loads as the name is never written: the create fails
-     * instead, so a create never overwrites an existing file.
+     * action ({@code /kits create}), the only time this module writes a whole kit file.
+     * <p>
+     * <b>Why it cannot overwrite operator content.</b> A file that already loads as the name is never written:
+     * the create fails instead, and the new file is claimed exclusively before anything is written, so a file
+     * that appears in between fails the create too. The kit then keeps a snapshot of the file it created, so the
+     * editor can save its items at once without a reload.
      */
     boolean createKitFile(String name, KitDefinition kit) {
         try {
@@ -1114,6 +1164,7 @@ public class KitServiceImpl implements KitService {
                     Files.deleteIfExists(created.toPath());
                 }
             }
+            kit.setLoadedFrom(readSnapshot(created));
             return true;
         } catch (IOException e) {
             logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));

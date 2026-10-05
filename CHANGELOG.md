@@ -42,6 +42,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Saving in the kit editor (`/kits edit <kit>`, then Save) now writes only the kit's `items` into its file.
+  Before, it rebuilt the whole file from the loaded kit: every comment and every key the module does not
+  know was dropped, values the loader had replaced were written back (an invalid `icon` as `CHEST`, a
+  negative or non-numeric `price`, `levelRequired` or `cooldown` as `0`, a mistyped `reBuyable` as
+  `false`), and a hand edit made after the kit was loaded was reverted. Now every other line stays byte for
+  byte. If the kit's file changed on disk since it was loaded, nothing is saved and the editor says so and
+  asks for `/kits reload` first; if writing the items would change anything else in the file (YAML anchors,
+  for example) or the file is not UTF-8 text, nothing is saved and the editor says the kit was not saved,
+  with the reason in the server log. `/kits create` still only ever creates a new file
+  (UltiKits/UltiKits#43).
+- 礼包编辑器保存（`/kits edit <礼包>` 后点击保存）现在只把该礼包的 `items` 写入文件。此前它会按已加载的礼包重写整个文件：
+  所有注释和模块不认识的键被删除，加载时被替换的值被写回（无效的 `icon` 写成 `CHEST`，负数或非数字的 `price`、`levelRequired`、
+  `cooldown` 写成 `0`，拼错的 `reBuyable` 写成 `false`），加载后的手动修改被还原。现在其余每一行都逐字节保持不变。礼包文件在
+  加载后被修改过时不保存，编辑器会提示先执行 `/kits reload`；写入物品会改动文件中的其他内容（例如 YAML 锚点）或文件不是 UTF-8
+  文本时也不保存，编辑器提示未保存，原因见服务器日志。`/kits create` 仍然只会新建文件（UltiKits/UltiKits#43）。
 - A kit's player reward commands (`playerCommands`) now run one tick after the claim, like its console
   commands, instead of inside the claim. Claiming from the kit browser ran them inside the inventory
   click, where a reward command that opens another GUI could not open it, or had it closed again at once
@@ -173,12 +188,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   them on the console (UltiKits/UltiKits#23). `/kits create` now refuses a name holding `/`, `\` or
   `..`, which used to write the kit file outside the kits folder, and refuses a name that a file in
   the kits folder already loads as (placed by hand without a reload, or unreadable), naming the file
-  instead of overwriting it (UltiKits/UltiKits#37). A kit file is still written the way earlier versions
-  wrote it, so a crash during a save can leave it cut off; crash-safe writes for modules are tracked
-  in UltiKits/UltiTools-Reborn#545.
+  instead of overwriting it (UltiKits/UltiKits#37). A new kit's file (`/kits create`) is still written the
+  way earlier versions wrote it, so a crash during the create can leave it cut off; crash-safe writes for
+  modules are tracked in UltiKits/UltiTools-Reborn#545. The editor's save replaces the file atomically since
+  UltiKits/UltiKits#43.
 - 修复：礼包文件删除失败（或礼包文件夹无法读取）时，`/kits delete` 不再报告删除成功。礼包会保持加载，执行者会被告知未删除，控制台会记录该文件或文件夹的路径，
   因此被告知已删除的礼包不会在下次 `/kits reload` 或重启后重新出现。删除和保存礼包现在使用礼包加载时的那个文件，因此文件名含大写字母的手放礼包文件（如 `VIP.yml`）
-  也能像其他礼包一样被删除，并能从编辑界面保存。编辑界面保存失败时不再改动已加载的礼包，领取时发放的仍是文件中的物品。当多个文件定义同一礼包时（在区分大小写的文件系统上同时存在 `VIP.yml` 和 `vip.yml`），`/kits edit`、编辑界面的保存按钮、`/kits create` 和 `/kits delete` 不做任何修改并列出这些文件；其中一个仍会被加载，礼包照常可以领取，`/kits reload` 也会在控制台列出这些文件（UltiKits/UltiKits#23）。`/kits create` 现在会拒绝含 `/`、`\` 或 `..` 的礼包名（以前会把礼包文件写到 kits 文件夹之外），也会拒绝礼包文件夹中已有文件（手工放入但未 reload 的，或无法解析的）加载为该名字的礼包名，并列出该文件而不是覆盖它（UltiKits/UltiKits#37）。礼包文件仍按以前版本的方式写入，保存过程中崩服可能留下残缺文件；模块的崩溃安全写入在 UltiKits/UltiTools-Reborn#545 中跟踪。
+  也能像其他礼包一样被删除，并能从编辑界面保存。编辑界面保存失败时不再改动已加载的礼包，领取时发放的仍是文件中的物品。当多个文件定义同一礼包时（在区分大小写的文件系统上同时存在 `VIP.yml` 和 `vip.yml`），`/kits edit`、编辑界面的保存按钮、`/kits create` 和 `/kits delete` 不做任何修改并列出这些文件；其中一个仍会被加载，礼包照常可以领取，`/kits reload` 也会在控制台列出这些文件（UltiKits/UltiKits#23）。`/kits create` 现在会拒绝含 `/`、`\` 或 `..` 的礼包名（以前会把礼包文件写到 kits 文件夹之外），也会拒绝礼包文件夹中已有文件（手工放入但未 reload 的，或无法解析的）加载为该名字的礼包名，并列出该文件而不是覆盖它（UltiKits/UltiKits#37）。新礼包的文件（`/kits create`）仍按以前版本的方式写入，创建过程中崩服可能留下残缺文件；模块的崩溃安全写入在 UltiKits/UltiTools-Reborn#545 中跟踪。自 UltiKits/UltiKits#43 起，编辑界面的保存以原子方式替换文件。
 
 - `language: zh` now applies to the text that was fixed English: the kit editor's save-button lore
   (`Click to save kit contents`), the `/kits help` lines for `edit`, `create`, `delete` and `reload`,
