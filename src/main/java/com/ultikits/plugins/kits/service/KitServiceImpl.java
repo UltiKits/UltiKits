@@ -494,10 +494,13 @@ public class KitServiceImpl implements KitService {
             case WRITTEN:
             case UNCHANGED:
                 kit.setItems(serialized);
-                // The next save is checked against the file as this one left it. A read that fails keeps the
-                // old snapshot, which no longer matches the file, so that save is refused, never written over.
+                // The next save is checked against the file as this one left it - but only a re-read that is this
+                // save's own result is adopted. An operator's edit that landed between the write and this read would
+                // otherwise become "the file as loaded" and the next save would write over it (local Codex run 2 on
+                // PR #42). A read that fails or is not this save's result keeps the old snapshot, which no longer
+                // matches the file, so the next save is refused (FILE_CHANGED_ON_DISK) and asks for a reload.
                 OperatorFiles.Snapshot written = readSnapshot(loadedFrom.getFile());
-                if (written != null) {
+                if (written != null && isOwnWrite(loadedFrom, written, serialized)) {
                     kit.setLoadedFrom(written);
                 }
                 return SaveResult.SUCCESS;
@@ -507,6 +510,38 @@ public class KitServiceImpl implements KitService {
                 // The framework's WARNING names the file, the key and the reason.
                 return SaveResult.REFUSED;
         }
+    }
+
+    /**
+     * Whether {@code after} - the file re-read after a write of {@code items} against {@code before} - is that write's
+     * own result: its {@code items} is {@code serialized} and every other value equals {@code before}'s. Compared as
+     * values, because the write gate already keeps every byte outside {@code items}; what a later save must not do is
+     * build on a value the kit in memory does not hold. An edit that changes only comments or layout in the window is
+     * adopted, which is harmless: no save writes outside {@code items}.
+     */
+    private static boolean isOwnWrite(OperatorFiles.Snapshot before, OperatorFiles.Snapshot after, String serialized) {
+        YamlConfiguration was = new YamlConfiguration();
+        YamlConfiguration now = new YamlConfiguration();
+        try {
+            was.loadFromString(before.getText());
+            now.loadFromString(after.getText());
+        } catch (InvalidConfigurationException unparseable) {
+            return false;
+        }
+        if (!serialized.equals(now.getString("items"))) {
+            return false;
+        }
+        Set<String> keys = new HashSet<>(was.getKeys(true));
+        keys.addAll(now.getKeys(true));
+        keys.remove("items");
+        for (String key : keys) {
+            boolean section = was.isConfigurationSection(key) || now.isConfigurationSection(key);
+            if (section ? was.isConfigurationSection(key) != now.isConfigurationSection(key)
+                    : !Objects.equals(was.get(key), now.get(key))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
