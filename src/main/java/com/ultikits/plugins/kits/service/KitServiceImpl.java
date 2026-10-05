@@ -509,9 +509,12 @@ public class KitServiceImpl implements KitService {
         }
     }
 
-    /** The file's text and fingerprint, or {@code null} when it cannot be read as UTF-8 text. */
+    /**
+     * The file's text and fingerprint, or {@code null} when it cannot be read as UTF-8 text. A seam, package-private so
+     * a test can put an operator's edit between the editor's write and the read that follows it.
+     */
     @Nullable
-    private static OperatorFiles.Snapshot readSnapshot(File file) {
+    OperatorFiles.Snapshot readSnapshot(File file) {
         try {
             return OperatorFiles.read(file);
         } catch (IOException e) {
