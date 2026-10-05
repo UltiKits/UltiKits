@@ -18,11 +18,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `新手礼包`，模块没有示例的语言使用英文版。此前唯一的示例在任何语言下都是中文。已有安装不受影响：只有礼包文件夹尚不
   存在时才会复制示例（UltiKits/UltiKits#33）。
 - Language keys were renamed from Chinese sentences to ASCII keys (for example `kits.claim.success`).
-  An operator who edited this module's `lang/en.json` or `lang/zh.json` must re-apply those edits to
-  the new keys; until then the renamed messages show the new built-in text. A server whose language
-  files were never edited needs no action.
-- 语言键已从中文句子改为 ASCII 键（例如 `kits.claim.success`）。改过本模块 `lang/en.json` 或
-  `lang/zh.json` 的运维需要把改动重新套到新键上；在此之前，这些消息显示新的内置文本。从未改过语言文件的服务器无需任何操作。
+  This module's official language files (`lang/en.json` and `lang/zh.json` under
+  `plugins/UltiTools/pluginConfig/UltiTools-Kits/`) belong to UltiTools: from UltiTools-API 6.3.0 an edited
+  official file is restored to the shipped text at every start, its edited copy kept as a backup and
+  named in the server log, so edits made there are not kept. To customise messages, copy the official
+  file under a new name that starts with its language code and a hyphen (`en.json` to `en-myserver.json`),
+  edit the copy against the new keys, and set `language: en-myserver` in `plugins/UltiTools/config.yml`.
+  A server whose language files were never edited needs no action.
+- 语言键已从中文句子改为 ASCII 键（例如 `kits.claim.success`）。本模块的官方语言文件
+  （`plugins/UltiTools/pluginConfig/UltiTools-Kits/` 下的 `lang/en.json` 和 `lang/zh.json`）归 UltiTools 所有：
+  自 UltiTools-API 6.3.0 起，被修改过的官方文件会在每次启动时恢复为自带内容，修改过的副本作为备份保留并在服务器日志中注明，
+  因此在其中所做的修改不会保留。要自定义消息，请把官方文件复制为以语言代码加连字符开头的新名称（`zh.json` → `zh-myserver.json`），
+  按新键修改副本，然后在 `plugins/UltiTools/config.yml` 中设置 `language: zh-myserver`。从未改过语言文件的服务器无需任何操作。
 
 ### Removed
 
