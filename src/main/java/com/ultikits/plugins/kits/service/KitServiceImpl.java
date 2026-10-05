@@ -213,7 +213,7 @@ public class KitServiceImpl implements KitService {
         kit.setItems(serializedItems);
 
         // Save to YAML; the writer refuses a file that appeared after the checks above.
-        if (!saveKitToFile(normalizedName, kit, true)) {
+        if (!createKitFile(normalizedName, kit)) {
             if (!conflictingFiles(normalizedName).isEmpty()) {
                 return CreateResult.FILE_CONFLICT;
             }
@@ -287,7 +287,7 @@ public class KitServiceImpl implements KitService {
 
     /**
      * The kit name a file in the kits folder loads as. The one mapping {@link #loadKits()},
-     * {@link #deleteKit} and {@link #saveKitToFile} share, so "the kit's file" is decided in one place:
+     * {@link #deleteKit}, {@link #saveKitToFile} and {@link #createKitFile} share, so "the kit's file" is decided in one place:
      * rebuilding a path from the kit's name missed a file whose name has capitals.
      * <p>
      * 文件对应的礼包名；加载、删除和保存共用这一映射。
@@ -1031,15 +1031,11 @@ public class KitServiceImpl implements KitService {
         }
     }
 
-    boolean saveKitToFile(String name, KitDefinition kit) {
-        return saveKitToFile(name, kit, false);
-    }
-
     /**
-     * Writes a kit's file; with {@code newOnly} (a create), a file that already loads as the name is
-     * never written - it fails instead - so a create never overwrites an existing file.
+     * Writes a kit's whole file - the file the kit loads from, or {@code <name>.yml} when none does - from the
+     * in-memory kit. Fails when the kits folder cannot be listed or several files load as the kit.
      */
-    boolean saveKitToFile(String name, KitDefinition kit, boolean newOnly) {
+    boolean saveKitToFile(String name, KitDefinition kit) {
         try {
             // Write the file the kit loads from, so a save lands where the next reload reads it; a new
             // kit gets "<name>.yml". A folder that cannot be listed gives no way to know which file that
@@ -1055,9 +1051,6 @@ public class KitServiceImpl implements KitService {
                 // Never write one of several files a kit loads from (see conflictingFiles).
                 return false;
             }
-            if (newOnly && !targets.isEmpty()) {
-                return false;
-            }
             if (targets.isEmpty()) {
                 File newFile = kitFileFor(name);
                 if (newFile == null) {
@@ -1067,44 +1060,7 @@ public class KitServiceImpl implements KitService {
                 }
                 targets = Collections.singletonList(newFile);
             }
-            YamlConfiguration config = new YamlConfiguration();
-
-            // A fallback name is left out, so it keeps following the language (null writes nothing).
-            config.set("displayName", kit.isDisplayNameFromCatalogue() ? null : kit.getDisplayName());
-            config.set("description", kit.getDescription());
-            config.set("icon", kit.getIcon());
-            config.set("price", kit.getPrice());
-            config.set("levelRequired", kit.getLevelRequired());
-            config.set("permission", kit.getPermission());
-            config.set("reBuyable", kit.isReBuyable());
-            config.set("cooldown", kit.getCooldown());
-            config.set("playerCommands", kit.getPlayerCommands());
-            config.set("consoleCommands", kit.getConsoleCommands());
-            config.set("items", kit.getItems());
-
-            if (newOnly) {
-                // A create claims its file exclusively before writing, so a file that appeared after the
-                // scan above fails the create instead of being written over.
-                File created = targets.get(0);
-                Files.createDirectories(created.getAbsoluteFile().toPath().getParent());
-                try {
-                    claimNewFile(created.toPath());
-                } catch (FileAlreadyExistsException appeared) {
-                    return false;
-                }
-                boolean written = false;
-                try {
-                    config.save(created);
-                    written = true;
-                } finally {
-                    if (!written) {
-                        // The file this create claimed is removed again, so the failure is not read as
-                        // "a file already exists" and a retry can succeed.
-                        Files.deleteIfExists(created.toPath());
-                    }
-                }
-                return true;
-            }
+            YamlConfiguration config = kitYaml(kit);
             for (File kitFile : targets) {
                 config.save(kitFile);
             }
@@ -1113,6 +1069,74 @@ public class KitServiceImpl implements KitService {
             logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
             return false;
         }
+    }
+
+    /**
+     * Creates a new kit's file, {@code <name>.yml}, holding every key of the kit - the operator's explicit create
+     * action ({@code /kits create}). A file that already loads as the name is never written: the create fails
+     * instead, so a create never overwrites an existing file.
+     */
+    boolean createKitFile(String name, KitDefinition kit) {
+        try {
+            // A folder that cannot be listed gives no way to know whether a file already loads as the name.
+            List<File> existing = kitFilesOf(name);
+            if (existing == null) {
+                logger.error(String.format(plugin.i18n("kits.log.kits_folder_unreadable_save"),
+                        kitsFolder().getAbsolutePath(), name));
+                return false;
+            }
+            if (!existing.isEmpty()) {
+                return false;
+            }
+            File created = kitFileFor(name);
+            if (created == null) {
+                logger.error(String.format(plugin.i18n("kits.log.kit_name_outside_folder"), name,
+                        kitsFolder().getAbsolutePath()));
+                return false;
+            }
+            YamlConfiguration config = kitYaml(kit);
+            // A create claims its file exclusively before writing, so a file that appeared after the scan
+            // above fails the create instead of being written over.
+            Files.createDirectories(created.getAbsoluteFile().toPath().getParent());
+            try {
+                claimNewFile(created.toPath());
+            } catch (FileAlreadyExistsException appeared) {
+                return false;
+            }
+            boolean written = false;
+            try {
+                config.save(created);
+                written = true;
+            } finally {
+                if (!written) {
+                    // The file this create claimed is removed again, so the failure is not read as
+                    // "a file already exists" and a retry can succeed.
+                    Files.deleteIfExists(created.toPath());
+                }
+            }
+            return true;
+        } catch (IOException e) {
+            logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
+            return false;
+        }
+    }
+
+    /** Every key of a kit, as a kit file holds it; a catalogue fallback display name is left out. */
+    private static YamlConfiguration kitYaml(KitDefinition kit) {
+        YamlConfiguration config = new YamlConfiguration();
+        // A fallback name is left out, so it keeps following the language (null writes nothing).
+        config.set("displayName", kit.isDisplayNameFromCatalogue() ? null : kit.getDisplayName());
+        config.set("description", kit.getDescription());
+        config.set("icon", kit.getIcon());
+        config.set("price", kit.getPrice());
+        config.set("levelRequired", kit.getLevelRequired());
+        config.set("permission", kit.getPermission());
+        config.set("reBuyable", kit.isReBuyable());
+        config.set("cooldown", kit.getCooldown());
+        config.set("playerCommands", kit.getPlayerCommands());
+        config.set("consoleCommands", kit.getConsoleCommands());
+        config.set("items", kit.getItems());
+        return config;
     }
 
     /**
