@@ -22,14 +22,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `plugins/UltiTools/pluginConfig/UltiTools-Kits/`) belong to UltiTools: from UltiTools-API 6.3.0 an edited
   official file is restored to the shipped text at every start, its edited copy kept as a backup and
   named in the server log, so edits made there are not kept. To customise messages, copy the official
-  file under a new name that starts with its language code and a hyphen (`en.json` to `en-myserver.json`),
-  edit the copy against the new keys, and set `language: en-myserver` in `plugins/UltiTools/config.yml`.
+  file under a new name that starts with its language code and a hyphen and holds only ASCII letters, digits,
+  `_` and `-` (`en.json` to `en-myserver.json`), edit the copy against the new keys, and set
+  `language: en-myserver` in `plugins/UltiTools/config.yml` (one setting for the framework and every module).
+  Messages the copy lacks come from the official file its name starts with (`en` here), and a module with no
+  file under that name uses its official `en`.
   A server whose language files were never edited needs no action.
 - 语言键已从中文句子改为 ASCII 键（例如 `kits.claim.success`）。本模块的官方语言文件
   （`plugins/UltiTools/pluginConfig/UltiTools-Kits/` 下的 `lang/en.json` 和 `lang/zh.json`）归 UltiTools 所有：
   自 UltiTools-API 6.3.0 起，被修改过的官方文件会在每次启动时恢复为自带内容，修改过的副本作为备份保留并在服务器日志中注明，
-  因此在其中所做的修改不会保留。要自定义消息，请把官方文件复制为以语言代码加连字符开头的新名称（`zh.json` → `zh-myserver.json`），
-  按新键修改副本，然后在 `plugins/UltiTools/config.yml` 中设置 `language: zh-myserver`。从未改过语言文件的服务器无需任何操作。
+  因此在其中所做的修改不会保留。要自定义消息，请把官方文件复制为以语言代码加连字符开头、只含 ASCII 字母、数字、`_` 和 `-` 的新名称
+  （`zh.json` → `zh-myserver.json`），按新键修改副本，然后在 `plugins/UltiTools/config.yml` 中设置 `language: zh-myserver`
+  （框架和所有模块共用这一个设置）。副本中没有的消息取自名称开头对应的官方文件（此处为 `zh`），没有该名称文件的模块使用其官方 `zh`。从未改过语言文件的服务器无需任何操作。
 
 ### Removed
 
