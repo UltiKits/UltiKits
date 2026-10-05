@@ -176,11 +176,28 @@ class KitServiceImplTest {
         return mockEconomy;
     }
 
+    /**
+     * With a live MockBukkit server: registers the plugin named {@code UltiTools} that the service
+     * schedules its reward commands for (UltiKits/UltiKits#41). Without it the service reports the
+     * commands as not run, exactly as on a server where the framework plugin is missing.
+     */
+    private static void registerUltiToolsPlugin() {
+        if (Bukkit.getPluginManager().getPlugin("UltiTools") == null) {
+            MockBukkit.createMockPlugin("UltiTools");
+        }
+    }
+
+    /** With a live MockBukkit server: runs the tasks scheduled so far, as the next server tick does. */
+    private static void runDeferredTasks() {
+        MockBukkit.getMock().getScheduler().performOneTick();
+    }
+
     private Player createMockPlayer() {
         Player player = mock(Player.class);
         when(player.getName()).thenReturn("TestPlayer");
         when(player.getUniqueId()).thenReturn(UUID.fromString("00000000-0000-0000-0000-000000000001"));
         when(player.getLevel()).thenReturn(10);
+        when(player.isOnline()).thenReturn(true);
         PlayerInventory inventory = mock(PlayerInventory.class);
         when(player.getInventory()).thenReturn(inventory);
         return player;
@@ -1982,8 +1999,12 @@ class KitServiceImplTest {
             KitDefinition kit = buildPaidKit("rewarded", true);
             kit.setPlayerCommands(Collections.singletonList("warp vip"));
             KitServiceImpl spyService = serviceWithKits(kit);
+            registerUltiToolsPlugin();
 
             assertThat(spyService.claimKit(player, "rewarded")).isEqualTo(KitService.ClaimResult.SUCCESS);
+            // Reward commands run on the next tick, after the claim has returned (UltiKits/UltiKits#41).
+            verify(player, never()).performCommand(anyString());
+            runDeferredTasks();
 
             InOrder order = inOrder(inventory, mockClaimOperator, player);
             order.verify(mockClaimOperator).insert(any(KitClaimData.class));
@@ -2087,6 +2108,7 @@ class KitServiceImplTest {
             }).when(mockClaimOperator).update(any(KitClaimData.class));
 
             Economy economy = setupMockEconomy();
+            registerUltiToolsPlugin();
             when(economy.has(any(org.bukkit.OfflinePlayer.class), anyDouble()))
                     .thenAnswer(inv -> balance[0] >= (Double) inv.getArgument(1));
             when(economy.withdrawPlayer(any(org.bukkit.OfflinePlayer.class), anyDouble())).thenAnswer(inv -> {
@@ -2148,6 +2170,7 @@ class KitServiceImplTest {
             assertThat(balanceAtWrite).containsExactly(400.0); // charged before the record, as decided
             assertThat(balance[0]).isEqualTo(500.0);          // and refunded after it failed
             assertThat(given).isEmpty();
+            runDeferredTasks(); // a command scheduled by a refused claim would run now
             assertThat(commandsRun).isEmpty();
             assertThat(rows).isEmpty();
         }
@@ -2164,6 +2187,9 @@ class KitServiceImplTest {
             assertThat(spyService.claimKit(player, "vip")).isEqualTo(KitService.ClaimResult.ALREADY_CLAIMED);
 
             assertThat(given).containsExactly(kitItem);
+            // The command was scheduled, not run, inside the claim (UltiKits/UltiKits#41); the tick runs it, once.
+            assertThat(commandsRun).isEmpty();
+            runDeferredTasks();
             assertThat(commandsRun).containsExactly("reward vip");
             assertThat(rows).hasSize(1);
             assertThat(balance[0]).isEqualTo(400.0);
@@ -2187,6 +2213,7 @@ class KitServiceImplTest {
             assertThat(spyService.claimKit(player, "daily")).isEqualTo(KitService.ClaimResult.SUCCESS);
             long firstClaim = rows.get(0).getLastClaim();
             given.clear();
+            runDeferredTasks();
             commandsRun.clear();
 
             writeFailure = new com.ultikits.ultitools.exceptions.DataAccessException("connection lost");
@@ -2195,6 +2222,7 @@ class KitServiceImplTest {
             assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
             assertThat(balance[0]).isEqualTo(400.0); // the first claim's charge only
             assertThat(given).isEmpty();
+            runDeferredTasks(); // a command scheduled by a refused claim would run now
             assertThat(commandsRun).isEmpty();
             assertThat(rows).hasSize(1);
             assertThat(rows.get(0).getClaimCount()).isEqualTo(1);
@@ -2226,6 +2254,7 @@ class KitServiceImplTest {
 
             assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED);
             assertThat(given).isEmpty();
+            runDeferredTasks(); // a command scheduled by a refused claim would run now
             assertThat(commandsRun).isEmpty();
             assertThat(rows).isEmpty();
             assertThat(balance[0]).isEqualTo(500.0);
@@ -2262,6 +2291,7 @@ class KitServiceImplTest {
             assertThat(result).isEqualTo(KitService.ClaimResult.NOT_RECORDED_REFUND_FAILED);
             assertThat(balance[0]).isEqualTo(400.0);
             assertThat(given).isEmpty();
+            runDeferredTasks(); // a command scheduled by a refused claim would run now
             assertThat(commandsRun).isEmpty();
             assertThat(errors()).anyMatch(line -> line.contains(player.getName())
                     && line.contains("vipcrate") && line.contains(String.valueOf(PRICE)));
@@ -2847,9 +2877,9 @@ class KitServiceImplTest {
         @Test
         @DisplayName("saveKitItems returns SYSTEM_DISABLED and writes nothing while the switch is off")
         void saveRefusedWhileDisabled() throws Exception {
-            KitDefinition kit = createTestKit("editable");
-            KitServiceImpl spyService = spy(service);
-            injectKit(spyService, kit);
+            File file = createSimpleKitFile("editable");
+            byte[] before = Files.readAllBytes(file.toPath());
+            KitServiceImpl spyService = spy(createService());
             doReturn("data").when(spyService).serializeItems(any(ItemStack[].class));
             ItemStack stone = mock(ItemStack.class);
             lenient().when(stone.getType()).thenReturn(Material.STONE);
@@ -2861,25 +2891,24 @@ class KitServiceImplTest {
             assertThat(result).isEqualTo(KitService.SaveResult.SYSTEM_DISABLED);
             // Nothing was written and nothing was even serialized: the guard is the gateway's first
             // statement, so a caller that outlives the command gate cannot get past it.
-            verify(spyService, never()).saveKitToFile(anyString(), any(KitDefinition.class));
+            assertThat(Files.readAllBytes(file.toPath())).isEqualTo(before);
             verify(spyService, never()).serializeItems(any(ItemStack[].class));
         }
 
         @Test
         @DisplayName("saveKitItems still saves at the declared default")
         void saveAllowedAtTheDeclaredDefault() throws Exception {
-            KitDefinition kit = createTestKit("editable");
-            KitServiceImpl spyService = spy(service);
-            injectKit(spyService, kit);
+            File file = createSimpleKitFile("editable");
+            KitServiceImpl spyService = spy(createService());
             doReturn("data").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(true).when(spyService).saveKitToFile(eq("editable"), eq(kit));
             ItemStack stone = mock(ItemStack.class);
             when(stone.getType()).thenReturn(Material.STONE);
 
             KitService.SaveResult result = spyService.saveKitItems("editable", new ItemStack[]{stone});
 
             assertThat(result).isEqualTo(KitService.SaveResult.SUCCESS);
-            verify(spyService).saveKitToFile("editable", kit);
+            assertThat(YamlConfiguration.loadConfiguration(file).getString("items")).isEqualTo("data");
+            assertThat(spyService.getKit("editable").getItems()).isEqualTo("data");
         }
 
         /**
@@ -2928,17 +2957,17 @@ class KitServiceImplTest {
          */
         @Test
         @DisplayName("saving a kit loaded from a file with capitals writes that file, not a second one")
-        void saveKitToFileWritesTheFileTheKitLoadsFrom() throws Exception {
+        void saveWritesTheFileTheKitLoadsFrom() throws Exception {
             File upper = createSimpleKitFile("VIP");
-            service = createService();
-            KitDefinition kit = service.getKit("vip");
-            kit.setPrice(42.0);
+            KitServiceImpl spyService = spy(createService());
+            doReturn("new-items").when(spyService).serializeItems(any(ItemStack[].class));
 
-            assertThat(service.saveKitToFile("vip", kit)).isTrue();
+            assertThat(spyService.saveKitItems("vip", new ItemStack[]{mockItemStack(Material.STONE)}))
+                    .isEqualTo(KitService.SaveResult.SUCCESS);
 
             File[] files = new File(tempDir, "kits").listFiles((dir, name) -> name.endsWith(".yml"));
             assertThat(files).extracting(File::getName).containsExactly("VIP.yml");
-            assertThat(YamlConfiguration.loadConfiguration(upper).getDouble("price")).isEqualTo(42.0);
+            assertThat(YamlConfiguration.loadConfiguration(upper).getString("items")).isEqualTo("new-items");
         }
 
         /**
@@ -2949,7 +2978,7 @@ class KitServiceImplTest {
          */
         @Test
         @DisplayName("a save fails, writing nothing, when the kits folder cannot be listed")
-        void saveKitToFileFailsWhenTheKitsFolderCannotBeListed() throws Exception {
+        void saveFailsWhenTheKitsFolderCannotBeListed() throws Exception {
             File upper = createSimpleKitFile("VIP");
             String before = new String(java.nio.file.Files.readAllBytes(upper.toPath()), "UTF-8");
             service = new KitServiceImpl(plugin, config) {
@@ -2958,10 +2987,11 @@ class KitServiceImplTest {
                     return null;
                 }
             };
-            KitDefinition kit = service.getKit("vip");
-            kit.setPrice(42.0);
+            KitServiceImpl spyService = spy(service);
+            doReturn("new-items").when(spyService).serializeItems(any(ItemStack[].class));
 
-            assertThat(service.saveKitToFile("vip", kit)).isFalse();
+            assertThat(spyService.saveKitItems("vip", new ItemStack[]{mockItemStack(Material.STONE)}))
+                    .isEqualTo(KitService.SaveResult.FAILED);
 
             assertThat(new File(tempDir, "kits").list()).containsExactly("VIP.yml");
             assertThat(new String(java.nio.file.Files.readAllBytes(upper.toPath()), "UTF-8")).isEqualTo(before);
@@ -2971,8 +3001,8 @@ class KitServiceImplTest {
         }
 
         @Test
-        @DisplayName("saveKitToFile creates YAML file with correct structure")
-        void saveKitToFileCreatesYaml() throws Exception {
+        @DisplayName("createKitFile creates a YAML file holding every key of the kit")
+        void createKitFileCreatesYaml() throws Exception {
             KitDefinition kit = new KitDefinition();
             kit.setName("saved");
             kit.setDisplayName("&aSaved Kit");
@@ -2987,29 +3017,31 @@ class KitServiceImplTest {
             kit.setPlayerCommands(Arrays.asList("cmd1", "cmd2"));
             kit.setConsoleCommands(Arrays.asList("give {player} diamond 1"));
 
-            boolean result = service.saveKitToFile("saved", kit);
+            boolean result = service.createKitFile("saved", kit);
             assertThat(result).isTrue();
 
             File kitFile = new File(tempDir, "kits/saved.yml");
             assertThat(kitFile).exists();
-            assertThat(kitFile.length()).isGreaterThan(0);
+            assertThat(YamlConfiguration.loadConfiguration(kitFile).getKeys(false)).containsExactlyInAnyOrder(
+                    "displayName", "description", "icon", "price", "levelRequired", "permission", "reBuyable",
+                    "cooldown", "playerCommands", "consoleCommands", "items");
         }
 
         @Test
-        @DisplayName("saveKitToFile handles IO errors gracefully")
-        void saveKitToFileHandlesErrors() {
+        @DisplayName("createKitFile handles IO errors gracefully")
+        void createKitFileHandlesErrors() {
             when(plugin.getResourceFolderPath()).thenReturn("/nonexistent/path/that/wont/work");
 
             KitDefinition kit = new KitDefinition();
             kit.setName("fail");
 
-            boolean result = service.saveKitToFile("fail", kit);
+            boolean result = service.createKitFile("fail", kit);
             assertThat(result).isFalse();
             verify(mockLogger).error(contains("保存礼包文件失败"));
         }
 
         @Test
-        @DisplayName("saveKitToFile creates file that can be reloaded correctly")
+        @DisplayName("createKitFile creates a file that can be reloaded correctly")
         void saveAndReload() throws Exception {
             KitDefinition kit = new KitDefinition();
             kit.setName("roundtrip");
@@ -3025,7 +3057,7 @@ class KitServiceImplTest {
             kit.setPlayerCommands(Collections.emptyList());
             kit.setConsoleCommands(Collections.emptyList());
 
-            boolean saved = service.saveKitToFile("roundtrip", kit);
+            boolean saved = service.createKitFile("roundtrip", kit);
             assertThat(saved).isTrue();
 
             service.reload();
@@ -3039,6 +3071,291 @@ class KitServiceImplTest {
             assertThat(loaded.isReBuyable()).isTrue();
             assertThat(loaded.getCooldown()).isEqualTo(600);
             assertThat(loaded.getItems()).isEqualTo("testdata");
+        }
+    }
+
+    // =========================================================================
+    // The kit editor writes only the kit's items (UltiKits/UltiKits#43)
+    // =========================================================================
+
+    /**
+     * Kit files are created by the operator; on an explicit edit the module writes only the edited part
+     * (maintainer decision of 2026-10-04, "what code may write, by file type": the kit editor writes that
+     * kit's items only, comments and other keys kept). The save goes through the framework's
+     * {@code OperatorFiles} against the file as it was loaded, so a file edited on disk since then is never
+     * written over. The results new in this fix are compared by name so these tests compile, and fail by
+     * behaviour, without the fix.
+     */
+    @Nested
+    @DisplayName("The kit editor writes only the kit's items (UltiKits#43)")
+    class EditorSaveWritesOnlyItemsTests {
+
+        private static final String HAND_WRITTEN = "# The VIP kit, written by hand / 手写的 VIP 礼包\n"
+                + "displayName: \"&6VIP\" # shown in the kit browser\n"
+                + "note: keep me\n"
+                + "icon: NOT_A_MATERIAL\n"
+                + "price: -5\n"
+                + "levelRequired: abc\n"
+                + "cooldown: -1\n"
+                + "reBuyable: yse\n"
+                + "description:\n"
+                + "  - \"&7For supporters\"\n"
+                + "playerCommands: []\n"
+                + "consoleCommands: []\n"
+                + "# Serialized items, set by /kits edit\n"
+                + "items: \"old-items\"\n";
+
+        private File writeKit(String fileName, String text) throws IOException {
+            File folder = new File(tempDir, "kits");
+            folder.mkdirs();
+            File file = new File(folder, fileName);
+            Files.write(file.toPath(), text.getBytes(StandardCharsets.UTF_8));
+            return file;
+        }
+
+        private String read(File file) throws IOException {
+            return new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+        }
+
+        private KitServiceImpl spyServiceSaving(String serialized) {
+            KitServiceImpl spyService = spy(createService());
+            doReturn(serialized).when(spyService).serializeItems(any(ItemStack[].class));
+            return spyService;
+        }
+
+        private KitService.SaveResult save(KitServiceImpl spyService, String kit) {
+            return spyService.saveKitItems(kit, new ItemStack[]{mockItemStack(Material.STONE)});
+        }
+
+        /** Every line before the {@code items} line is byte-identical, and the file's {@code items} is {@code expected}. */
+        private void assertOnlyItemsChanged(String before, String after, String expected) throws Exception {
+            String prefix = before.substring(0, before.indexOf("\nitems:") + 1);
+            assertThat(after).as("every byte before the items line").startsWith(prefix);
+            YamlConfiguration onDisk = new YamlConfiguration();
+            onDisk.loadFromString(after);
+            assertThat(onDisk.getString("items")).isEqualTo(expected);
+            assertThat(onDisk.getKeys(false)).as("no key added or removed").containsExactlyElementsOf(
+                    keysOf(before));
+        }
+
+        private Set<String> keysOf(String text) throws Exception {
+            YamlConfiguration yaml = new YamlConfiguration();
+            yaml.loadFromString(text);
+            return yaml.getKeys(false);
+        }
+
+        @Test
+        @DisplayName("comments, an unknown key and every value the loader replaced stay byte for byte; only items change")
+        void onlyTheItemsLineChanges() throws Exception {
+            File file = writeKit("vip.yml", HAND_WRITTEN);
+            KitServiceImpl spyService = spyServiceSaving("new-items");
+            KitDefinition kit = spyService.getKit("vip");
+            // Control: the loader did replace these in memory, so a whole-kit write would change them.
+            assertThat(kit.getIcon()).isEqualTo("CHEST");
+            assertThat(kit.getPrice()).isEqualTo(0.0);
+            assertThat(kit.getLevelRequired()).isEqualTo(0);
+            assertThat(kit.getCooldown()).isEqualTo(0L);
+            assertThat(kit.isReBuyable()).isFalse();
+
+            assertThat(save(spyService, "vip")).isEqualTo(KitService.SaveResult.SUCCESS);
+
+            String after = read(file);
+            assertOnlyItemsChanged(HAND_WRITTEN, after, "new-items");
+            assertThat(after).endsWith("\n").doesNotContain("old-items");
+            assertThat(spyService.getKit("vip").getItems()).isEqualTo("new-items");
+        }
+
+        /**
+         * The shipped example kit holds {@code items} last, under its own comment, and real serialized items are
+         * several base64 lines ending in a line break; the second save proves the editor keeps saving after the
+         * first one changed the file.
+         */
+        @Test
+        @DisplayName("the shipped example kit takes multi-line items twice in a row, every other line unchanged")
+        void theExampleKitTakesMultiLineItemsTwice() throws Exception {
+            KitServiceImpl spyService = spy(createService());
+            File file = new File(tempDir, "kits/starter.yml");
+            String shipped = read(file);
+            assertThat(shipped).contains("\n# Serialized items").contains("\nitems: \"\"");
+            String first = "rO0ABXcEAAAAAXNyABpvcmcuYnVra2l0LnV0aWwuaW8uV3JhcHBlcvJQR+zxEm8FAgABTAADbWFwdAAP\n"
+                    + "TGphdmEvdXRpbC9NYXA7eHBzcgA1Y29tLmdvb2dsZS5jb21tb24uY29sbGVjdC5JbW11dGFibGVN\n";
+            String second = "c2VyaWFsaXplZC1zZWNvbmQtc2F2ZQ==\n";
+            doReturn(first).doReturn(second).when(spyService).serializeItems(any(ItemStack[].class));
+
+            assertThat(save(spyService, "starter")).isEqualTo(KitService.SaveResult.SUCCESS);
+            assertOnlyItemsChanged(shipped, read(file), first);
+
+            assertThat(save(spyService, "starter")).isEqualTo(KitService.SaveResult.SUCCESS);
+            assertOnlyItemsChanged(shipped, read(file), second);
+            assertThat(spyService.getKit("starter").getItems()).isEqualTo(second);
+        }
+
+        @Test
+        @DisplayName("a kit file edited on disk since it was loaded is not saved; after /kits reload the save keeps the edit")
+        void aFileEditedOnDiskSinceItWasLoadedIsNotSaved() throws Exception {
+            File file = writeKit("vip.yml", HAND_WRITTEN.replace("price: -5", "price: 100"));
+            KitServiceImpl spyService = spyServiceSaving("new-items");
+            String edited = read(file).replace("price: 100", "price: 250");
+            Files.write(file.toPath(), edited.getBytes(StandardCharsets.UTF_8));
+
+            KitService.SaveResult refused = save(spyService, "vip");
+
+            assertThat(refused.name()).isEqualTo("FILE_CHANGED_ON_DISK");
+            assertThat(read(file)).isEqualTo(edited);
+            assertThat(spyService.getKit("vip").getItems()).isEqualTo("old-items");
+
+            spyService.reload();
+            assertThat(save(spyService, "vip")).isEqualTo(KitService.SaveResult.SUCCESS);
+            assertOnlyItemsChanged(edited, read(file), "new-items");
+            assertThat(read(file)).contains("price: 250");
+        }
+
+        @Test
+        @DisplayName("a kit file using YAML anchors is not saved, the file is unchanged, and the server log names it")
+        void anAnchoredFileIsRefused() throws Exception {
+            String anchored = "lines: &lines\n  - \"&7line\"\ndescription: *lines\nicon: CHEST\nitems: \"old-items\"\n";
+            File file = writeKit("anchored.yml", anchored);
+            KitServiceImpl spyService = spyServiceSaving("new-items");
+            assertThat(spyService.getKit("anchored").getDescription()).containsExactly("&7line");
+            List<String> warnings = new ArrayList<>();
+            java.util.logging.Handler handler = new java.util.logging.Handler() {
+                @Override
+                public void publish(java.util.logging.LogRecord record) {
+                    if (record.getLevel().intValue() >= java.util.logging.Level.WARNING.intValue()) {
+                        warnings.add(record.getMessage());
+                    }
+                }
+
+                @Override
+                public void flush() {
+                    // nothing is buffered
+                }
+
+                @Override
+                public void close() {
+                    // nothing is held
+                }
+            };
+            java.util.logging.Logger gate = java.util.logging.Logger.getLogger(
+                    "com.ultikits.ultitools.config.document.OperatorFileWriter");
+            gate.addHandler(handler);
+            KitService.SaveResult result;
+            try {
+                result = save(spyService, "anchored");
+            } finally {
+                gate.removeHandler(handler);
+            }
+
+            assertThat(result.name()).isEqualTo("REFUSED");
+            assertThat(read(file)).isEqualTo(anchored);
+            assertThat(spyService.getKit("anchored").getItems()).isEqualTo("old-items");
+            assertThat(warnings).anyMatch(line -> line.contains("anchored.yml")).noneMatch(line -> line.contains("old-items"));
+        }
+
+        /**
+         * A file that is not UTF-8 still loads exactly as before (Bukkit's reader replaces what it cannot
+         * decode), but the editor cannot write only its items without re-encoding the rest, so it refuses and
+         * the console says what to do.
+         */
+        @Test
+        @DisplayName("a kit file that is not UTF-8 still loads, is not saved, and the console says why")
+        void aFileThatIsNotUtf8LoadsButIsNotSaved() throws Exception {
+            File folder = new File(tempDir, "kits");
+            folder.mkdirs();
+            File file = new File(folder, "latin.yml");
+            byte[] latin = "icon: CHEST\ndescription:\n  - \"Caf\u00e9\"\nitems: \"old-items\"\n"
+                    .getBytes(StandardCharsets.ISO_8859_1);
+            Files.write(file.toPath(), latin);
+            KitServiceImpl spyService = spyServiceSaving("new-items");
+            assertThat(spyService.getKit("latin")).isNotNull();
+            assertThat(spyService.getKit("latin").getItems()).isEqualTo("old-items");
+
+            KitService.SaveResult result = save(spyService, "latin");
+
+            assertThat(result.name()).isEqualTo("REFUSED");
+            assertThat(Files.readAllBytes(file.toPath())).isEqualTo(latin);
+            assertThat(spyService.getKit("latin").getItems()).isEqualTo("old-items");
+            ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, atLeastOnce()).warn(warning.capture());
+            assertThat(warning.getAllValues()).anyMatch(line -> line.contains("latin") && line.contains("UTF-8"));
+        }
+
+        /**
+         * An operator's edit that lands between the editor's write and the re-read after it must not be adopted as
+         * "the file as loaded": the next save would then pass the fingerprint check and write over that edit. The
+         * re-read is adopted only when it is this save's own result (local Codex run 2 on PR #42, P2).
+         */
+        @Test
+        @DisplayName("an operator edit landing between the save and its re-read is not adopted: the next save is refused, the edit stays")
+        void anEditBetweenTheWriteAndTheReReadIsNotAdopted() throws Exception {
+            File file = writeKit("vip.yml", HAND_WRITTEN);
+            KitServiceImpl spyService = spy(createService());
+            doReturn("first-items").doReturn("second-items").when(spyService).serializeItems(any(ItemStack[].class));
+            doAnswer(invocation -> {
+                // The operator saves the file in the window after the gate's write.
+                String now = read(file);
+                Files.write(file.toPath(), now.replaceAll("(?m)^items: .*$", "items: hand-items")
+                        .getBytes(StandardCharsets.UTF_8));
+                return invocation.callRealMethod();
+            }).doCallRealMethod().when(spyService).readSnapshot(any(File.class));
+
+            assertThat(save(spyService, "vip")).isEqualTo(KitService.SaveResult.SUCCESS);
+            String edited = read(file);
+            assertThat(edited).as("control: the operator's edit landed").contains("items: hand-items");
+
+            KitService.SaveResult second = save(spyService, "vip");
+
+            assertThat(second.name()).isEqualTo("FILE_CHANGED_ON_DISK");
+            assertThat(read(file)).as("the operator's edit stays").isEqualTo(edited);
+        }
+
+        /** As above, for an edit of another key: the in-memory kit does not hold it, so the next save asks for a reload. */
+        @Test
+        @DisplayName("an edit of another key landing between the save and its re-read is not adopted either")
+        void anEditOfAnotherKeyBetweenTheWriteAndTheReReadIsNotAdopted() throws Exception {
+            File file = writeKit("vip.yml", HAND_WRITTEN);
+            KitServiceImpl spyService = spy(createService());
+            doReturn("first-items").doReturn("second-items").when(spyService).serializeItems(any(ItemStack[].class));
+            doAnswer(invocation -> {
+                Files.write(file.toPath(), read(file).replace("note: keep me", "note: changed in the window")
+                        .getBytes(StandardCharsets.UTF_8));
+                return invocation.callRealMethod();
+            }).doCallRealMethod().when(spyService).readSnapshot(any(File.class));
+
+            assertThat(save(spyService, "vip")).isEqualTo(KitService.SaveResult.SUCCESS);
+            String edited = read(file);
+
+            assertThat(save(spyService, "vip").name()).isEqualTo("FILE_CHANGED_ON_DISK");
+            assertThat(read(file)).isEqualTo(edited);
+            // Control: after a reload the save goes through and keeps the edit.
+            spyService.reload();
+            assertThat(save(spyService, "vip")).isEqualTo(KitService.SaveResult.SUCCESS);
+            assertThat(read(file)).contains("note: changed in the window");
+        }
+
+        /** A kit created with /kits create can be edited at once, without a reload, and its new file has every key. */
+        @Test
+        @DisplayName("a kit just created by /kits create has every key in its file and can be edited at once")
+        void aKitJustCreatedCanBeEditedAtOnce() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl spyService = spy(createService());
+            doReturn("created-items").doReturn("edited-items").when(spyService).serializeItems(any(ItemStack[].class));
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            when(player.getInventory().getStorageContents()).thenReturn(new ItemStack[]{stone});
+
+            assertThat(spyService.createKit(player, "fresh")).isEqualTo(KitService.CreateResult.SUCCESS);
+            File file = new File(tempDir, "kits/fresh.yml");
+            String created = read(file);
+            assertThat(keysOf(created)).containsExactlyInAnyOrder("displayName", "description", "icon", "price",
+                    "levelRequired", "permission", "reBuyable", "cooldown", "playerCommands", "consoleCommands", "items");
+
+            assertThat(save(spyService, "fresh")).isEqualTo(KitService.SaveResult.SUCCESS);
+
+            YamlConfiguration onDisk = new YamlConfiguration();
+            onDisk.loadFromString(read(file));
+            assertThat(onDisk.getString("items")).isEqualTo("edited-items");
+            assertThat(keysOf(read(file))).containsExactlyElementsOf(keysOf(created));
         }
     }
 
@@ -3086,7 +3403,7 @@ class KitServiceImplTest {
 
             assertThat(filesUnder(tempDir.toPath())).isEqualTo(before);
             assertThat(tempDir.toPath().getParent().resolve("y.yml")).doesNotExist();
-            verify(spyService, never()).saveKitToFile(anyString(), any(KitDefinition.class), anyBoolean());
+            verify(spyService, never()).createKitFile(anyString(), any(KitDefinition.class));
         }
 
         /**
@@ -3133,7 +3450,7 @@ class KitServiceImplTest {
             service = createService();
             KitDefinition kit = createTestKit("../escape");
 
-            assertThat(service.saveKitToFile("../escape", kit)).isFalse();
+            assertThat(service.createKitFile("../escape", kit)).isFalse();
 
             assertThat(tempDir.toPath().resolve("escape.yml")).doesNotExist();
             assertThat(new File(tempDir, "kits").list()).isEmpty();
@@ -3367,25 +3684,27 @@ class KitServiceImplTest {
         }
 
         /**
-         * The file writer itself never picks one of several files: every writer (the editor's save and
-         * {@code createKit}) goes through it, so the refusal holds even for a caller that does not ask
-         * {@code conflictingFiles} first.
+         * A second file that loads as the kit and appears after the kit was loaded stops the editor's
+         * save too: the save never picks one of several files, so neither changes.
          */
         @Test
-        @DisplayName("the kit file writer refuses a kit two files map to and writes neither")
-        void fileWriterRefusesDuplicateFiles() throws Exception {
-            twoFilesForOneKit();
+        @DisplayName("a second file that appears after the load stops the editor's save, and neither file changes")
+        void saveRefusedWhenASecondFileAppearsAfterTheLoad() throws Exception {
+            upper = writeKitFile("VIP.yml", "upper-items");
+            KitServiceImpl spyService = spy(createService());
+            String liveBefore = spyService.getKit("vip").getItems();
+            lower = writeKitFile("vip.yml", "lower-items");
             byte[] upperBefore = bytes(upper);
             byte[] lowerBefore = bytes(lower);
-            service = createService();
-            KitDefinition kit = service.getKit("vip");
-            kit.setItems("new-items");
+            doReturn("new-items").when(spyService).serializeItems(any(ItemStack[].class));
 
-            assertThat(service.saveKitToFile("vip", kit)).isFalse();
+            KitService.SaveResult result = spyService.saveKitItems("vip", new ItemStack[]{mockItemStack(Material.STONE)});
 
+            assertThat(result).isEqualTo(KitService.SaveResult.FILE_CONFLICT);
             assertThat(bytes(upper)).isEqualTo(upperBefore);
             assertThat(bytes(lower)).isEqualTo(lowerBefore);
             assertThat(new File(tempDir, "kits").list()).containsExactlyInAnyOrder("VIP.yml", "vip.yml");
+            assertThat(spyService.getKit("vip").getItems()).isEqualTo(liveBefore);
         }
 
         @Test
@@ -3651,8 +3970,12 @@ class KitServiceImplTest {
         void refusedPlayerCommandIsReported() throws Exception {
             rewardKit(Collections.singletonList("warp vip"), null);
             when(player.performCommand("warp vip")).thenReturn(false);
-
-            KitService.ClaimResult result = spyService.claimKit(player, "reward");
+            KitService.ClaimResult result;
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                result = spyService.claimKit(player, "reward");
+                runDeferredTask(scheduler);
+            }
 
             assertClaimedAndRecorded(result);
             verify(player).sendMessage(ChatColor.RED + String.format(zh("kits.claim.reward_command_failed"), "warp vip"));
@@ -3666,8 +3989,12 @@ class KitServiceImplTest {
             rewardKit(Arrays.asList("warp vip", "spawn"), null);
             when(player.performCommand("warp vip")).thenThrow(new org.bukkit.command.CommandException("boom"));
             when(player.performCommand("spawn")).thenReturn(true);
-
-            KitService.ClaimResult result = spyService.claimKit(player, "reward");
+            KitService.ClaimResult result;
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                result = spyService.claimKit(player, "reward");
+                runDeferredTask(scheduler);
+            }
 
             assertClaimedAndRecorded(result);
             verify(player).sendMessage(ChatColor.RED + String.format(zh("kits.claim.reward_command_failed"), "warp vip"));
@@ -3700,9 +4027,13 @@ class KitServiceImplTest {
         void acceptedPlayerCommandReportsNothing() throws Exception {
             rewardKit(Collections.singletonList("spawn"), null);
             when(player.performCommand("spawn")).thenReturn(true);
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+                runDeferredTask(scheduler);
+            }
 
-            assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
-
+            verify(player).performCommand("spawn");
             verify(player, never()).sendMessage(anyString());
             verify(mockLogger, never()).warn(anyString());
         }
@@ -3799,6 +4130,106 @@ class KitServiceImplTest {
                     "reward", "say two", "TestPlayer"));
         }
 
+        @Test
+        @DisplayName("player commands are scheduled for the next tick, not run inside the claim: a click handler never runs one (UltiKits/UltiKits#41)")
+        void playerCommandsAreDeferredOutOfTheClaim() throws Exception {
+            rewardKit(Arrays.asList("warp vip", "msg {player} hi"), null);
+            when(player.performCommand(anyString())).thenReturn(true);
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+
+                // The claim has returned - the browser's click handler is about to finish - and no command ran.
+                verify(player, never()).performCommand(anyString());
+                verify(scheduler, times(2)).runTask(any(Plugin.class), any(Runnable.class));
+
+                runDeferredTask(scheduler);
+            }
+
+            InOrder order = inOrder(player);
+            order.verify(player).performCommand("warp vip");
+            order.verify(player).performCommand("msg TestPlayer hi");
+        }
+
+        @Test
+        @DisplayName("player commands run before the console commands, as they did when both ran in the claim")
+        void playerCommandsRunBeforeConsoleCommands() throws Exception {
+            rewardKit(Arrays.asList("warp vip", "spawn"), Arrays.asList("say hi", "say bye"));
+            List<String> ran = new ArrayList<>();
+            when(player.performCommand(anyString())).thenAnswer(inv -> ran.add("player:" + inv.getArgument(0)));
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                bukkit.when(() -> Bukkit.dispatchCommand(any(), anyString()))
+                        .thenAnswer(inv -> ran.add("console:" + inv.getArgument(1)));
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+                assertThat(ran).as("nothing runs inside the claim").isEmpty();
+                runDeferredTask(scheduler);
+            }
+
+            assertThat(ran).containsExactly("player:warp vip", "player:spawn", "console:say hi", "console:say bye");
+        }
+
+        @Test
+        @DisplayName("a player who has left by the next tick: their reward commands are not run and are logged as not run")
+        void playerWhoLeftBeforeTheTickIsLogged() throws Exception {
+            rewardKit(Arrays.asList("warp vip", "spawn"), null);
+            when(player.performCommand(anyString())).thenReturn(true);
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+                when(player.isOnline()).thenReturn(false); // the client disconnected before the next tick
+
+                runDeferredTask(scheduler);
+            }
+
+            verify(player, never()).performCommand(anyString());
+            verify(mockLogger).warn(String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "warp vip", "TestPlayer"));
+            verify(mockLogger).warn(String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "spawn", "TestPlayer"));
+        }
+
+        @Test
+        @DisplayName("player commands that cannot be scheduled are reported to the player and logged, not dropped silently")
+        void unscheduledPlayerCommandsAreReported() throws Exception {
+            rewardKit(Arrays.asList("warp vip", "spawn"), null);
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                PluginManager pluginManager = mock(PluginManager.class);
+                bukkit.when(Bukkit::getPluginManager).thenReturn(pluginManager);
+                when(pluginManager.getPlugin("UltiTools")).thenReturn(null);
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+            }
+
+            verify(player, never()).performCommand(anyString());
+            verify(player).sendMessage(ChatColor.RED + String.format(zh("kits.claim.reward_command_failed"), "warp vip"));
+            verify(player).sendMessage(ChatColor.RED + String.format(zh("kits.claim.reward_command_failed"), "spawn"));
+            verify(mockLogger).warn(String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "warp vip", "TestPlayer"));
+            verify(mockLogger).warn(String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "spawn", "TestPlayer"));
+        }
+
+        @Test
+        @DisplayName("a player command whose scheduling itself throws is logged with the exception and a later command is still attempted")
+        void unschedulablePlayerCommandDoesNotAbortLaterCommands() throws Exception {
+            rewardKit(Arrays.asList("warp vip", "spawn"), null);
+            RuntimeException schedulingFailure = new RuntimeException("scheduler rejected the task");
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                BukkitScheduler scheduler = consoleScheduler(bukkit);
+                doThrow(schedulingFailure).when(scheduler).runTask(any(Plugin.class), any(Runnable.class));
+
+                assertClaimedAndRecorded(spyService.claimKit(player, "reward"));
+            }
+
+            verify(mockLogger).warn(schedulingFailure, String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "warp vip", "TestPlayer"));
+            verify(mockLogger).warn(schedulingFailure, String.format(zh("kits.log.player_reward_command_failed"),
+                    "reward", "spawn", "TestPlayer"));
+        }
+
         private BukkitScheduler consoleScheduler(MockedStatic<Bukkit> bukkit) {
             PluginManager pluginManager = mock(PluginManager.class);
             Plugin ultiTools = mock(Plugin.class);
@@ -3809,10 +4240,13 @@ class KitServiceImplTest {
             return scheduler;
         }
 
+        /** Runs every task scheduled so far, in the order it was scheduled, as the next tick does. */
         private void runDeferredTask(BukkitScheduler scheduler) {
             ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
-            verify(scheduler).runTask(any(Plugin.class), task.capture());
-            task.getValue().run();
+            verify(scheduler, atLeastOnce()).runTask(any(Plugin.class), task.capture());
+            for (Runnable r : task.getAllValues()) {
+                r.run();
+            }
         }
     }
 
@@ -3850,7 +4284,21 @@ class KitServiceImplTest {
             PlayerInventory inventory = player.getInventory();
             when(inventory.getStorageContents()).thenReturn(new ItemStack[36]);
 
-            spyService.claimKit(player, "cmdkit");
+            try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+                PluginManager pluginManager = mock(PluginManager.class);
+                BukkitScheduler scheduler = mock(BukkitScheduler.class);
+                bukkit.when(Bukkit::getPluginManager).thenReturn(pluginManager);
+                when(pluginManager.getPlugin("UltiTools")).thenReturn(mock(Plugin.class));
+                bukkit.when(Bukkit::getScheduler).thenReturn(scheduler);
+
+                spyService.claimKit(player, "cmdkit");
+
+                // Scheduled for the next tick (UltiKits/UltiKits#41), then run in list order.
+                verify(player, never()).performCommand(anyString());
+                ArgumentCaptor<Runnable> tasks = ArgumentCaptor.forClass(Runnable.class);
+                verify(scheduler, times(2)).runTask(any(Plugin.class), tasks.capture());
+                tasks.getAllValues().forEach(Runnable::run);
+            }
 
             verify(player).performCommand("spawn");
             verify(player).performCommand("msg TestPlayer Welcome!");
@@ -4226,9 +4674,10 @@ class KitServiceImplTest {
             writer.close();
 
             // An item-only save, as the kit editor's save button does.
-            KitDefinition kit = service.parseKitFile(kitFile);
-            kit.setItems("items-from-the-editor");
-            assertThat(service.saveKitToFile("unnamed", kit)).isTrue();
+            KitServiceImpl spyService = spy(createService());
+            doReturn("items-from-the-editor").when(spyService).serializeItems(any(ItemStack[].class));
+            assertThat(spyService.saveKitItems("unnamed", new ItemStack[]{mockItemStack(Material.STONE)}))
+                    .isEqualTo(KitService.SaveResult.SUCCESS);
 
             assertThat(YamlConfiguration.loadConfiguration(kitFile).contains("displayName")).isFalse();
             when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
@@ -4236,9 +4685,15 @@ class KitServiceImplTest {
                     .isEqualTo("&7" + CatalogueText.entries("en").get("kits.kit.default_display_name"));
         }
 
+        /**
+         * Superseded by the maintainer's table of 2026-10-04 ("what code may write, by file type"): the kit
+         * editor writes only the kit's items, so a display name the module holds in memory is never written
+         * by it - the file keeps what the operator wrote there, here no display name at all (UltiKits#43).
+         * Earlier this test asserted the whole-file save wrote the in-memory name.
+         */
         @Test
-        @DisplayName("a display name set on a kit whose file had none is saved")
-        void displayNameSetLaterIsSaved() throws IOException {
+        @DisplayName("the editor's save never writes a display name held in memory, only the items")
+        void displayNameSetInMemoryIsNotWrittenByTheEditor() throws Exception {
             File kitsFolder = new File(tempDir, "kits");
             kitsFolder.mkdirs();
             File kitFile = new File(kitsFolder, "renamed.yml");
@@ -4246,11 +4701,16 @@ class KitServiceImplTest {
             writer.write("icon: CHEST\n");
             writer.close();
 
-            KitDefinition kit = service.parseKitFile(kitFile);
-            kit.setDisplayName("&aNamed");
-            assertThat(service.saveKitToFile("renamed", kit)).isTrue();
+            KitServiceImpl spyService = spy(createService());
+            spyService.getKit("renamed").setDisplayName("&aNamed");
+            doReturn("items-from-the-editor").when(spyService).serializeItems(any(ItemStack[].class));
+            assertThat(spyService.saveKitItems("renamed", new ItemStack[]{mockItemStack(Material.STONE)}))
+                    .isEqualTo(KitService.SaveResult.SUCCESS);
 
-            assertThat(YamlConfiguration.loadConfiguration(kitFile).getString("displayName")).isEqualTo("&aNamed");
+            YamlConfiguration onDisk = YamlConfiguration.loadConfiguration(kitFile);
+            assertThat(onDisk.contains("displayName")).isFalse();
+            assertThat(onDisk.getKeys(false)).containsExactly("icon", "items");
+            assertThat(onDisk.getString("items")).isEqualTo("items-from-the-editor");
         }
 
         @Test
@@ -4326,26 +4786,174 @@ class KitServiceImplTest {
     }
 
     // =========================================================================
+    // A negative number in a kit file is refused and named (UltiKits#40)
+    // =========================================================================
+    @Nested
+    @DisplayName("A negative price, cooldown or levelRequired in a kit file")
+    class NegativeKitValueTests {
+
+        private File kitFileWith(String name, String body) throws IOException {
+            File kitsFolder = new File(tempDir, "kits");
+            kitsFolder.mkdirs();
+            File kitFile = new File(kitsFolder, name + ".yml");
+            Files.write(kitFile.toPath(), body.getBytes(StandardCharsets.UTF_8));
+            return kitFile;
+        }
+
+        @BeforeEach
+        void setUp() {
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            // Constructing the service logged its own "no kit files" lines; the tests read only what follows.
+            clearInvocations(mockLogger);
+        }
+
+        @Test
+        @DisplayName("a negative price is refused: the default price is used and one warning names the kit, the key and the value")
+        void negativePriceIsRefusedAndNamed() throws IOException {
+            File file = kitFileWith("Paidkit", "price: -5\nlevelRequired: 3\ncooldown: 60\n");
+
+            KitDefinition kit = service.parseKitFile(file);
+
+            assertThat(kit).isNotNull();
+            assertThat(kit.getPrice()).isEqualTo(0.0);
+            // The other keys of the same file are untouched.
+            assertThat(kit.getLevelRequired()).isEqualTo(3);
+            assertThat(kit.getCooldown()).isEqualTo(60L);
+            ArgumentCaptor<String> warned = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger).warn(warned.capture());
+            assertThat(warned.getValue()).contains("paidkit").contains("price").contains("-5").contains("0");
+            verifyNoMoreInteractions(mockLogger);
+        }
+
+        @Test
+        @DisplayName("a negative levelRequired is refused: no level requirement is not what the file said, so the warning names it")
+        void negativeLevelRequiredIsRefusedAndNamed() throws IOException {
+            File file = kitFileWith("lvl", "price: 10\nlevelRequired: -1\n");
+
+            KitDefinition kit = service.parseKitFile(file);
+
+            assertThat(kit).isNotNull();
+            assertThat(kit.getLevelRequired()).isEqualTo(0);
+            assertThat(kit.getPrice()).isEqualTo(10.0);
+            ArgumentCaptor<String> warned = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger).warn(warned.capture());
+            assertThat(warned.getValue()).contains("lvl").contains("levelRequired").contains("-1");
+            verifyNoMoreInteractions(mockLogger);
+        }
+
+        @Test
+        @DisplayName("a negative cooldown is refused: the default cooldown is used and the warning names the value")
+        void negativeCooldownIsRefusedAndNamed() throws IOException {
+            File file = kitFileWith("cd", "cooldown: -3600\nreBuyable: true\n");
+
+            KitDefinition kit = service.parseKitFile(file);
+
+            assertThat(kit).isNotNull();
+            assertThat(kit.getCooldown()).isEqualTo(0L);
+            assertThat(kit.isReBuyable()).isTrue();
+            ArgumentCaptor<String> warned = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger).warn(warned.capture());
+            assertThat(warned.getValue()).contains("cd").contains("cooldown").contains("-3600");
+            verifyNoMoreInteractions(mockLogger);
+        }
+
+        @Test
+        @DisplayName("each refused key is named on its own line, so a file with three negatives yields three warnings")
+        void everyNegativeKeyIsNamed() throws IOException {
+            File file = kitFileWith("allbad", "price: -1.5\nlevelRequired: -2\ncooldown: -3\n");
+
+            KitDefinition kit = service.parseKitFile(file);
+
+            assertThat(kit).isNotNull();
+            ArgumentCaptor<String> warned = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, times(3)).warn(warned.capture());
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("price").contains("-1.5"));
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("levelRequired").contains("-2"));
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("cooldown").contains("-3"));
+        }
+
+        @Test
+        @DisplayName("a value that is not a number is refused the same way: quoted \"250\", words, a boolean - the default is used and the warning names the value")
+        void nonNumericValuesAreRefusedAndNamed() throws IOException {
+            KitDefinition quoted = service.parseKitFile(kitFileWith("quoted", "price: \"250\"\n"));
+            KitDefinition words = service.parseKitFile(kitFileWith("words", "cooldown: 1h\nlevelRequired: ten\n"));
+            KitDefinition flag = service.parseKitFile(kitFileWith("flag", "price: yes\n"));
+
+            assertThat(quoted.getPrice()).isEqualTo(0.0);
+            assertThat(words.getCooldown()).isEqualTo(0L);
+            assertThat(words.getLevelRequired()).isEqualTo(0);
+            assertThat(flag.getPrice()).isEqualTo(0.0);
+            ArgumentCaptor<String> warned = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger, times(4)).warn(warned.capture());
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("quoted").contains("price").contains("250"));
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("words").contains("cooldown").contains("1h"));
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("words").contains("levelRequired").contains("ten"));
+            assertThat(warned.getAllValues()).anySatisfy(w -> assertThat(w).contains("flag").contains("price").contains("true"));
+        }
+
+        @Test
+        @DisplayName("control: a key that is absent or empty is the default without a warning")
+        void absentKeysAreTheDefaultSilently() throws IOException {
+            KitDefinition absent = service.parseKitFile(kitFileWith("absent", "icon: CHEST\n"));
+            KitDefinition empty = service.parseKitFile(kitFileWith("empty", "price:\ncooldown:\n"));
+
+            assertThat(absent.getPrice()).isEqualTo(0.0);
+            assertThat(empty.getPrice()).isEqualTo(0.0);
+            assertThat(empty.getCooldown()).isEqualTo(0L);
+            verifyNoInteractions(mockLogger);
+        }
+
+        @Test
+        @DisplayName("control: zero and positive values load as written, with no warning")
+        void zeroAndPositiveValuesAreKept() throws IOException {
+            KitDefinition zero = service.parseKitFile(kitFileWith("zero", "price: 0\nlevelRequired: 0\ncooldown: 0\n"));
+            KitDefinition positive = service.parseKitFile(
+                    kitFileWith("positive", "price: 12.5\nlevelRequired: 4\ncooldown: 90\n"));
+
+            assertThat(zero.getPrice()).isEqualTo(0.0);
+            assertThat(zero.getLevelRequired()).isEqualTo(0);
+            assertThat(zero.getCooldown()).isEqualTo(0L);
+            assertThat(positive.getPrice()).isEqualTo(12.5);
+            assertThat(positive.getLevelRequired()).isEqualTo(4);
+            assertThat(positive.getCooldown()).isEqualTo(90L);
+            verifyNoInteractions(mockLogger);
+        }
+
+        @Test
+        @DisplayName("the warning reaches the console when the kit is loaded by loadKits() as well")
+        void loadKitsWarns() throws IOException {
+            kitFileWith("viaload", "price: -9\n");
+
+            service.loadKits();
+
+            assertThat(service.getKit("viaload")).isNotNull();
+            verify(mockLogger).warn(contains("viaload"));
+        }
+    }
+
+    // =========================================================================
     // SaveKitItems Filter Tests
     // =========================================================================
     @Nested
     @DisplayName("SaveKitItems Filter Tests")
     class SaveKitItemsFilterTests {
 
-        @BeforeEach
-        void setUp() {
-            new File(tempDir, "kits").mkdirs();
-            service = createService();
+        /** A kit loaded from its own file, as the kit editor always edits one. */
+        private KitServiceImpl spyServiceWithKitFile(String name) throws IOException {
+            createKitFileWithItems(name, "old");
+            return spy(createService());
+        }
+
+        private String itemsOnDisk(String name) {
+            return YamlConfiguration.loadConfiguration(new File(tempDir, "kits/" + name + ".yml")).getString("items");
         }
 
         @Test
         @DisplayName("saveKitItems filters out null items before serializing")
         void filtersNullItems() throws Exception {
-            KitDefinition kit = createTestKit("filtertest");
-            injectKit(service, kit);
-
-            KitServiceImpl spyService = spy(service);
-            injectKit(spyService, kit);
+            KitServiceImpl spyService = spyServiceWithKitFile("filtertest");
 
             ItemStack stone = mock(ItemStack.class);
             when(stone.getType()).thenReturn(Material.STONE);
@@ -4357,16 +4965,13 @@ class KitServiceImplTest {
             KitService.SaveResult result = spyService.saveKitItems("filtertest", items);
 
             assertThat(result).isEqualTo(KitService.SaveResult.SUCCESS);
+            assertThat(itemsOnDisk("filtertest")).isEqualTo("serialized");
         }
 
         @Test
         @DisplayName("saveKitItems filters out AIR items before serializing")
         void filtersAirItems() throws Exception {
-            KitDefinition kit = createTestKit("filterair");
-            injectKit(service, kit);
-
-            KitServiceImpl spyService = spy(service);
-            injectKit(spyService, kit);
+            KitServiceImpl spyService = spyServiceWithKitFile("filterair");
 
             ItemStack air = mock(ItemStack.class);
             when(air.getType()).thenReturn(Material.AIR);
@@ -4379,16 +4984,14 @@ class KitServiceImplTest {
             KitService.SaveResult result = spyService.saveKitItems("filterair", items);
 
             assertThat(result).isEqualTo(KitService.SaveResult.SUCCESS);
+            assertThat(itemsOnDisk("filterair")).isEqualTo("serialized");
         }
 
         @Test
-        @DisplayName("saveKitItems returns false when serialization returns null")
+        @DisplayName("saveKitItems returns FAILED and writes nothing when serialization returns null")
         void returnsFalseWhenSerializeFails() throws Exception {
-            KitDefinition kit = createTestKit("serfail");
-            injectKit(service, kit);
-
-            KitServiceImpl spyService = spy(service);
-            injectKit(spyService, kit);
+            KitServiceImpl spyService = spyServiceWithKitFile("serfail");
+            byte[] before = Files.readAllBytes(new File(tempDir, "kits/serfail.yml").toPath());
 
             ItemStack stone = mock(ItemStack.class);
             when(stone.getType()).thenReturn(Material.STONE);
@@ -4399,58 +5002,49 @@ class KitServiceImplTest {
             KitService.SaveResult result = spyService.saveKitItems("serfail", items);
 
             assertThat(result).isEqualTo(KitService.SaveResult.FAILED);
+            assertThat(Files.readAllBytes(new File(tempDir, "kits/serfail.yml").toPath())).isEqualTo(before);
+            assertThat(spyService.getKit("serfail").getItems()).isEqualTo("old");
         }
 
         @Test
         @DisplayName("saveKitItems updates kit items field on success")
         void updatesKitItemsField() throws Exception {
-            KitDefinition kit = createTestKit("updatefield");
-            kit.setItems("old");
-            injectKit(service, kit);
-
-            KitServiceImpl spyService = spy(service);
-            injectKit(spyService, kit);
+            KitServiceImpl spyService = spyServiceWithKitFile("updatefield");
+            KitDefinition kit = spyService.getKit("updatefield");
+            assertThat(kit.getItems()).isEqualTo("old");
 
             ItemStack stone = mock(ItemStack.class);
             when(stone.getType()).thenReturn(Material.STONE);
 
             doReturn("newbase64").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(true).when(spyService).saveKitToFile(eq("updatefield"), any(KitDefinition.class));
 
             spyService.saveKitItems("updatefield", new ItemStack[]{stone});
 
             assertThat(kit.getItems()).isEqualTo("newbase64");
+            assertThat(itemsOnDisk("updatefield")).isEqualTo("newbase64");
         }
 
         @Test
-        @DisplayName("saveKitItems delegates to saveKitToFile")
-        void delegatesToSaveKitToFile() throws Exception {
-            KitDefinition kit = createTestKit("delegate");
-            injectKit(service, kit);
-
-            KitServiceImpl spyService = spy(service);
-            injectKit(spyService, kit);
+        @DisplayName("saveKitItems writes the serialized items into the kit's own file")
+        void writesTheItemsIntoTheKitsFile() throws Exception {
+            KitServiceImpl spyService = spyServiceWithKitFile("delegate");
 
             ItemStack stone = mock(ItemStack.class);
             when(stone.getType()).thenReturn(Material.STONE);
 
             doReturn("data").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(true).when(spyService).saveKitToFile(eq("delegate"), eq(kit));
 
             KitService.SaveResult result = spyService.saveKitItems("delegate", new ItemStack[]{stone});
 
             assertThat(result).isEqualTo(KitService.SaveResult.SUCCESS);
-            verify(spyService).saveKitToFile("delegate", kit);
+            assertThat(new File(tempDir, "kits").list()).containsExactly("delegate.yml");
+            assertThat(itemsOnDisk("delegate")).isEqualTo("data");
         }
 
         @Test
         @DisplayName("saveKitItems with all null/air items passes empty array to serialize")
         void allNullAirItems() throws Exception {
-            KitDefinition kit = createTestKit("allnull");
-            injectKit(service, kit);
-
-            KitServiceImpl spyService = spy(service);
-            injectKit(spyService, kit);
+            KitServiceImpl spyService = spyServiceWithKitFile("allnull");
 
             ItemStack air = mock(ItemStack.class);
             when(air.getType()).thenReturn(Material.AIR);
@@ -4458,11 +5052,11 @@ class KitServiceImplTest {
             ItemStack[] items = new ItemStack[]{null, air, null};
 
             doReturn("emptyser").when(spyService).serializeItems(argThat(arr -> arr.length == 0));
-            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class));
 
             KitService.SaveResult result = spyService.saveKitItems("allnull", items);
 
             assertThat(result).isEqualTo(KitService.SaveResult.SUCCESS);
+            assertThat(itemsOnDisk("allnull")).isEqualTo("emptyser");
         }
     }
 
@@ -4667,7 +5261,7 @@ class KitServiceImplTest {
         }
 
         @Test
-        @DisplayName("createKit returns ERROR when saveKitToFile fails")
+        @DisplayName("createKit returns ERROR when createKitFile fails")
         void saveToFileFails() throws Exception {
             ItemStack stone = mock(ItemStack.class);
             when(stone.getType()).thenReturn(Material.STONE);
@@ -4676,7 +5270,7 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("data").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(false).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
+            doReturn(false).when(spyService).createKitFile(anyString(), any(KitDefinition.class));
 
             KitService.CreateResult result = spyService.createKit(player, "savefail");
             assertThat(result).isEqualTo(KitService.CreateResult.ERROR);
@@ -4694,13 +5288,13 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("serialized").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
+            doReturn(true).when(spyService).createKitFile(anyString(), any(KitDefinition.class));
 
             KitService.CreateResult result = spyService.createKit(player, "icontest");
             assertThat(result).isEqualTo(KitService.CreateResult.SUCCESS);
 
             ArgumentCaptor<KitDefinition> captor = ArgumentCaptor.forClass(KitDefinition.class);
-            verify(spyService).saveKitToFile(eq("icontest"), captor.capture(), eq(true));
+            verify(spyService).createKitFile(eq("icontest"), captor.capture());
             assertThat(captor.getValue().getIcon()).isEqualTo("DIAMOND_SWORD");
         }
 
@@ -4714,12 +5308,12 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("serialized").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
+            doReturn(true).when(spyService).createKitFile(anyString(), any(KitDefinition.class));
 
             spyService.createKit(player, "MyNewKit");
 
             ArgumentCaptor<KitDefinition> captor = ArgumentCaptor.forClass(KitDefinition.class);
-            verify(spyService).saveKitToFile(eq("mynewkit"), captor.capture(), eq(true));
+            verify(spyService).createKitFile(eq("mynewkit"), captor.capture());
             assertThat(captor.getValue().getDisplayName()).isEqualTo("&fMyNewKit");
         }
 
@@ -4733,7 +5327,7 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("serialized").when(spyService).serializeItems(any(ItemStack[].class));
-            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
+            doReturn(true).when(spyService).createKitFile(anyString(), any(KitDefinition.class));
 
             KitService.CreateResult result = spyService.createKit(player, "added");
             assertThat(result).isEqualTo(KitService.CreateResult.SUCCESS);
@@ -4752,7 +5346,7 @@ class KitServiceImplTest {
 
             KitServiceImpl spyService = spy(service);
             doReturn("data").when(spyService).serializeItems(argThat(arr -> arr.length == 1));
-            doReturn(true).when(spyService).saveKitToFile(anyString(), any(KitDefinition.class), eq(true));
+            doReturn(true).when(spyService).createKitFile(anyString(), any(KitDefinition.class));
 
             KitService.CreateResult result = spyService.createKit(player, "filtered");
             assertThat(result).isEqualTo(KitService.CreateResult.SUCCESS);

@@ -65,11 +65,11 @@ items: "" # Base64 serialized - managed via /kits create or /kits edit
 | `displayName` | String | Display name with color codes / 显示名称（支持颜色代码） |
 | `description` | List | Lore lines with color codes / 描述行 |
 | `icon` | String | Material name for GUI icon / GUI 图标材质名 |
-| `price` | Double | Cost to claim (0 = free) / 领取费用（0 = 免费） |
-| `levelRequired` | Int | Minimum player level / 最低玩家等级 |
+| `price` | Double | Cost to claim (0 = free; never negative or non-numeric: such a value is refused with a warning and `0` is used) / 领取费用（0 = 免费；不能为负或非数字，否则会被警告并改用 0） |
+| `levelRequired` | Int | Minimum player level (never negative or non-numeric: such a value is refused with a warning and `0` is used) / 最低玩家等级（不能为负或非数字，否则会被警告并改用 0） |
 | `permission` | String | Required permission node / 所需权限节点 |
 | `reBuyable` | Boolean | Can be claimed multiple times / 是否可重复领取 |
-| `cooldown` | Long | Cooldown in seconds between claims / 领取冷却时间（秒） |
+| `cooldown` | Long | Cooldown in seconds between claims (never negative or non-numeric: such a value is refused with a warning and `0` is used) / 领取冷却时间（秒；不能为负或非数字，否则会被警告并改用 0） |
 | `playerCommands` | List | Commands run as the player / 以玩家身份执行的命令 |
 | `consoleCommands` | List | Commands run from console / 以控制台执行的命令 |
 | `items` | String | Base64 serialized items (auto-managed) / Base64 序列化物品 |

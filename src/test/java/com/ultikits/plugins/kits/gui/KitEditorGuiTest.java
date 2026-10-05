@@ -346,6 +346,91 @@ class KitEditorGuiTest {
             verify(player).closeInventory();
         }
 
+        /**
+         * The editor writes only the kit's items, and only into the file as it was loaded (UltiKits#43): a
+         * file edited on disk since then is not written, and the operator is told to reload first. The
+         * result is looked up by name so this compiles, and fails by behaviour, without the fix.
+         */
+        @Test
+        @DisplayName("FILE_CHANGED_ON_DISK says nothing was saved and to run /kits reload first")
+        void fileChangedOnDiskTellsTheOperatorToReload() {
+            // Looked up before any stubbing starts, so a missing constant cannot leave a stubbing unfinished.
+            KitService.SaveResult result = KitService.SaveResult.valueOf("FILE_CHANGED_ON_DISK");
+            for (int i = 0; i < 45; i++) {
+                when(topInventory.getItem(i)).thenReturn(null);
+            }
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(result);
+
+            gui.handleSave();
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(CatalogueText.text("zh", "kits.editor.save_file_changed"),
+                            "testkit"))
+                    .contains("/kits reload")
+                    .doesNotContain("保存礼包时发生错误")
+                    .doesNotContain("已保存礼包");
+            verify(player).closeInventory();
+        }
+
+        /**
+         * Maintainer decision of 2026-10-05: an operator change the write gate refuses is answered with
+         * "not saved" and why, never as a generic error and never as a success (UltiKits#43).
+         */
+        @Test
+        @DisplayName("REFUSED says the kit was not saved and that the server log names the reason")
+        void refusedSaysNotSavedAndWhy() {
+            // Looked up before any stubbing starts, so a missing constant cannot leave a stubbing unfinished.
+            KitService.SaveResult result = KitService.SaveResult.valueOf("REFUSED");
+            for (int i = 0; i < 45; i++) {
+                when(topInventory.getItem(i)).thenReturn(null);
+            }
+            when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(result);
+
+            gui.handleSave();
+
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+            verify(player).sendMessage(captor.capture());
+            assertThat(captor.getValue())
+                    .isEqualTo(ChatColor.RED + String.format(CatalogueText.text("zh", "kits.editor.save_refused"),
+                            "testkit"))
+                    .doesNotContain("保存礼包时发生错误")
+                    .doesNotContain("已保存礼包");
+            verify(player).closeInventory();
+        }
+
+        /**
+         * Every save result has its own reply: only FAILED renders the generic "Error saving kit", and only SUCCESS
+         * renders "Saved kit", so a result added later cannot fall silently into the generic error (gate-1 top-up
+         * P3-3 of plan 17-72).
+         */
+        @Test
+        @DisplayName("every SaveResult other than FAILED has a reply of its own")
+        void everySaveResultHasItsOwnReply() {
+            String generic = ChatColor.RED + CatalogueText.text("zh", "kits.editor.save_error");
+            String saved = String.format(CatalogueText.text("zh", "kits.editor.saved"), "testkit");
+            lenient().when(kitService.conflictingFiles("testkit")).thenReturn(Arrays.asList("TestKit.yml", "testkit.yml"));
+            for (int i = 0; i < 45; i++) {
+                lenient().when(topInventory.getItem(i)).thenReturn(null);
+            }
+            java.util.Set<String> replies = new java.util.HashSet<>();
+            for (KitService.SaveResult result : KitService.SaveResult.values()) {
+                org.mockito.Mockito.clearInvocations(player);
+                when(kitService.saveKitItems(eq("testkit"), any(ItemStack[].class))).thenReturn(result);
+
+                gui.handleSave();
+
+                ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+                verify(player).sendMessage(captor.capture());
+                String reply = captor.getValue();
+                assertThat(reply.equals(generic)).as(result + " renders the generic error").isEqualTo(result == KitService.SaveResult.FAILED);
+                assertThat(reply.contains(saved)).as(result + " renders success").isEqualTo(result == KitService.SaveResult.SUCCESS);
+                replies.add(reply);
+            }
+            assertThat(replies).as("one distinct reply per result").hasSize(KitService.SaveResult.values().length);
+        }
+
         @Test
         @DisplayName("SYSTEM_DISABLED renders the switch refusal, not the generic error")
         void systemDisabledRendersTheRefusal() {

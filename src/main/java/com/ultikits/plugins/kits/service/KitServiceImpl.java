@@ -5,6 +5,7 @@ import com.ultikits.plugins.kits.entity.KitClaimData;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
 import com.ultikits.ultitools.annotations.Service;
+import com.ultikits.ultitools.config.OperatorFiles;
 import com.ultikits.ultitools.exceptions.DataAccessException;
 import com.ultikits.ultitools.interfaces.DataOperator;
 import com.ultikits.ultitools.interfaces.impl.logger.PluginLogger;
@@ -12,6 +13,7 @@ import com.ultikits.ultitools.utils.EconomyUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -213,7 +215,7 @@ public class KitServiceImpl implements KitService {
         kit.setItems(serializedItems);
 
         // Save to YAML; the writer refuses a file that appeared after the checks above.
-        if (!saveKitToFile(normalizedName, kit, true)) {
+        if (!createKitFile(normalizedName, kit)) {
             if (!conflictingFiles(normalizedName).isEmpty()) {
                 return CreateResult.FILE_CONFLICT;
             }
@@ -287,7 +289,7 @@ public class KitServiceImpl implements KitService {
 
     /**
      * The kit name a file in the kits folder loads as. The one mapping {@link #loadKits()},
-     * {@link #deleteKit} and {@link #saveKitToFile} share, so "the kit's file" is decided in one place:
+     * {@link #deleteKit}, {@link #saveKitItems} and {@link #createKitFile} share, so "the kit's file" is decided in one place:
      * rebuilding a path from the kit's name missed a file whose name has capitals.
      * <p>
      * 文件对应的礼包名；加载、删除和保存共用这一映射。
@@ -408,7 +410,19 @@ public class KitServiceImpl implements KitService {
      * command has already passed by the time Save is pressed and cannot stop a write while the
      * system is off. Guarding the gateway covers the editor and any writer added later.
      * <p>
-     * 保存入口处执行总开关：编辑界面的生命周期长于打开它的命令，命令处的检查拦不住之后的保存。
+     * <b>Why it cannot overwrite operator content.</b> A kit file is created by the operator, and an
+     * explicit edit writes only the part it edits (maintainer decision of 2026-10-04, "what code may
+     * write, by file type"): this writes the kit's {@code items} key and nothing else, through the
+     * framework's {@link OperatorFiles#write}, against the file exactly as the kit was loaded from it.
+     * The framework publishes the file only when every other line - comments, other keys, unknown keys,
+     * values this module replaced in memory when it loaded them - is byte-identical to that snapshot and
+     * the file still holds the snapshot's bytes. A file edited, replaced or deleted since the load
+     * answers {@link SaveResult#FILE_CHANGED_ON_DISK}; one the framework cannot write that way (YAML
+     * anchors, a layout it cannot keep) answers {@link SaveResult#REFUSED}. Either way nothing is
+     * written and the live kit keeps the items the file holds (UltiKits/UltiKits#43).
+     * <p>
+     * 保存入口处执行总开关。只写该礼包的 {@code items}，并且只在文件仍是加载时的内容时写入；文件中的注释、
+     * 其他键和加载时被替换的值保持原样；文件在加载后被改过或无法安全写入时什么也不写。
      *
      * @param kitName the kit to write / 目标礼包名
      * @param items   its new contents / 新的物品内容
@@ -439,17 +453,108 @@ public class KitServiceImpl implements KitService {
         if (!conflictingFiles(kit.getName()).isEmpty()) {
             return SaveResult.FILE_CONFLICT;
         }
+        return writeItems(kit, serialized);
+    }
 
-        // The live kit keeps the new items only when the file took them: after a failed save the
-        // editor reports the failure, so a claim must still hand out what the file holds.
-        String previous = kit.getItems();
-        kit.setItems(serialized);
-        if (!saveKitToFile(kit.getName(), kit)) {
-            kit.setItems(previous);
-            // The writer also refuses a second file that appeared after the check above.
-            return conflictingFiles(kit.getName()).isEmpty() ? SaveResult.FAILED : SaveResult.FILE_CONFLICT;
+    /**
+     * Writes {@code serialized} as the kit's {@code items} into the file the kit was loaded from, and
+     * nothing else (see {@link #saveKitItems}). The live kit takes the new items only when the file did:
+     * after any other outcome the editor reports it, so a claim must still hand out what the file holds.
+     */
+    private SaveResult writeItems(KitDefinition kit, String serialized) {
+        String name = kit.getName();
+        OperatorFiles.Snapshot loadedFrom = kit.getLoadedFrom();
+        if (loadedFrom == null) {
+            // Loaded through Bukkit's reader, which replaces what it cannot decode: writing only the items
+            // would need the rest of the file re-encoded, which is not the operator's text any more.
+            logger.warn(String.format(plugin.i18n("kits.log.save_unread_file"), name,
+                    kitsFolder().getAbsolutePath()));
+            return SaveResult.REFUSED;
         }
-        return SaveResult.SUCCESS;
+        // A folder that cannot be listed gives no way to know whether a second file now loads as this
+        // kit, and one that several files define has no single file to write.
+        List<File> files = kitFilesOf(name);
+        if (files == null) {
+            logger.error(String.format(plugin.i18n("kits.log.kits_folder_unreadable_save"),
+                    kitsFolder().getAbsolutePath(), name));
+            return SaveResult.FAILED;
+        }
+        if (files.size() > 1) {
+            return SaveResult.FILE_CONFLICT;
+        }
+        OperatorFiles.WriteResult result;
+        try {
+            result = OperatorFiles.write(loadedFrom,
+                    Collections.<List<String>, Object>singletonMap(Collections.singletonList("items"), serialized));
+        } catch (IOException e) {
+            logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
+            return SaveResult.FAILED;
+        }
+        switch (result) {
+            case WRITTEN:
+            case UNCHANGED:
+                kit.setItems(serialized);
+                // The next save is checked against the file as this one left it - but only a re-read that is this
+                // save's own result is adopted. An operator's edit that landed between the write and this read would
+                // otherwise become "the file as loaded" and the next save would write over it (local Codex run 2 on
+                // PR #42). A read that fails or is not this save's result keeps the old snapshot, which no longer
+                // matches the file, so the next save is refused (FILE_CHANGED_ON_DISK) and asks for a reload.
+                OperatorFiles.Snapshot written = readSnapshot(loadedFrom.getFile());
+                if (written != null && isOwnWrite(loadedFrom, written, serialized)) {
+                    kit.setLoadedFrom(written);
+                }
+                return SaveResult.SUCCESS;
+            case FILE_CHANGED:
+                return SaveResult.FILE_CHANGED_ON_DISK;
+            default:
+                // The framework's WARNING names the file, the key and the reason.
+                return SaveResult.REFUSED;
+        }
+    }
+
+    /**
+     * Whether {@code after} - the file re-read after a write of {@code items} against {@code before} - is that write's
+     * own result: its {@code items} is {@code serialized} and every other value equals {@code before}'s. Compared as
+     * values, because the write gate already keeps every byte outside {@code items}; what a later save must not do is
+     * build on a value the kit in memory does not hold. An edit that changes only comments or layout in the window is
+     * adopted, which is harmless: no save writes outside {@code items}.
+     */
+    private static boolean isOwnWrite(OperatorFiles.Snapshot before, OperatorFiles.Snapshot after, String serialized) {
+        YamlConfiguration was = new YamlConfiguration();
+        YamlConfiguration now = new YamlConfiguration();
+        try {
+            was.loadFromString(before.getText());
+            now.loadFromString(after.getText());
+        } catch (InvalidConfigurationException unparseable) {
+            return false;
+        }
+        if (!serialized.equals(now.getString("items"))) {
+            return false;
+        }
+        Set<String> keys = new HashSet<>(was.getKeys(true));
+        keys.addAll(now.getKeys(true));
+        keys.remove("items");
+        for (String key : keys) {
+            boolean section = was.isConfigurationSection(key) || now.isConfigurationSection(key);
+            if (section ? was.isConfigurationSection(key) != now.isConfigurationSection(key)
+                    : !Objects.equals(was.get(key), now.get(key))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The file's text and fingerprint, or {@code null} when it cannot be read as UTF-8 text. A seam, package-private so
+     * a test can put an operator's edit between the editor's write and the read that follows it.
+     */
+    @Nullable
+    OperatorFiles.Snapshot readSnapshot(File file) {
+        try {
+            return OperatorFiles.read(file);
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     @Override
@@ -714,9 +819,10 @@ public class KitServiceImpl implements KitService {
      * Then the items: every stack lands in the inventory or is dropped at the player's feet, never
      * discarded - {@link #claimKit} refuses before charging unless the slots each stack really needs
      * are free ({@link #fitsInStorage}), and {@code addItem}'s leftovers are dropped
-     * (UltiKits/UltiKits#24). The reward commands run last, after the record, because they are the
-     * step most likely to throw ({@code player.performCommand} propagates a third-party executor's
-     * {@code CommandException}). A reward command that does not run is reported, not undone - the
+     * (UltiKits/UltiKits#24). The reward commands are scheduled last, after the record, and run on the
+     * next tick, because they are the step most likely to throw ({@code player.performCommand}
+     * propagates a third-party executor's {@code CommandException}) and one may open or close an
+     * inventory, which the click that started this claim must be finished with first. A reward command that does not run is reported, not undone - the
      * maintainer's decision of 2026-09-27 (UltiKits/UltiKits#25): the claim keeps its record and its
      * price, the player is told which reward did not run, and the console names the player, the kit
      * and the command so an operator can make it good by hand.
@@ -962,12 +1068,48 @@ public class KitServiceImpl implements KitService {
         }
     }
 
+    /**
+     * A number that cannot be negative, read from the kit file. A value the module cannot use is
+     * refused: one warning names the kit, the key and the value (the YAML parser's text for it, which is
+     * the file's own for the usual spellings), and the key's default, {@code 0}, is used - so a typo such
+     * as {@code price: -5} or {@code price: "250"} (a quoted number is text to YAML) is told to the
+     * operator instead of silently making the kit free. A key that is absent or empty is the default
+     * without a warning. Bukkit's {@code getDouble}/{@code getInt}/{@code getLong} cannot tell the two
+     * apart, which is why the raw value is read here.
+     * <p>
+     * 礼包文件里不能为负的数值；负数和非数字都会被拒绝：警告点名礼包、键和原值，并改用默认值 0；未填写则静默使用默认值。
+     */
+    private double nonNegativeNumber(String kitName, String key, YamlConfiguration config) {
+        Object written = config.get(key);
+        if (written == null) {
+            return 0;
+        }
+        if (!(written instanceof Number)) {
+            logger.warn(String.format(plugin.i18n("kits.log.not_a_number"), kitName, key, written, 0));
+            return 0;
+        }
+        double value = ((Number) written).doubleValue();
+        if (value < 0) {
+            logger.warn(String.format(plugin.i18n("kits.log.negative_value"), kitName, key, written, 0));
+            return 0;
+        }
+        return value;
+    }
+
+    /**
+     * Reads one kit file. The file is read once, as a snapshot the kit keeps for the editor's save
+     * ({@link #saveKitItems}), and parsed from that text, so the values and the snapshot are the same
+     * bytes. A file that cannot be read as UTF-8 text, or does not parse, is read the way it always was -
+     * by Bukkit's reader - and loads exactly as before; only the editor's save then refuses it.
+     */
     @Nullable
     KitDefinition parseKitFile(File file) {
         try {
-            YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
+            OperatorFiles.Snapshot snapshot = readSnapshot(file);
+            YamlConfiguration config = snapshot == null ? YamlConfiguration.loadConfiguration(file) : parse(snapshot, file);
 
             KitDefinition kit = new KitDefinition();
+            kit.setLoadedFrom(snapshot);
             String displayName = config.getString("displayName");
             if (displayName == null) {
                 kit.useCatalogueDisplayName("&7" + plugin.i18n("kits.kit.default_display_name"));
@@ -975,11 +1117,12 @@ public class KitServiceImpl implements KitService {
                 kit.setDisplayName(displayName);
             }
             kit.setDescription(config.getStringList("description"));
-            kit.setPrice(config.getDouble("price", 0));
-            kit.setLevelRequired(config.getInt("levelRequired", 0));
+            String kitName = kitNameOf(file);
+            kit.setPrice(nonNegativeNumber(kitName, "price", config));
+            kit.setLevelRequired((int) nonNegativeNumber(kitName, "levelRequired", config));
             kit.setPermission(config.getString("permission", ""));
             kit.setReBuyable(config.getBoolean("reBuyable", false));
-            kit.setCooldown(config.getLong("cooldown", 0));
+            kit.setCooldown((long) nonNegativeNumber(kitName, "cooldown", config));
             kit.setPlayerCommands(config.getStringList("playerCommands"));
             kit.setConsoleCommands(config.getStringList("consoleCommands"));
             kit.setItems(config.getString("items", ""));
@@ -1001,88 +1144,88 @@ public class KitServiceImpl implements KitService {
         }
     }
 
-    boolean saveKitToFile(String name, KitDefinition kit) {
-        return saveKitToFile(name, kit, false);
+    /** The snapshot's text as YAML; text that does not parse goes through Bukkit's own reader, as before. */
+    private static YamlConfiguration parse(OperatorFiles.Snapshot snapshot, File file) {
+        YamlConfiguration config = new YamlConfiguration();
+        try {
+            config.loadFromString(snapshot.getText());
+            return config;
+        } catch (InvalidConfigurationException e) {
+            return YamlConfiguration.loadConfiguration(file);
+        }
     }
 
     /**
-     * Writes a kit's file; with {@code newOnly} (a create), a file that already loads as the name is
-     * never written - it fails instead - so a create never overwrites an existing file.
+     * Creates a new kit's file, {@code <name>.yml}, holding every key of the kit - the operator's explicit create
+     * action ({@code /kits create}), the only time this module writes a whole kit file.
+     * <p>
+     * <b>Why it cannot overwrite operator content.</b> A file that already loads as the name is never written:
+     * the create fails instead, and the new file is claimed exclusively before anything is written, so a file
+     * that appears in between fails the create too. The kit then keeps a snapshot of the file it created, so the
+     * editor can save its items at once without a reload.
      */
-    boolean saveKitToFile(String name, KitDefinition kit, boolean newOnly) {
+    boolean createKitFile(String name, KitDefinition kit) {
         try {
-            // Write the file the kit loads from, so a save lands where the next reload reads it; a new
-            // kit gets "<name>.yml". A folder that cannot be listed gives no way to know which file that
-            // is, and a kit that several files define has no single one, so both fail rather than
-            // writing a file beside the real one.
-            List<File> targets = kitFilesOf(name);
-            if (targets == null) {
+            // A folder that cannot be listed gives no way to know whether a file already loads as the name.
+            List<File> existing = kitFilesOf(name);
+            if (existing == null) {
                 logger.error(String.format(plugin.i18n("kits.log.kits_folder_unreadable_save"),
                         kitsFolder().getAbsolutePath(), name));
                 return false;
             }
-            if (targets.size() > 1) {
-                // Never write one of several files a kit loads from (see conflictingFiles).
+            if (!existing.isEmpty()) {
                 return false;
             }
-            if (newOnly && !targets.isEmpty()) {
+            File created = kitFileFor(name);
+            if (created == null) {
+                logger.error(String.format(plugin.i18n("kits.log.kit_name_outside_folder"), name,
+                        kitsFolder().getAbsolutePath()));
                 return false;
             }
-            if (targets.isEmpty()) {
-                File newFile = kitFileFor(name);
-                if (newFile == null) {
-                    logger.error(String.format(plugin.i18n("kits.log.kit_name_outside_folder"), name,
-                            kitsFolder().getAbsolutePath()));
-                    return false;
-                }
-                targets = Collections.singletonList(newFile);
+            YamlConfiguration config = kitYaml(kit);
+            // A create claims its file exclusively before writing, so a file that appeared after the scan
+            // above fails the create instead of being written over.
+            Files.createDirectories(created.getAbsoluteFile().toPath().getParent());
+            try {
+                claimNewFile(created.toPath());
+            } catch (FileAlreadyExistsException appeared) {
+                return false;
             }
-            YamlConfiguration config = new YamlConfiguration();
-
-            // A fallback name is left out, so it keeps following the language (null writes nothing).
-            config.set("displayName", kit.isDisplayNameFromCatalogue() ? null : kit.getDisplayName());
-            config.set("description", kit.getDescription());
-            config.set("icon", kit.getIcon());
-            config.set("price", kit.getPrice());
-            config.set("levelRequired", kit.getLevelRequired());
-            config.set("permission", kit.getPermission());
-            config.set("reBuyable", kit.isReBuyable());
-            config.set("cooldown", kit.getCooldown());
-            config.set("playerCommands", kit.getPlayerCommands());
-            config.set("consoleCommands", kit.getConsoleCommands());
-            config.set("items", kit.getItems());
-
-            if (newOnly) {
-                // A create claims its file exclusively before writing, so a file that appeared after the
-                // scan above fails the create instead of being written over.
-                File created = targets.get(0);
-                Files.createDirectories(created.getAbsoluteFile().toPath().getParent());
-                try {
-                    claimNewFile(created.toPath());
-                } catch (FileAlreadyExistsException appeared) {
-                    return false;
+            boolean written = false;
+            try {
+                config.save(created);
+                written = true;
+            } finally {
+                if (!written) {
+                    // The file this create claimed is removed again, so the failure is not read as
+                    // "a file already exists" and a retry can succeed.
+                    Files.deleteIfExists(created.toPath());
                 }
-                boolean written = false;
-                try {
-                    config.save(created);
-                    written = true;
-                } finally {
-                    if (!written) {
-                        // The file this create claimed is removed again, so the failure is not read as
-                        // "a file already exists" and a retry can succeed.
-                        Files.deleteIfExists(created.toPath());
-                    }
-                }
-                return true;
             }
-            for (File kitFile : targets) {
-                config.save(kitFile);
-            }
+            kit.setLoadedFrom(readSnapshot(created));
             return true;
         } catch (IOException e) {
             logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
             return false;
         }
+    }
+
+    /** Every key of a kit, as a kit file holds it; a catalogue fallback display name is left out. */
+    private static YamlConfiguration kitYaml(KitDefinition kit) {
+        YamlConfiguration config = new YamlConfiguration();
+        // A fallback name is left out, so it keeps following the language (null writes nothing).
+        config.set("displayName", kit.isDisplayNameFromCatalogue() ? null : kit.getDisplayName());
+        config.set("description", kit.getDescription());
+        config.set("icon", kit.getIcon());
+        config.set("price", kit.getPrice());
+        config.set("levelRequired", kit.getLevelRequired());
+        config.set("permission", kit.getPermission());
+        config.set("reBuyable", kit.isReBuyable());
+        config.set("cooldown", kit.getCooldown());
+        config.set("playerCommands", kit.getPlayerCommands());
+        config.set("consoleCommands", kit.getConsoleCommands());
+        config.set("items", kit.getItems());
+        return config;
     }
 
     /**
@@ -1113,29 +1256,66 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
-     * Runs the kit's player commands as the player and checks each result where it is available.
+     * Runs the kit's player commands as the player, one tick later like the console commands, and checks
+     * each result when the deferred task runs it. {@code claimKit} is called from the kit browser's click
+     * handler, and a reward command that is itself a module command now runs its body at dispatch
+     * (UltiTools-Reborn#541): run inline, a command that opens another GUI would open it inside the
+     * {@code InventoryClickEvent} that Paper does not allow to open or close an inventory, and the
+     * browser's own {@code closeInventory()} after a success would then close it again (UltiKits/UltiKits#41).
+     * Deferred, the claim has returned and the click has finished by the time the commands run, and the
+     * commands still run in list order, before the console commands.
+     * <p>
      * {@code performCommand} answers {@code false} for an unknown command or one whose executor refused
      * it, and a third-party executor can throw; either way the reward did not run, so the player is told
      * which one and the console gets a warning naming the player, the kit and the command. The claim
      * stands - no refund, no undo (UltiKits/UltiKits#25). {@code true} only means an executor accepted
-     * the command, so that is all a pass claims.
+     * the command, so that is all a pass claims. A command that cannot be scheduled at all is reported
+     * the same way instead of being dropped, and does not stop the commands after it.
      * <p>
-     * 以玩家身份执行奖励命令并检查结果；未执行的命令会告知玩家并记录警告，领取不撤销、不退款。
+     * 延后一刻以玩家身份执行奖励命令，执行时检查结果：礼包界面的点击处理里不能直接运行会开关界面的命令；
+     * 未执行的命令会告知玩家并记录警告，领取不撤销、不退款。
      */
     private void executePlayerCommands(Player player, KitDefinition kit) {
         List<String> commands = kit.getPlayerCommands();
         if (commands == null || commands.isEmpty()) {
             return;
         }
+        org.bukkit.plugin.Plugin ultiToolsPlugin = Bukkit.getPluginManager().getPlugin("UltiTools");
         for (String cmd : commands) {
             String processed = cmd.replace("{player}", player.getName());
-            RewardRun run = RewardRun.of(() -> player.performCommand(processed));
-            if (!run.ran) {
-                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.reward_command_failed"),
-                        processed));
-                run.log(logger, String.format(plugin.i18n("kits.log.player_reward_command_failed"), kit.getName(),
-                        processed, player.getName()));
+            if (ultiToolsPlugin == null) {
+                reportPlayerCommandNotRun(player, kit, processed, null);
+                continue;
             }
+            try {
+                Bukkit.getScheduler().runTask(ultiToolsPlugin, () -> {
+                    // A player who disconnected since the claim cannot run a command: the executor would
+                    // still accept it, so it would pass as run while nothing happened. Report it as not run.
+                    if (!player.isOnline()) {
+                        reportPlayerCommandNotRun(player, kit, processed, null);
+                        return;
+                    }
+                    RewardRun run = RewardRun.of(() -> player.performCommand(processed));
+                    if (!run.ran) {
+                        reportPlayerCommandNotRun(player, kit, processed, run.thrown);
+                    }
+                });
+            } catch (RuntimeException e) {
+                reportPlayerCommandNotRun(player, kit, processed, e);
+            }
+        }
+    }
+
+    private void reportPlayerCommandNotRun(Player player, KitDefinition kit, String processed,
+                                           @Nullable RuntimeException thrown) {
+        player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.claim.reward_command_failed"),
+                processed));
+        String message = String.format(plugin.i18n("kits.log.player_reward_command_failed"), kit.getName(),
+                processed, player.getName());
+        if (thrown == null) {
+            logger.warn(message);
+        } else {
+            logger.warn(thrown, message);
         }
     }
 

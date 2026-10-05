@@ -18,11 +18,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `新手礼包`，模块没有示例的语言使用英文版。此前唯一的示例在任何语言下都是中文。已有安装不受影响：只有礼包文件夹尚不
   存在时才会复制示例（UltiKits/UltiKits#33）。
 - Language keys were renamed from Chinese sentences to ASCII keys (for example `kits.claim.success`).
-  An operator who edited this module's `lang/en.json` or `lang/zh.json` must re-apply those edits to
-  the new keys; until then the renamed messages show the new built-in text. A server whose language
-  files were never edited needs no action.
-- 语言键已从中文句子改为 ASCII 键（例如 `kits.claim.success`）。改过本模块 `lang/en.json` 或
-  `lang/zh.json` 的运维需要把改动重新套到新键上；在此之前，这些消息显示新的内置文本。从未改过语言文件的服务器无需任何操作。
+  This module's official language files (`lang/en.json` and `lang/zh.json` under
+  `plugins/UltiTools/pluginConfig/UltiTools-Kits/`) belong to UltiTools: from UltiTools-API 6.3.0 an edited
+  official file is restored to the shipped text at every start, its edited copy kept as a backup and
+  named in the server log, so edits made there are not kept. To customise messages, copy the official
+  file under a new name that starts with its language code and a hyphen and holds only ASCII letters, digits,
+  `_` and `-` (`en.json` to `en-myserver.json`), edit the copy against the new keys, and set
+  `language: en-myserver` in `plugins/UltiTools/config.yml` (one setting for the framework and every module).
+  Messages the copy lacks come from the official file its name starts with (`en` here), and a module with no
+  file under that name uses its official `en`.
+  A server whose language files were never edited needs no action.
+- 语言键已从中文句子改为 ASCII 键（例如 `kits.claim.success`）。本模块的官方语言文件
+  （`plugins/UltiTools/pluginConfig/UltiTools-Kits/` 下的 `lang/en.json` 和 `lang/zh.json`）归 UltiTools 所有：
+  自 UltiTools-API 6.3.0 起，被修改过的官方文件会在每次启动时恢复为自带内容，修改过的副本作为备份保留并在服务器日志中注明，
+  因此在其中所做的修改不会保留。要自定义消息，请把官方文件复制为以语言代码加连字符开头、只含 ASCII 字母、数字、`_` 和 `-` 的新名称
+  （`zh.json` → `zh-myserver.json`），按新键修改副本，然后在 `plugins/UltiTools/config.yml` 中设置 `language: zh-myserver`
+  （框架和所有模块共用这一个设置）。副本中没有的消息取自名称开头对应的官方文件（此处为 `zh`），没有该名称文件的模块使用其官方 `zh`。从未改过语言文件的服务器无需任何操作。
 
 ### Removed
 
@@ -42,6 +53,40 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Saving in the kit editor (`/kits edit <kit>`, then Save) now writes only the kit's `items` into its file.
+  Before, it rebuilt the whole file from the loaded kit: every comment and every key the module does not
+  know was dropped, values the loader had replaced were written back (an invalid `icon` as `CHEST`, a
+  negative or non-numeric `price`, `levelRequired` or `cooldown` as `0`, a mistyped `reBuyable` as
+  `false`), and a hand edit made after the kit was loaded was reverted. Now every other line stays byte for
+  byte. If the kit's file changed on disk since it was loaded, nothing is saved and the editor says so and
+  asks for `/kits reload` first; if writing the items would change anything else in the file (YAML anchors,
+  for example) or the file is not UTF-8 text, nothing is saved and the editor says the kit was not saved,
+  with the reason in the server log. `/kits create` still only ever creates a new file
+  (UltiKits/UltiKits#43).
+- 礼包编辑器保存（`/kits edit <礼包>` 后点击保存）现在只把该礼包的 `items` 写入文件。此前它会按已加载的礼包重写整个文件：
+  所有注释和模块不认识的键被删除，加载时被替换的值被写回（无效的 `icon` 写成 `CHEST`，负数或非数字的 `price`、`levelRequired`、
+  `cooldown` 写成 `0`，拼错的 `reBuyable` 写成 `false`），加载后的手动修改被还原。现在其余每一行都逐字节保持不变。礼包文件在
+  加载后被修改过时不保存，编辑器会提示先执行 `/kits reload`；写入物品会改动文件中的其他内容（例如 YAML 锚点）或文件不是 UTF-8
+  文本时也不保存，编辑器提示未保存，原因见服务器日志。`/kits create` 仍然只会新建文件（UltiKits/UltiKits#43）。
+- A kit's player reward commands (`playerCommands`) now run one tick after the claim, like its console
+  commands, instead of inside the claim. Claiming from the kit browser ran them inside the inventory
+  click, where a reward command that opens another GUI could not open it, or had it closed again at once
+  by the browser's own close after a successful claim. The commands still run in list order and before the
+  console commands; a command that does not run is still reported to the player and logged, now one tick
+  later, and a player who has disconnected by then has no command run, with each logged as not run
+  (UltiKits/UltiKits#41).
+- 礼包的玩家奖励命令（`playerCommands`）现在和控制台命令一样，在领取后的下一刻执行，而不是在领取过程中执行。从礼包界面点击领取时，
+  命令此前在背包点击事件内运行，会打开其他界面的奖励命令可能打不开，或在领取成功后被礼包界面自己的关闭立即关掉。命令仍按
+  列表顺序、先于控制台命令执行；未执行的命令仍会告知玩家并记录警告，只是晚一刻（UltiKits/UltiKits#41）。
+- A negative or non-numeric `price`, `cooldown` or `levelRequired` in a kit file is no longer read as
+  "none" without a word. Before, `price: -5` made the kit free, `levelRequired: -1` removed the level
+  requirement, a negative `cooldown` removed the cooldown, and a quoted `price: "250"` was read as `0`,
+  none of them logged. Now loading the kit logs one warning naming the kit, the key and the value, and
+  uses that key's default (`0`) instead; `0`, positive values and absent keys are unchanged
+  (UltiKits/UltiKits#40).
+- 礼包文件里负数或非数字的 `price`、`cooldown`、`levelRequired` 不再被无声地当作「没有」。此前 `price: -5` 会让礼包免费，
+  `levelRequired: -1` 取消等级要求，负数 `cooldown` 取消冷却，带引号的 `price: "250"` 被当作 `0`，且都不记录日志。现在加载
+  礼包时会记录一条警告，点名礼包、键和原值，并改用该键的默认值（`0`）；`0`、正数和未填写的键不变（UltiKits/UltiKits#40）。
 - A kit claim is no longer refused with "Inventory full" on Paper 1.21.1 and earlier when an
   over-sized stack would fit. Those versions fill an empty slot up to the inventory's maximum (99), not
   the item's (64); the module now probes which behaviour the server has once at start and counts empty
@@ -154,12 +199,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   them on the console (UltiKits/UltiKits#23). `/kits create` now refuses a name holding `/`, `\` or
   `..`, which used to write the kit file outside the kits folder, and refuses a name that a file in
   the kits folder already loads as (placed by hand without a reload, or unreadable), naming the file
-  instead of overwriting it (UltiKits/UltiKits#37). A kit file is still written the way earlier versions
-  wrote it, so a crash during a save can leave it cut off; crash-safe writes for modules are tracked
-  in UltiKits/UltiTools-Reborn#545.
+  instead of overwriting it (UltiKits/UltiKits#37). A new kit's file (`/kits create`) is still written the
+  way earlier versions wrote it, so a crash during the create can leave it cut off; crash-safe writes for
+  modules are tracked in UltiKits/UltiTools-Reborn#545. The editor's save replaces the file atomically since
+  UltiKits/UltiKits#43.
 - 修复：礼包文件删除失败（或礼包文件夹无法读取）时，`/kits delete` 不再报告删除成功。礼包会保持加载，执行者会被告知未删除，控制台会记录该文件或文件夹的路径，
   因此被告知已删除的礼包不会在下次 `/kits reload` 或重启后重新出现。删除和保存礼包现在使用礼包加载时的那个文件，因此文件名含大写字母的手放礼包文件（如 `VIP.yml`）
-  也能像其他礼包一样被删除，并能从编辑界面保存。编辑界面保存失败时不再改动已加载的礼包，领取时发放的仍是文件中的物品。当多个文件定义同一礼包时（在区分大小写的文件系统上同时存在 `VIP.yml` 和 `vip.yml`），`/kits edit`、编辑界面的保存按钮、`/kits create` 和 `/kits delete` 不做任何修改并列出这些文件；其中一个仍会被加载，礼包照常可以领取，`/kits reload` 也会在控制台列出这些文件（UltiKits/UltiKits#23）。`/kits create` 现在会拒绝含 `/`、`\` 或 `..` 的礼包名（以前会把礼包文件写到 kits 文件夹之外），也会拒绝礼包文件夹中已有文件（手工放入但未 reload 的，或无法解析的）加载为该名字的礼包名，并列出该文件而不是覆盖它（UltiKits/UltiKits#37）。礼包文件仍按以前版本的方式写入，保存过程中崩服可能留下残缺文件；模块的崩溃安全写入在 UltiKits/UltiTools-Reborn#545 中跟踪。
+  也能像其他礼包一样被删除，并能从编辑界面保存。编辑界面保存失败时不再改动已加载的礼包，领取时发放的仍是文件中的物品。当多个文件定义同一礼包时（在区分大小写的文件系统上同时存在 `VIP.yml` 和 `vip.yml`），`/kits edit`、编辑界面的保存按钮、`/kits create` 和 `/kits delete` 不做任何修改并列出这些文件；其中一个仍会被加载，礼包照常可以领取，`/kits reload` 也会在控制台列出这些文件（UltiKits/UltiKits#23）。`/kits create` 现在会拒绝含 `/`、`\` 或 `..` 的礼包名（以前会把礼包文件写到 kits 文件夹之外），也会拒绝礼包文件夹中已有文件（手工放入但未 reload 的，或无法解析的）加载为该名字的礼包名，并列出该文件而不是覆盖它（UltiKits/UltiKits#37）。新礼包的文件（`/kits create`）仍按以前版本的方式写入，创建过程中崩服可能留下残缺文件；模块的崩溃安全写入在 UltiKits/UltiTools-Reborn#545 中跟踪。自 UltiKits/UltiKits#43 起，编辑界面的保存以原子方式替换文件。
 
 - `language: zh` now applies to the text that was fixed English: the kit editor's save-button lore
   (`Click to save kit contents`), the `/kits help` lines for `edit`, `create`, `delete` and `reload`,

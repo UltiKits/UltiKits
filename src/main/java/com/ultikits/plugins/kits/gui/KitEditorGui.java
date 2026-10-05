@@ -396,6 +396,16 @@ public class KitEditorGui extends Gui {
                 player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.conflict.not_changed"),
                         kit.getName(), String.join(", ", kitService.conflictingFiles(kit.getName()))));
                 break;
+            case FILE_CHANGED_ON_DISK:
+                // The kit file was edited on disk since it was loaded; the save never writes over that edit.
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.editor.save_file_changed"),
+                        kit.getName()));
+                break;
+            case REFUSED:
+                // Maintainer decision 2026-10-05: a refused change says "not saved" and why, never "error".
+                player.sendMessage(ChatColor.RED + String.format(plugin.i18n("kits.editor.save_refused"),
+                        kit.getName()));
+                break;
             default:
                 player.sendMessage(ChatColor.RED + plugin.i18n("kits.editor.save_error"));
                 break;

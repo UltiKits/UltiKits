@@ -91,8 +91,12 @@ public interface KitService {
      * 保存礼包内容的结果。总开关在保存入口处执行，因此调用方需要知道是被拒绝还是真的失败了。
      */
     enum SaveResult {
+        /** The kit's {@code items} were written into its file; nothing else in the file changed. */
         SUCCESS,
-        /** The kit does not exist, its items could not be serialized, or the file write failed. */
+        /**
+         * The kit does not exist, its items could not be serialized, the kits folder could not be listed, or
+         * publishing the file failed; nothing was written.
+         */
         FAILED,
         /** The kit system's master switch ({@code config.yml: enabled}) is off. */
         SYSTEM_DISABLED,
@@ -100,7 +104,22 @@ public interface KitService {
          * More than one file in the kits folder loads as this kit (for example {@code VIP.yml} and
          * {@code vip.yml}); nothing was written. {@link #conflictingFiles(String)} names them.
          */
-        FILE_CONFLICT
+        FILE_CONFLICT,
+        /**
+         * The kit's file changed on disk since the kit was loaded (edited, replaced or deleted); nothing was
+         * written and the live kit keeps its items. A {@code /kits reload} reads the edit, after which the
+         * editor can save again (UltiKits/UltiKits#43).
+         * 加载后礼包文件在磁盘上被修改过：未写入任何内容，请先重新加载。
+         */
+        FILE_CHANGED_ON_DISK,
+        /**
+         * Writing only the kit's {@code items} would have changed something else in its file - YAML anchors, a
+         * layout the configuration write gate cannot keep byte for byte - or the file could not be read as
+         * UTF-8 text when the kit was loaded; nothing was written, the live kit keeps its items, and the server
+         * log names the reason (UltiKits/UltiKits#43).
+         * 只写物品会改动文件中的其他内容（或加载时无法按 UTF-8 读取）：未写入，原因见服务器日志。
+         */
+        REFUSED
     }
 
     /**
