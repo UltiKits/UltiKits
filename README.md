@@ -1,12 +1,15 @@
 # UltiKits - 礼包模块 / Kit System Module
 
-[![UltiTools-API](https://img.shields.io/badge/UltiTools--API-6.2.1-blue)](https://github.com/UltiKits/UltiTools-Reborn)
-[![Java](https://img.shields.io/badge/Java-8%2B-orange)](https://openjdk.org/)
+[![UltiTools-API](https://img.shields.io/badge/UltiTools--API-6.3.0%2B-blue)](https://github.com/UltiKits/UltiTools-Reborn)
+[![Paper](https://img.shields.io/badge/Paper-1.21%2B-green)](https://papermc.io/)
+[![Java](https://img.shields.io/badge/Java-21%2B-orange)](https://adoptium.net/)
 [![License](https://img.shields.io/badge/License-MIT-green)](../../LICENSE)
 
 A standalone kit/gift package module for UltiTools-API. Create, manage, and distribute item kits to players with economy integration, cooldowns, permissions, and GUI browsing.
 
 UltiTools-API 的独立礼包模块。支持创建、管理和分发物品礼包，集成经济系统、冷却时间、权限控制和 GUI 浏览。
+
+**Requires UltiTools-API 6.3.0 or later** (the module declares `api-version: 630`; an older framework refuses to load it). / 需要 UltiTools-API 6.3.0 或更高版本（本模块声明 `api-version: 630`，更早的框架会拒绝加载它）。
 
 ## Features / 功能
 
