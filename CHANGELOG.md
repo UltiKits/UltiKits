@@ -9,6 +9,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- This version requires UltiTools 6.3.0 or later and declares `api-version: 630` in `plugin.yml`
+  (the last release, 1.0.0, declared `620`). UltiTools 6.2.0 to 6.2.5 accepted the 1.0.0
+  declaration; they now refuse the module at load, with a warning that the UltiTools version is
+  outdated that names the module by its `plugin.yml` `name:`, `UltiTools-Kits`. Frameworks before
+  6.2.0 already refused 1.0.0. The README's framework minimum and its server and Java badges now
+  say UltiTools 6.3.0+, Paper 1.21+ and Java 21+ (UltiKits/UltiTools-Reborn#544).
+- 本版本需要 UltiTools 6.3.0 或更高版本，并在 `plugin.yml` 中声明 `api-version: 630`（上一个发布版本 1.0.0
+  声明的是 `620`）。UltiTools 6.2.0 至 6.2.5 会接受 1.0.0 的声明；现在它们会在加载时拒绝本模块，并给出 UltiTools
+  版本过旧的警告，以 `plugin.yml` 的 `name:` 即 `UltiTools-Kits` 指代本模块。6.2.0 之前的框架本来就拒绝 1.0.0。
+  README 中的框架最低版本以及服务端与 Java 徽章已改为 UltiTools 6.3.0+、Paper 1.21+、Java 21+（UltiKits/UltiTools-Reborn#544）。
+
+- `plugin.yml` now declares `identify-string: ultikits.kits`, the key of this module's entry in the
+  UltiCloud catalogue. The framework's update check and `/upm update` skip a module that does not
+  declare it, so this module now takes part in both: a later published version carrying the same key
+  is reported at startup and can be installed with `/upm update` (UltiKits/UltiTools-Reborn#474).
+- `plugin.yml` 现在声明 `identify-string: ultikits.kits`，即本模块在 UltiCloud 模块目录中的条目键。框架的更新检查和
+  `/upm update` 会跳过未声明该键的模块，因此本模块现在会参与两者：带有同一键的更高发布版本会在启动时提示，
+  并可用 `/upm update` 安装（UltiKits/UltiTools-Reborn#474）。
+
 - The example kit created on first start now follows the server's `language`: an English server gets
   a `Starter Kit` with English lore, a Chinese one `新手礼包`, and a language the module has no
   example for gets the English one. Before, the one shipped example was Chinese under every language.
