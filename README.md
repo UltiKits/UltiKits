@@ -11,6 +11,12 @@ UltiTools-API 的独立礼包模块。支持创建、管理和分发物品礼包
 
 **Requires UltiTools-API 6.3.0 or later** (the module declares `api-version: 630`; an older framework refuses to load it). / 需要 UltiTools-API 6.3.0 或更高版本（本模块声明 `api-version: 630`，更早的框架会拒绝加载它）。
 
+## Known limitations / 已知限制
+
+UltiKits requires Minecraft 1.21 or later (Paper 1.21+), even though the UltiTools-API 6.3.0 framework itself runs on Paper 1.19.2 build 163 or later. On Paper 1.19.2–1.20.6, the module can load, but clicks in the kit editor GUI fail with `IncompatibleClassChangeError`: `InventoryView` became an interface in Minecraft 1.21, and framework-loaded modules do not receive Paper's bytecode rewriting. Run this module on Paper 1.21 or later. Backward compatibility is tracked in [UltiKits/UltiTools-Reborn#655](https://github.com/UltiKits/UltiTools-Reborn/issues/655).
+
+UltiKits 需要 Minecraft 1.21 或更高版本（Paper 1.21+），即使 UltiTools-API 6.3.0 框架本身可运行于 Paper 1.19.2 build 163 或更高版本。在 Paper 1.19.2–1.20.6 上，模块可能成功加载，但点击礼包编辑界面时会出现 `IncompatibleClassChangeError`：`InventoryView` 在 Minecraft 1.21 中由类变为接口，而由框架加载的模块不会经过 Paper 的字节码改写。请在 Paper 1.21 或更高版本上运行本模块。向下兼容工作由 [UltiKits/UltiTools-Reborn#655](https://github.com/UltiKits/UltiTools-Reborn/issues/655) 跟踪。
+
 ## Features / 功能
 
 - **GUI Browser** - Paginated chest GUI for browsing and claiming kits / 分页箱子 GUI 浏览和领取礼包
