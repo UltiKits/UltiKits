@@ -44,6 +44,12 @@ for real-machine verification, not user-facing documentation.
   data-entity base class, both removed outright in 6.3.0 — this module was already migrated off
   both before 6.3.0 (`KitCommands` extends `BaseCommandExecutor`, `KitClaimData` extends
   `BaseDataEntity<String>`).
+- **Console lines carry the module-logger prefix.** Every line this module logs reaches the console as
+  `[UltiTools] [UltiTools-Kits] <text>`: Paper adds `[UltiTools] `, and the framework's module logger (`PluginLogger`)
+  adds `[UltiTools-Kits] ` (this module's `plugin.yml` `name`). A console line quoted below is the `<text>` after both
+  prefixes, character for character, unless the row quotes a prefix itself; a row that counts or excludes this
+  module's console lines means lines carrying `[UltiTools-Kits]`. A line the framework logs is quoted after Paper's
+  prefix, with its own `[UltiTools-API] ` where the row shows it.
 
 ## Kit Commands
 
