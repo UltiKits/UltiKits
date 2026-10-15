@@ -57,7 +57,7 @@ reBuyable: false
 cooldown: 0
 playerCommands: []
 consoleCommands:
-  - "broadcast {player} claimed the starter kit!"
+  - "say {player} claimed the starter kit!"
 items: "" # Base64 serialized - managed via /kits create or /kits edit
 ```
 
