@@ -5,7 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 本文件记录本项目的所有重要更改，格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)。
 
-## [Unreleased]
+## [2.0.0] - 2026-10-21
 
 ### Changed
 
@@ -13,12 +13,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (the last release, 1.0.0, declared `620`). UltiTools 6.2.0 to 6.2.5 accepted the 1.0.0
   declaration; they now refuse the module at load, with a warning that the UltiTools version is
   outdated that names the module by its `plugin.yml` `name:`, `UltiTools-Kits`. Frameworks before
-  6.2.0 already refused 1.0.0. The README's framework minimum and its server and Java badges now
-  say UltiTools 6.3.0+, Paper 1.21+ and Java 21+ (UltiKits/UltiTools-Reborn#544).
+  6.2.0 already refused 1.0.0 (UltiKits/UltiTools-Reborn#544).
 - 本版本需要 UltiTools 6.3.0 或更高版本，并在 `plugin.yml` 中声明 `api-version: 630`（上一个发布版本 1.0.0
   声明的是 `620`）。UltiTools 6.2.0 至 6.2.5 会接受 1.0.0 的声明；现在它们会在加载时拒绝本模块，并给出 UltiTools
-  版本过旧的警告，以 `plugin.yml` 的 `name:` 即 `UltiTools-Kits` 指代本模块。6.2.0 之前的框架本来就拒绝 1.0.0。
-  README 中的框架最低版本以及服务端与 Java 徽章已改为 UltiTools 6.3.0+、Paper 1.21+、Java 21+（UltiKits/UltiTools-Reborn#544）。
+  版本过旧的警告，以 `plugin.yml` 的 `name:` 即 `UltiTools-Kits` 指代本模块。6.2.0 之前的框架本来就拒绝 1.0.0
+  （UltiKits/UltiTools-Reborn#544）。
 
 - `plugin.yml` now declares `identify-string: ultikits.kits`, the key of this module's entry in the
   UltiCloud catalogue. The framework's update check and `/upm update` skip a module that does not
@@ -45,14 +44,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `_` and `-` (`en.json` to `en-myserver.json`), edit the copy against the new keys, and set
   `language: en-myserver` in `plugins/UltiTools/config.yml` (one setting for the framework and every module).
   Messages the copy lacks come from the official file its name starts with (`en` here), and a module with no
-  file under that name uses its official `en`.
+  file under that name uses the official language matching the prefix when it ships it, otherwise its official `en`.
   A server whose language files were never edited needs no action.
 - 语言键已从中文句子改为 ASCII 键（例如 `kits.claim.success`）。本模块的官方语言文件
   （`plugins/UltiTools/pluginConfig/UltiTools-Kits/` 下的 `lang/en.json` 和 `lang/zh.json`）归 UltiTools 所有：
   自 UltiTools-API 6.3.0 起，被修改过的官方文件会在每次启动时恢复为自带内容，修改过的副本作为备份保留并在服务器日志中注明，
   因此在其中所做的修改不会保留。要自定义消息，请把官方文件复制为以语言代码加连字符开头、只含 ASCII 字母、数字、`_` 和 `-` 的新名称
   （`zh.json` → `zh-myserver.json`），按新键修改副本，然后在 `plugins/UltiTools/config.yml` 中设置 `language: zh-myserver`
-  （框架和所有模块共用这一个设置）。副本中没有的消息取自名称开头对应的官方文件（此处为 `zh`），没有该名称文件的模块使用其官方 `zh`。从未改过语言文件的服务器无需任何操作。
+  （框架和所有模块共用这一个设置）。副本中没有的消息取自名称开头对应的官方文件（此处为 `zh`），没有该名称文件的模块若自带该前缀对应的官方语言则使用它，否则使用其官方 `en`。从未改过语言文件的服务器无需任何操作。
 
 ### Removed
 
@@ -61,14 +60,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   An operator who translated the `kits.claim.error` entry can drop it (UltiKits/UltiKits#27).
 - 删除了「领取礼包时发生错误」消息及其背后的领取结果：没有任何领取会产生这个结果，因此该消息从来无法显示。每种领取结果
   仍有各自的回复。翻译过 `kits.claim.error` 条目的运维可以删掉它（UltiKits/UltiKits#27）。
-- Four language entries that no code ever displayed were removed from both language files (a
-  "Kit System" title, a per-kit "Kit loaded:" line, an "Economy system is not available" message and a
-  players-only command message). Nothing an operator or player sees changes. The economy message
-  describes a state the module reports today as an insufficient balance; showing it is tracked in
-  UltiKits/UltiKits#32.
-- 从两份语言文件中删除了四条从未被任何代码显示过的条目（「礼包系统」标题、逐个礼包的「已加载礼包:」日志、
-  「经济系统不可用」消息和仅限玩家执行的命令提示）。运维和玩家看到的内容没有任何变化。其中经济系统消息描述的状态，
-  模块目前报告为余额不足；显示该消息由 UltiKits/UltiKits#32 跟踪。
 
 ### Fixed
 
@@ -96,7 +87,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (UltiKits/UltiKits#41).
 - 礼包的玩家奖励命令（`playerCommands`）现在和控制台命令一样，在领取后的下一刻执行，而不是在领取过程中执行。从礼包界面点击领取时，
   命令此前在背包点击事件内运行，会打开其他界面的奖励命令可能打不开，或在领取成功后被礼包界面自己的关闭立即关掉。命令仍按
-  列表顺序、先于控制台命令执行；未执行的命令仍会告知玩家并记录警告，只是晚一刻（UltiKits/UltiKits#41）。
+  列表顺序、先于控制台命令执行；未执行的命令仍会告知玩家并记录警告，只是晚一刻；届时已离线的玩家不会执行任何玩家奖励命令，
+  每条命令都会记录为未执行（UltiKits/UltiKits#41）。
 - A negative or non-numeric `price`, `cooldown` or `levelRequired` in a kit file is no longer read as
   "none" without a word. Before, `price: -5` made the kit free, `levelRequired: -1` removed the level
   requirement, a negative `cooldown` removed the cooldown, and a quoted `price: "250"` was read as `0`,
