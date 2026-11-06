@@ -51,6 +51,13 @@ for real-machine verification, not user-facing documentation.
   module's console lines means lines carrying `[UltiTools-Kits]`. A line the framework logs is quoted after Paper's
   prefix, with its own `[UltiTools-API] ` where the row shows it.
 
+## Startup Compatibility
+
+| ID | Preconditions | Steps | Expected | Layer | Covers |
+|---|---|---|---|---|---|
+| ultikits.startup.allow | Isolated server running Minecraft 1.21.11 with UltiTools 6.3.0 and this UltiTools-Kits 2.0.0 JAR; `language: en`; no other module owns `/kits` or `/kit`; `Tester1` holds `ultikits.kits.use`; shipped `starter` kit present | Restart the server fully; read startup log; run `/ul list` from console; have `Tester1` run `/kits list` | Console contains `[UltiTools-API] UltiTools-Kits loaded! Version: 2.0.0.`; `/ul list` includes `UltiTools-Kits`; chat contains `=== Kit List ===`; no `UltiKits needs UltiTools 6.4.0 or later` or `UltiKits could not check start-up compatibility` line appears | server | |
+| ultikits.startup.refuse | Isolated server running Minecraft 1.20.6 (`Bukkit.getBukkitVersion()` = `1.20.6-R0.1-SNAPSHOT`) with UltiTools 6.3.0 and this UltiTools-Kits 2.0.0 JAR; `language: en`; no other module owns `/kits` or `/kit` | Restart the server fully; read startup log; run `/ul list`; inspect Bukkit's command map for `kits` / `kit` and their namespaced aliases | Exactly one module error reads `UltiKits needs UltiTools 6.4.0 or later on Minecraft versions below 1.21 (server: 1.20.6-R0.1-SNAPSHOT, UltiTools: 6.3.0). Please update UltiTools.`; the framework reports `[UltiTools-API] UltiTools-Kits load failed! Version: 2.0.0.`, never its `loaded!` line; `/ul list` excludes `UltiTools-Kits`; no kit command alias is registered; the UltiTools core remains enabled and answers `/ul list`; no InventoryView `IncompatibleClassChangeError` occurs before refusal. Module-owned listener/task registration is also absent (this module declares neither). | server | |
+
 ## Kit Commands
 
 | ID | Preconditions | Steps | Expected | Layer | Covers |

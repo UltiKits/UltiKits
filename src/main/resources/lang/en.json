@@ -1,4 +1,6 @@
 {
+  "kits.startup.framework_required": "UltiKits needs UltiTools 6.4.0 or later on Minecraft versions below 1.21 (server: %s, UltiTools: %s). Please update UltiTools.",
+  "kits.startup.version_unknown": "UltiKits could not check start-up compatibility (server: %s, UltiTools: %s). Continuing without a version-based refusal.",
   "kits.log.no_kit_files": "No kit configuration files found",
   "kits.log.load_failed": "Failed to load kit: %s - %s",
   "kits.log.loaded_count": "Loaded %d kits",

@@ -22,11 +22,12 @@ for UAT execution and issue reconciliation — the public description of these f
   `@Scheduled` methods) — both counts are the deliberate 0-against-0 reconciliation lines this
   document states below, not omissions. It also has no `placeholder` rows (`plugin.yml` declares
   `softdepend: [PlaceholderAPI, Vault]`, but PlaceholderAPI is never referenced anywhere in
-  `src/main/java` — only `EconomyUtils` for Vault) and no `gate` rows (`@ConditionalOnConfig`
-  count is 0). The `enabled` key reads like a gate and, since `UltiKits/UltiKits#13` was fixed,
-  really is one — but it is enforced by a runtime check at each command entry point
-  (`KitCommands#refusedAsDisabled`), not by conditional bean registration, so it stays a `config`
-  row and the `gate` count stays 0. The reason that choice was made rather than
+  `src/main/java` — only `EconomyUtils` for Vault). Two `gate` rows describe the startup
+  version decision in `UltiKits#registerSelf`; `@ConditionalOnConfig` count remains 0 because
+  this is a lifecycle gate, not conditional bean registration. The `enabled` key reads like a
+  gate and, since `UltiKits/UltiKits#13` was fixed, really is one — but it is enforced by a
+  runtime check at each command entry point (`KitCommands#refusedAsDisabled`), so it stays a
+  `config` row. The reason that choice was made rather than
   `@ConditionalOnConfig` is recorded in `## Configuration` below.
 - **Tier**, exactly three: `player`, `admin`, `internal`. Judged from what the feature is for.
   This module's five non-`list`/`help` commands split cleanly: `open`/`claim` act on the sender's
@@ -121,7 +122,7 @@ extends `BaseCommandExecutor` and
 lines are written deliberately rather than omitted. This is the smallest command surface in the
 ecosystem (7 `@CmdMapping` sites, 3 `@ConfigEntry` keys) — precisely the shape where an omitted
 zero line would be least noticed, which is why it is written here instead. Neither Bukkit event
-handling nor a background scheduled task exists anywhere in this module's 9 source files; kit
+listener registration nor a background scheduled task exists in this module's source; kit
 data loads synchronously in `KitServiceImpl`'s constructor (`loadKits()`) and again on-demand via
 `/kits reload`, never on a timer.
 
@@ -133,6 +134,13 @@ help`:** `KitCommands` overrides `handleHelp(CommandSender)` but has no `@CmdMap
 returning null) to `#handleHelp` only after format matching has failed and after the framework has
 sent its own red `Unknown command, please enter /kits help for help` line. The row below cites
 `#handleHelp`, the method that actually executes.
+
+## Startup Compatibility
+
+| ID | Feature | Kind | How to reach | Permission | Target | Tier | Manual | Source |
+|---|---|---|---|---|---|---|---|---|
+| ultikits.startup.allow | Minecraft 1.21+ remains allowed on UltiTools 6.3.x; on older Minecraft versions UltiTools 6.4.0+ is required. Numeric comparison treats a SNAPSHOT as its numeric version. Unknown versions warn once and continue, never refusing on a guess. On 1.21.11 + 6.3.0 the framework reports `[UltiTools-API] UltiTools-Kits loaded! Version: 2.0.0.` | gate | Module startup | n/a | n/a | admin | brief | UltiKits#registerSelf, StartupCompatibility#check |
+| ultikits.startup.refuse | Minecraft below 1.21 with UltiTools below 6.4.0 is refused through `registerSelf()` returning false, before command/listener/task registration, not by disabling the UltiTools core. On 1.20.6 + 6.3.0 the English module error is `UltiKits needs UltiTools 6.4.0 or later on Minecraft versions below 1.21 (server: 1.20.6-R0.1-SNAPSHOT, UltiTools: 6.3.0). Please update UltiTools.` The framework does not list the module as loaded. | gate | Module startup | n/a | n/a | admin | brief | UltiKits#registerSelf, StartupCompatibility#check |
 
 ## Kit Commands
 

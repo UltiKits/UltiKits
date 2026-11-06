@@ -1,4 +1,6 @@
 {
+  "kits.startup.framework_required": "Minecraft 低于 1.21 时，UltiKits 需要 UltiTools 6.4.0 或更高版本（服务器：%s，UltiTools：%s）。请更新 UltiTools。",
+  "kits.startup.version_unknown": "UltiKits 无法检查启动兼容性（服务器：%s，UltiTools：%s）。将继续启动，不根据未知版本拒绝加载。",
   "kits.log.no_kit_files": "没有找到礼包配置文件",
   "kits.log.load_failed": "加载礼包失败: %s - %s",
   "kits.log.loaded_count": "共加载 %d 个礼包",
