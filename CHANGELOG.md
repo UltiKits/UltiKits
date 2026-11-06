@@ -39,7 +39,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   This module's official language files (`lang/en.json` and `lang/zh.json` under
   `plugins/UltiTools/pluginConfig/UltiTools-Kits/`) belong to UltiTools: from UltiTools-API 6.3.0 an edited
   official file is restored to the shipped text at every start, its edited copy kept as a backup and
-  named in the server log, so edits made there are not kept. To customise messages, copy the official
+  named in the server log, so edits made there are not kept. Reloading the module with
+  `/ul reload UltiTools-Kits` can also restore the official language file being loaded. On the first
+  upgrade, an older official file whose bytes differ from the shipped file may be backed up and
+  restored with a warning even if it was never edited by hand. To customise messages, copy the official
   file under a new name that starts with its language code and a hyphen and holds only ASCII letters, digits,
   `_` and `-` (`en.json` to `en-myserver.json`), edit the copy against the new keys, and set
   `language: en-myserver` in `plugins/UltiTools/config.yml` (one setting for the framework and every module).
@@ -49,7 +52,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 语言键已从中文句子改为 ASCII 键（例如 `kits.claim.success`）。本模块的官方语言文件
   （`plugins/UltiTools/pluginConfig/UltiTools-Kits/` 下的 `lang/en.json` 和 `lang/zh.json`）归 UltiTools 所有：
   自 UltiTools-API 6.3.0 起，被修改过的官方文件会在每次启动时恢复为自带内容，修改过的副本作为备份保留并在服务器日志中注明，
-  因此在其中所做的修改不会保留。要自定义消息，请把官方文件复制为以语言代码加连字符开头、只含 ASCII 字母、数字、`_` 和 `-` 的新名称
+  因此在其中所做的修改不会保留。执行 `/ul reload UltiTools-Kits` 重载模块时，也可能恢复正在加载的官方语言文件。
+  首次升级时，只要旧官方文件与自带文件的字节不同，即使从未手动修改，也可能被备份、恢复并产生警告。
+  要自定义消息，请把官方文件复制为以语言代码加连字符开头、只含 ASCII 字母、数字、`_` 和 `-` 的新名称
   （`zh.json` → `zh-myserver.json`），按新键修改副本，然后在 `plugins/UltiTools/config.yml` 中设置 `language: zh-myserver`
   （框架和所有模块共用这一个设置）。副本中没有的消息取自名称开头对应的官方文件（此处为 `zh`），没有该名称文件的模块若自带该前缀对应的官方语言则使用它，否则使用其官方 `en`。从未改过语言文件的服务器无需任何操作。
 

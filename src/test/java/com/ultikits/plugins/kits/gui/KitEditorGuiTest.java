@@ -395,8 +395,13 @@ class KitEditorGuiTest {
             assertThat(captor.getValue())
                     .isEqualTo(ChatColor.RED + String.format(CatalogueText.text("zh", "kits.editor.save_refused"),
                             "testkit"))
+                    .contains("无法安全写入物品")
+                    .doesNotContain("写入物品会同时改动文件中的其他内容")
                     .doesNotContain("保存礼包时发生错误")
                     .doesNotContain("已保存礼包");
+            assertThat(CatalogueText.text("en", "kits.editor.save_refused"))
+                    .contains("its items could not be written safely", "server log names the reason")
+                    .doesNotContain("would also change something else");
             verify(player).closeInventory();
         }
 

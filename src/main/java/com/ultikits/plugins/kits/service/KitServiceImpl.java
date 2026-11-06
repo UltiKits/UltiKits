@@ -465,10 +465,14 @@ public class KitServiceImpl implements KitService {
         String name = kit.getName();
         OperatorFiles.Snapshot loadedFrom = kit.getLoadedFrom();
         if (loadedFrom == null) {
-            // Loaded through Bukkit's reader, which replaces what it cannot decode: writing only the items
-            // would need the rest of the file re-encoded, which is not the operator's text any more.
-            logger.warn(String.format(plugin.i18n("kits.log.save_unread_file"), name,
-                    kitsFolder().getAbsolutePath()));
+            // Keep the load-time reason: a later read cannot tell why the original snapshot was missing.
+            if (kit instanceof LoadedKitDefinition && ((LoadedKitDefinition) kit).invalidUtf8) {
+                logger.warn(String.format(plugin.i18n("kits.log.save_invalid_utf8"), name,
+                        kitsFolder().getAbsolutePath()));
+            } else {
+                logger.warn(String.format(plugin.i18n("kits.log.save_unread_file"), name,
+                        kitsFolder().getAbsolutePath()));
+            }
             return SaveResult.REFUSED;
         }
         // A folder that cannot be listed gives no way to know whether a second file now loads as this
@@ -1105,10 +1109,16 @@ public class KitServiceImpl implements KitService {
     @Nullable
     KitDefinition parseKitFile(File file) {
         try {
-            OperatorFiles.Snapshot snapshot = readSnapshot(file);
+            LoadedKitDefinition kit = new LoadedKitDefinition();
+            OperatorFiles.Snapshot snapshot;
+            try {
+                snapshot = OperatorFiles.read(file);
+            } catch (IOException failure) {
+                kit.invalidUtf8 = failure instanceof java.nio.charset.CharacterCodingException;
+                snapshot = null;
+            }
             YamlConfiguration config = snapshot == null ? YamlConfiguration.loadConfiguration(file) : parse(snapshot, file);
 
-            KitDefinition kit = new KitDefinition();
             kit.setLoadedFrom(snapshot);
             String displayName = config.getString("displayName");
             if (displayName == null) {
@@ -1142,6 +1152,11 @@ public class KitServiceImpl implements KitService {
             logger.warn(String.format(plugin.i18n("kits.log.load_failed"), file.getName(), e.getMessage()));
             return null;
         }
+    }
+
+    /** Private load metadata, owned by the catalogue entry and discarded with it on reload; not a public API. */
+    private static final class LoadedKitDefinition extends KitDefinition {
+        private boolean invalidUtf8;
     }
 
     /** The snapshot's text as YAML; text that does not parse goes through Bukkit's own reader, as before. */
