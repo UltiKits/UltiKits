@@ -9,6 +9,10 @@ UltiTools-API 的独立礼包模块。支持创建、管理和分发物品礼包
 
 **Requires UltiTools-API 6.3.0 or later** (the module declares `api-version: 630`; an older framework refuses to load it). / 需要 UltiTools-API 6.3.0 或更高版本（本模块声明 `api-version: 630`，更早的框架会拒绝加载它）。
 
+Upgrade UltiTools to 6.3.0 or later before replacing this module's JAR.
+
+更换本模块 JAR 前，请先将 UltiTools 升级到 6.3.0 或更高版本。
+
 ## Features / 功能
 
 - **GUI Browser** - Paginated chest GUI for browsing and claiming kits / 分页箱子 GUI 浏览和领取礼包
