@@ -1,7 +1,7 @@
 # UltiKits - 礼包模块 / Kit System Module
 
 [![UltiTools-API](https://img.shields.io/badge/UltiTools--API-6.3.0%2B-blue)](https://github.com/UltiKits/UltiTools-Reborn)
-[![License](https://img.shields.io/badge/License-MIT-green)](../../LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 A standalone kit/gift package module for UltiTools-API. Create, manage, and distribute item kits to players with economy integration, cooldowns, permissions, and GUI browsing.
 
