@@ -3280,6 +3280,54 @@ class KitServiceImplTest {
             assertThat(warning.getAllValues()).anyMatch(line -> line.contains("latin") && line.contains("UTF-8"));
         }
 
+        @Test
+        @DisplayName("an ordinary snapshot I/O failure refuses without telling the operator to re-encode the file")
+        void readFailureDoesNotSuggestReencoding() throws Exception {
+            assertLoadFailureDiagnostic(new IOException("read unavailable"),
+                    "could not be read at load time", "UTF-8", "无法读取", "UTF-8");
+        }
+
+        @Test
+        @DisplayName("a malformed UTF-8 diagnostic is retained from load even when the next read would succeed")
+        void invalidUtf8DiagnosticIsRememberedFromLoad() throws Exception {
+            assertLoadFailureDiagnostic(new java.nio.charset.MalformedInputException(1),
+                    "not valid UTF-8", "Check file access", "不是有效的 UTF-8", "检查文件访问");
+        }
+
+        private void assertLoadFailureDiagnostic(IOException failure, String englishReason, String englishAbsent,
+                                                 String chineseReason, String chineseAbsent) throws Exception {
+            File file = writeKit("unread.yml", "icon: CHEST\nitems: old-items\n");
+            String before = read(file);
+            for (String language : Arrays.asList("en", "zh")) {
+                when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer(language));
+                KitServiceImpl loaded;
+                try (MockedStatic<com.ultikits.ultitools.config.OperatorFiles> reads = mockStatic(
+                        com.ultikits.ultitools.config.OperatorFiles.class, CALLS_REAL_METHODS)) {
+                    reads.when(() -> com.ultikits.ultitools.config.OperatorFiles.read(file)).thenThrow(failure);
+                    loaded = createService();
+                }
+                // The actual file is valid/readable again, but the loaded kit must retain its original diagnostic.
+                assertThat(loaded.getKit("unread").getItems()).isEqualTo("old-items");
+                KitServiceImpl saving = spy(loaded);
+                doReturn("new-items").when(saving).serializeItems(any(ItemStack[].class));
+                clearInvocations(mockLogger);
+
+                assertThat(save(saving, "unread")).isEqualTo(KitService.SaveResult.REFUSED);
+
+                assertThat(read(file)).isEqualTo(before);
+                assertThat(saving.getKit("unread").getItems()).isEqualTo("old-items");
+                ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+                verify(mockLogger).warn(warning.capture());
+                assertThat(warning.getValue()).contains("unread", file.getParentFile().getAbsolutePath())
+                        .contains("en".equals(language) ? englishReason : chineseReason)
+                        .doesNotContain("en".equals(language) ? englishAbsent : chineseAbsent);
+                saving.reload();
+                assertThat(save(saving, "unread")).as("a successful reload clears the old refusal")
+                        .isEqualTo(KitService.SaveResult.SUCCESS);
+                Files.write(file.toPath(), before.getBytes(StandardCharsets.UTF_8));
+            }
+        }
+
         /**
          * An operator's edit that lands between the editor's write and the re-read after it must not be adopted as
          * "the file as loaded": the next save would then pass the fingerprint check and write over that edit. The
