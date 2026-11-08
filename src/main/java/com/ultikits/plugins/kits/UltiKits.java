@@ -2,6 +2,8 @@ package com.ultikits.plugins.kits;
 
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
 import com.ultikits.ultitools.annotations.UltiToolsModule;
+import org.bukkit.Bukkit;
+import org.bukkit.plugin.Plugin;
 
 import java.util.Arrays;
 import java.util.List;
@@ -10,6 +12,19 @@ import java.util.List;
 public class UltiKits extends UltiToolsPlugin {
     @Override
     public boolean registerSelf() {
+        String minecraftVersion = Bukkit.getBukkitVersion();
+        Plugin core = Bukkit.getPluginManager().getPlugin("UltiTools");
+        String frameworkVersion = core == null ? null : core.getDescription().getVersion();
+        StartupCompatibility.Result compatibility = StartupCompatibility.check(minecraftVersion, frameworkVersion);
+        if (compatibility == StartupCompatibility.Result.REFUSE) {
+            getLogger().error(String.format(i18n("kits.startup.framework_required"),
+                    minecraftVersion, frameworkVersion));
+            return false;
+        }
+        if (compatibility == StartupCompatibility.Result.UNKNOWN) {
+            getLogger().warn(String.format(i18n("kits.startup.version_unknown"),
+                    minecraftVersion, frameworkVersion));
+        }
         return true;
     }
 
