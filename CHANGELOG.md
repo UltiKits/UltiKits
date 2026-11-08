@@ -13,11 +13,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (the last release, 1.0.0, declared `620`). UltiTools 6.2.0 to 6.2.5 accepted the 1.0.0
   declaration; they now refuse the module at load, with a warning that the UltiTools version is
   outdated that names the module by its `plugin.yml` `name:`, `UltiTools-Kits`. Frameworks before
-  6.2.0 already refused 1.0.0 (UltiKits/UltiTools-Reborn#544).
+  6.2.0 already refused 1.0.0 (UltiKits/UltiTools-Reborn#544). Upgrade UltiTools to 6.3.0 or later
+  before replacing this module's JAR.
 - 本版本需要 UltiTools 6.3.0 或更高版本，并在 `plugin.yml` 中声明 `api-version: 630`（上一个发布版本 1.0.0
   声明的是 `620`）。UltiTools 6.2.0 至 6.2.5 会接受 1.0.0 的声明；现在它们会在加载时拒绝本模块，并给出 UltiTools
   版本过旧的警告，以 `plugin.yml` 的 `name:` 即 `UltiTools-Kits` 指代本模块。6.2.0 之前的框架本来就拒绝 1.0.0
-  （UltiKits/UltiTools-Reborn#544）。
+  （UltiKits/UltiTools-Reborn#544）。更换本模块 JAR 前，请先将 UltiTools 升级到 6.3.0 或更高版本。
 
 - `plugin.yml` now declares `identify-string: ultikits.kits`, the key of this module's entry in the
   UltiCloud catalogue. The framework's update check and `/upm update` skip a module that does not
