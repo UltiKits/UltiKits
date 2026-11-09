@@ -5,6 +5,36 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 本文件记录本项目的所有重要更改，格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)。
 
+## [2.1.0] - 2026-11-09
+
+### Added
+
+- Start-up compatibility check: on a server running Minecraft below 1.21 with UltiTools older than
+  6.4.0, the module now refuses to load before registering any command, with the error
+  `UltiKits needs UltiTools 6.4.0 or later on Minecraft versions below 1.21 (server: <version>, UltiTools: <version>). Please update UltiTools.`
+  The UltiTools core and other modules keep running. Minecraft 1.21 and later stays supported on UltiTools 6.3.0
+  and later. When either version cannot be read, the module logs a warning and starts anyway
+  (UltiKits/UltiKits#58, UltiKits/UltiTools-Reborn#655).
+- 启动兼容性检查：服务器运行低于 1.21 的 Minecraft 且 UltiTools 低于 6.4.0 时，本模块会在注册任何命令之前拒绝加载，并输出错误
+  `Minecraft 低于 1.21 时，UltiKits 需要 UltiTools 6.4.0 或更高版本（服务器：<版本>，UltiTools：<版本>）。请更新 UltiTools。`
+  UltiTools 核心和其他模块照常运行。Minecraft 1.21 及以上在 UltiTools 6.3.0 及以上仍受支持。任一版本号无法识别时，模块记录警告并照常启动
+  （UltiKits/UltiKits#58，UltiKits/UltiTools-Reborn#655）。
+- The repository now carries the MIT `LICENSE` file, and `pom.xml` declares the licence (UltiKits/UltiKits#50).
+- 仓库新增 MIT `LICENSE` 文件，`pom.xml` 声明了该许可证（UltiKits/UltiKits#50）。
+
+### Changed
+
+- When the kit editor's Save refuses to write, the chat reply now reads `Kit <name> was not saved: its items could not
+  be written safely. The file and the kit are unchanged; the server log names the reason.` The server log now tells a
+  kit file that could not be read at load time (check file access, then `/kits reload`) apart from one that was not
+  valid UTF-8 (save it as UTF-8, then `/kits reload`). What Save writes or refuses is unchanged (UltiKits/UltiKits#44).
+- 礼包编辑器的保存被拒绝时，聊天回复改为 `礼包 <名称> 未保存：无法安全写入物品。文件和礼包均未改变，原因见服务器日志。`
+  服务器日志现在区分加载时读取失败的礼包文件（检查文件访问权限后执行 `/kits reload`）与不是有效 UTF-8 的文件
+  （另存为 UTF-8 后执行 `/kits reload`）。保存会写入或拒绝的内容不变（UltiKits/UltiKits#44）。
+- The README and the 2.0.0 notes now state the upgrade order: upgrade UltiTools first, then replace this module's JAR
+  (UltiKits/UltiKits#54, UltiKits/UltiKits#59).
+- README 和 2.0.0 说明现在写明升级顺序：先升级 UltiTools，再更换本模块 JAR（UltiKits/UltiKits#54，UltiKits/UltiKits#59）。
+
 ## [2.0.0] - 2026-10-21
 
 ### Changed
