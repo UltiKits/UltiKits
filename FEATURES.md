@@ -139,7 +139,7 @@ sent its own red `Unknown command, please enter /kits help for help` line. The r
 
 | ID | Feature | Kind | How to reach | Permission | Target | Tier | Manual | Source |
 |---|---|---|---|---|---|---|---|---|
-| ultikits.startup.allow | Minecraft 1.21+ remains allowed on UltiTools 6.3.x; on older Minecraft versions UltiTools 6.4.0+ is required. Numeric comparison treats a SNAPSHOT as its numeric version. Unknown versions warn once and continue, never refusing on a guess. On 1.21.11 + 6.3.0 the framework reports `[UltiTools-API] UltiTools-Kits loaded! Version: 2.0.0.` | gate | Module startup | n/a | n/a | admin | brief | UltiKits#registerSelf, StartupCompatibility#check |
+| ultikits.startup.allow | Minecraft 1.21+ remains allowed on UltiTools 6.3.x; on older Minecraft versions UltiTools 6.4.0+ is required. Numeric comparison treats a SNAPSHOT as its numeric version. Unknown versions warn once and continue, never refusing on a guess. On 1.21.11 + 6.3.0 the framework reports `[UltiTools-API] UltiTools-Kits loaded! Version: 2.1.0.` | gate | Module startup | n/a | n/a | admin | brief | UltiKits#registerSelf, StartupCompatibility#check |
 | ultikits.startup.refuse | Minecraft below 1.21 with UltiTools below 6.4.0 is refused through `registerSelf()` returning false, before command/listener/task registration, not by disabling the UltiTools core. On 1.20.6 + 6.3.0 the English module error is `UltiKits needs UltiTools 6.4.0 or later on Minecraft versions below 1.21 (server: 1.20.6-R0.1-SNAPSHOT, UltiTools: 6.3.0). Please update UltiTools.` The framework does not list the module as loaded. | gate | Module startup | n/a | n/a | admin | brief | UltiKits#registerSelf, StartupCompatibility#check |
 
 ## Kit Commands
