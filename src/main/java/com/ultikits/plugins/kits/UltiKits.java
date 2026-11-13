@@ -16,6 +16,9 @@ public class UltiKits extends UltiToolsPlugin {
         Plugin core = Bukkit.getPluginManager().getPlugin("UltiTools");
         String frameworkVersion = core == null ? null : core.getDescription().getVersion();
         StartupCompatibility.Result compatibility = StartupCompatibility.check(minecraftVersion, frameworkVersion);
+        // The api-version: 640 descriptor rejects these versions before normal registration.
+        // Retain this guard for direct registerSelf() callers, which do not pass through the descriptor gate;
+        // it does not add another refusal on any supported framework. UNKNOWN still warns as before.
         if (compatibility == StartupCompatibility.Result.REFUSE) {
             getLogger().error(String.format(i18n("kits.startup.framework_required"),
                     minecraftVersion, frameworkVersion));

@@ -3415,6 +3415,284 @@ class KitServiceImplTest {
 
         @org.junit.jupiter.params.ParameterizedTest
         @org.junit.jupiter.params.provider.EnumSource(OperatorFiles.WriteResult.class)
+        @DisplayName("an exposed ACL view selects the legacy editor writer without changing result mapping")
+        void unsupportedEditKeepsLegacyResultMapping(OperatorFiles.WriteResult outcome) throws Exception {
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            File file = createSimpleKitFile("editable");
+            KitServiceImpl saving = spy(createService());
+            KitDefinition kit = saving.getKit("editable");
+            OperatorFiles.Snapshot snapshot = kit.getLoadedFrom();
+            Map<List<String>, Object> edit = Collections.singletonMap(Collections.singletonList("items"), "new-items");
+            doReturn("new-items").when(saving).serializeItems(any(ItemStack[].class));
+            boolean accepted = outcome == OperatorFiles.WriteResult.WRITTEN || outcome == OperatorFiles.WriteResult.UNCHANGED;
+            KitService.SaveResult expected = accepted ? KitService.SaveResult.SUCCESS
+                    : outcome == OperatorFiles.WriteResult.FILE_CHANGED
+                    ? KitService.SaveResult.FILE_CHANGED_ON_DISK : KitService.SaveResult.REFUSED;
+            clearInvocations(mockLogger);
+
+            try (MockedStatic<Files> attributes = mockStatic(Files.class, CALLS_REAL_METHODS);
+                 MockedStatic<CrashSafeYamlFiles> strict = mockStatic(CrashSafeYamlFiles.class);
+                 MockedStatic<OperatorFiles> legacy = mockStatic(OperatorFiles.class, CALLS_REAL_METHODS)) {
+                attributes.when(() -> Files.getFileAttributeView(file.getParentFile().toPath().toRealPath(),
+                        java.nio.file.attribute.AclFileAttributeView.class, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                        .thenReturn(mock(java.nio.file.attribute.AclFileAttributeView.class));
+                strict.when(() -> CrashSafeYamlFiles.write(snapshot, edit)).thenReturn(OperatorFiles.WriteResult.REFUSED);
+                legacy.when(() -> OperatorFiles.write(snapshot, edit)).thenReturn(outcome);
+
+                assertThat(saving.saveKitItems("editable", new ItemStack[]{mockItemStack(Material.STONE)})).isEqualTo(expected);
+
+                legacy.verify(() -> OperatorFiles.write(snapshot, edit));
+                strict.verifyNoInteractions();
+            }
+            assertThat(kit.getItems()).isEqualTo(accepted ? "new-items" : "someBase64Data");
+            if (accepted) {
+                ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+                verify(mockLogger).warn(warning.capture());
+                assertThat(warning.getValue()).contains(file.getAbsolutePath(), "without crash-safe protection", "ACL");
+            } else {
+                verify(mockLogger, never()).warn(anyString());
+            }
+        }
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+        @DisplayName("unsupported ACL or non-POSIX creation uses exclusive claim then YAML save with one warning")
+        void unsupportedCreateUsesLegacyWriter(boolean acl) throws Exception {
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl creating = spy(createService());
+            doReturn("created-items").when(creating).serializeItems(any(ItemStack[].class));
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            when(player.getInventory().getStorageContents()).thenReturn(new ItemStack[]{stone});
+            File file = new File(tempDir, "kits/ordinary.yml");
+            java.nio.file.Path parent = file.getParentFile().toPath().toRealPath();
+            clearInvocations(mockLogger);
+
+            try (MockedStatic<Files> attributes = mockStatic(Files.class, CALLS_REAL_METHODS);
+                 MockedStatic<CrashSafeYamlFiles> strict = mockStatic(CrashSafeYamlFiles.class)) {
+                if (acl) {
+                    attributes.when(() -> Files.getFileAttributeView(parent,
+                            java.nio.file.attribute.AclFileAttributeView.class, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                            .thenReturn(mock(java.nio.file.attribute.AclFileAttributeView.class));
+                } else {
+                    attributes.when(() -> Files.getFileAttributeView(parent,
+                            java.nio.file.attribute.PosixFileAttributeView.class, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                            .thenReturn(null);
+                }
+                strict.when(() -> CrashSafeYamlFiles.create(eq(file), anyMap())).thenReturn(OperatorFiles.WriteResult.REFUSED);
+
+                assertThat(creating.createKit(player, "ordinary")).isEqualTo(KitService.CreateResult.SUCCESS);
+
+                attributes.verify(() -> Files.createFile(file.toPath()));
+                strict.verifyNoInteractions();
+            }
+            YamlConfiguration written = YamlConfiguration.loadConfiguration(file);
+            assertThat(written.getString("items")).isEqualTo("created-items");
+            assertThat(written.getKeys(false)).containsExactlyInAnyOrder("displayName", "description", "icon", "price",
+                    "levelRequired", "permission", "reBuyable", "cooldown", "playerCommands", "consoleCommands", "items");
+            assertThat(creating.getKit("ordinary").getLoadedFrom().getText())
+                    .isEqualTo(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+            ArgumentCaptor<String> warning = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger).warn(warning.capture());
+            assertThat(warning.getValue()).contains(file.getAbsolutePath(), "without crash-safe protection", acl ? "ACL" : "POSIX");
+        }
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+        @DisplayName("unsupported attributes on the target select the real legacy writer, retaining unrelated bytes")
+        void targetAclUsesLegacyItemsOnlyWriter(boolean acl) throws Exception {
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            File file = createSimpleKitFile("editable");
+            String before = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+            KitServiceImpl saving = spy(createService());
+            doReturn("new-items").when(saving).serializeItems(any(ItemStack[].class));
+            clearInvocations(mockLogger);
+            try (MockedStatic<Files> attributes = mockStatic(Files.class, CALLS_REAL_METHODS);
+                 MockedStatic<CrashSafeYamlFiles> strict = mockStatic(CrashSafeYamlFiles.class)) {
+                if (acl) {
+                    attributes.when(() -> Files.getFileAttributeView(file.toPath(),
+                            java.nio.file.attribute.AclFileAttributeView.class, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                            .thenReturn(mock(java.nio.file.attribute.AclFileAttributeView.class));
+                } else {
+                    attributes.when(() -> Files.getFileAttributeView(file.toPath(),
+                            java.nio.file.attribute.PosixFileAttributeView.class, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                            .thenReturn(null);
+                }
+                strict.when(() -> CrashSafeYamlFiles.write(any(), anyMap())).thenReturn(OperatorFiles.WriteResult.REFUSED);
+
+                assertThat(saving.saveKitItems("editable", new ItemStack[]{mockItemStack(Material.STONE)}))
+                        .isEqualTo(KitService.SaveResult.SUCCESS);
+
+                strict.verifyNoInteractions();
+            }
+            String after = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+            assertThat(after).isEqualTo(before.replace("items: \"someBase64Data\"", "items: \"new-items\""));
+            assertThat(saving.getKit("editable").getItems()).isEqualTo("new-items");
+            verify(mockLogger).warn(contains("without crash-safe protection"));
+        }
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+        @DisplayName("save and create diagnostics include the exception class as well as its reason")
+        void ioFailureLogsExceptionClassAndReason(boolean creating) throws Exception {
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            File file = createSimpleKitFile("editable");
+            KitServiceImpl saving = spy(createService());
+            doReturn("new-items").when(saving).serializeItems(any(ItemStack[].class));
+            clearInvocations(mockLogger);
+            try (MockedStatic<CrashSafeYamlFiles> strict = mockStatic(CrashSafeYamlFiles.class);
+                 MockedStatic<OperatorFiles> legacy = mockStatic(OperatorFiles.class, CALLS_REAL_METHODS)) {
+                IOException failure = new java.nio.file.AccessDeniedException("stage", null, "foreign owner");
+                if (creating) {
+                    strict.when(() -> CrashSafeYamlFiles.create(any(), anyMap())).thenThrow(failure);
+                    assertThat(saving.createKitFile("newkit", createTestKit("newkit"))).isFalse();
+                    assertThat(new File(tempDir, "kits/newkit.yml")).doesNotExist();
+                } else {
+                    strict.when(() -> CrashSafeYamlFiles.write(any(), anyMap())).thenThrow(failure);
+                    assertThat(saving.saveKitItems("editable", new ItemStack[]{mockItemStack(Material.STONE)}))
+                            .isEqualTo(KitService.SaveResult.FAILED);
+                    assertThat(saving.getKit("editable").getItems()).isEqualTo("someBase64Data");
+                }
+                legacy.verify(() -> OperatorFiles.write(any(), anyMap()), never());
+            }
+            ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+            verify(mockLogger).error(error.capture());
+            assertThat(error.getValue()).contains("AccessDeniedException", "foreign owner");
+            verify(mockLogger, never()).warn(anyString());
+        }
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+        @DisplayName("an unreadable attribute view is an I/O failure, not permission to use the legacy writer")
+        void attributeReadFailureNeverFallsBack(boolean creating) throws Exception {
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            File file = createSimpleKitFile("editable");
+            java.nio.file.Path parent = file.getParentFile().toPath().toRealPath();
+            KitServiceImpl saving = spy(createService());
+            doReturn("new-items").when(saving).serializeItems(any(ItemStack[].class));
+            java.nio.file.attribute.PosixFileAttributeView view = mock(java.nio.file.attribute.PosixFileAttributeView.class);
+            when(view.readAttributes()).thenThrow(new java.nio.file.AccessDeniedException("attribute lookup"));
+            clearInvocations(mockLogger);
+            try (MockedStatic<Files> attributes = mockStatic(Files.class, CALLS_REAL_METHODS);
+                 MockedStatic<CrashSafeYamlFiles> strict = mockStatic(CrashSafeYamlFiles.class);
+                 MockedStatic<OperatorFiles> legacy = mockStatic(OperatorFiles.class, CALLS_REAL_METHODS)) {
+                attributes.when(() -> Files.getFileAttributeView(parent,
+                        java.nio.file.attribute.PosixFileAttributeView.class, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                        .thenReturn(view);
+                if (creating) {
+                    assertThat(saving.createKitFile("newkit", createTestKit("newkit"))).isFalse();
+                    assertThat(new File(tempDir, "kits/newkit.yml")).doesNotExist();
+                } else {
+                    assertThat(saving.saveKitItems("editable", new ItemStack[]{mockItemStack(Material.STONE)}))
+                            .isEqualTo(KitService.SaveResult.FAILED);
+                    assertThat(saving.getKit("editable").getItems()).isEqualTo("someBase64Data");
+                }
+                strict.verifyNoInteractions();
+                legacy.verify(() -> OperatorFiles.write(any(), anyMap()), never());
+            }
+            verify(mockLogger).error(contains("AccessDeniedException: attribute lookup"));
+            verify(mockLogger, never()).warn(anyString());
+        }
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+        @DisplayName("read-only targets stay refused even when an unsupported ACL view is present")
+        void readOnlyTargetNeverFallsBack(boolean noWriteBits) throws Exception {
+            File file = createSimpleKitFile("editable");
+            java.nio.file.Path parent = file.getParentFile().toPath().toRealPath();
+            KitServiceImpl saving = spy(createService());
+            doReturn("new-items").when(saving).serializeItems(any(ItemStack[].class));
+            java.nio.file.attribute.PosixFileAttributeView view = mock(java.nio.file.attribute.PosixFileAttributeView.class);
+            java.nio.file.attribute.PosixFileAttributes mode = mock(java.nio.file.attribute.PosixFileAttributes.class);
+            when(view.readAttributes()).thenReturn(mode);
+            when(mode.permissions()).thenReturn(Collections.emptySet());
+            try (MockedStatic<Files> attributes = mockStatic(Files.class, CALLS_REAL_METHODS);
+                 MockedStatic<CrashSafeYamlFiles> strict = mockStatic(CrashSafeYamlFiles.class);
+                 MockedStatic<OperatorFiles> legacy = mockStatic(OperatorFiles.class, CALLS_REAL_METHODS)) {
+                attributes.when(() -> Files.isWritable(file.toPath())).thenReturn(noWriteBits);
+                attributes.when(() -> Files.getFileAttributeView(file.toPath(),
+                        java.nio.file.attribute.PosixFileAttributeView.class, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                        .thenReturn(view);
+                attributes.when(() -> Files.getFileAttributeView(parent,
+                        java.nio.file.attribute.AclFileAttributeView.class, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                        .thenReturn(mock(java.nio.file.attribute.AclFileAttributeView.class));
+                strict.when(() -> CrashSafeYamlFiles.write(any(), anyMap())).thenReturn(OperatorFiles.WriteResult.REFUSED);
+
+                assertThat(saving.saveKitItems("editable", new ItemStack[]{mockItemStack(Material.STONE)}))
+                        .isEqualTo(KitService.SaveResult.REFUSED);
+
+                strict.verify(() -> CrashSafeYamlFiles.write(any(), anyMap()));
+                legacy.verify(() -> OperatorFiles.write(any(), anyMap()), never());
+            }
+            assertThat(saving.getKit("editable").getItems()).isEqualTo("someBase64Data");
+        }
+
+        @Test
+        @DisplayName("a legacy create never overwrites or deletes an entry appearing at the exclusive claim")
+        void legacyCreateClaimCollisionPreservesForeignFile() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl creating = spy(createService());
+            doReturn("new-items").when(creating).serializeItems(any(ItemStack[].class));
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            when(player.getInventory().getStorageContents()).thenReturn(new ItemStack[]{stone});
+            File file = new File(tempDir, "kits/raced.yml");
+            java.nio.file.Path parent = file.getParentFile().toPath().toRealPath();
+            byte[] foreign = "icon: CHEST\nitems: foreign-items\n".getBytes(StandardCharsets.UTF_8);
+            clearInvocations(mockLogger);
+            try (MockedStatic<Files> attributes = mockStatic(Files.class, CALLS_REAL_METHODS);
+                 MockedStatic<CrashSafeYamlFiles> strict = mockStatic(CrashSafeYamlFiles.class)) {
+                attributes.when(() -> Files.getFileAttributeView(parent,
+                        java.nio.file.attribute.AclFileAttributeView.class, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                        .thenReturn(mock(java.nio.file.attribute.AclFileAttributeView.class));
+                doAnswer(call -> {
+                    Files.write(file.toPath(), foreign);
+                    throw new java.nio.file.FileAlreadyExistsException(file.toString());
+                }).when(creating).claimNewFile(file.toPath());
+
+                assertThat(creating.createKit(player, "raced")).isEqualTo(KitService.CreateResult.FILE_EXISTS);
+
+                attributes.verify(() -> Files.deleteIfExists(file.toPath()), never());
+                strict.verifyNoInteractions();
+            }
+            assertThat(Files.readAllBytes(file.toPath())).isEqualTo(foreign);
+            assertThat(creating.getKit("raced")).isNull();
+            verify(mockLogger, never()).warn(anyString());
+        }
+
+        @Test
+        @DisplayName("a failed legacy YAML save removes its claimed file and a retry succeeds")
+        void legacyCreateFailureAllowsRetry() throws Exception {
+            when(plugin.i18n(anyString())).thenAnswer(CatalogueText.answer("en"));
+            new File(tempDir, "kits").mkdirs();
+            KitServiceImpl creating = spy(createService());
+            doReturn("new-items").when(creating).serializeItems(any(ItemStack[].class));
+            Player player = createMockPlayer();
+            ItemStack stone = mockItemStack(Material.STONE);
+            when(player.getInventory().getStorageContents()).thenReturn(new ItemStack[]{stone});
+            File file = new File(tempDir, "kits/retry.yml");
+            java.nio.file.Path parent = file.getParentFile().toPath().toRealPath();
+            clearInvocations(mockLogger);
+            try (MockedStatic<Files> attributes = mockStatic(Files.class, CALLS_REAL_METHODS)) {
+                attributes.when(() -> Files.getFileAttributeView(parent,
+                        java.nio.file.attribute.AclFileAttributeView.class, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                        .thenReturn(mock(java.nio.file.attribute.AclFileAttributeView.class));
+                try (MockedConstruction<YamlConfiguration> yaml = mockConstruction(YamlConfiguration.class,
+                        (mock, context) -> doThrow(new IOException("legacy save failed")).when(mock).save(any(File.class)))) {
+                    assertThat(creating.createKit(player, "retry")).isEqualTo(KitService.CreateResult.ERROR);
+                    assertThat(file).doesNotExist();
+                    assertThat(creating.getKit("retry")).isNull();
+                }
+                assertThat(creating.createKit(player, "retry")).isEqualTo(KitService.CreateResult.SUCCESS);
+            }
+            assertThat(creating.getKit("retry").getLoadedFrom()).isNotNull();
+            verify(mockLogger).error(contains("IOException: legacy save failed"));
+            verify(mockLogger).warn(contains("without crash-safe protection"));
+        }
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(OperatorFiles.WriteResult.class)
         @DisplayName("every crash-safe edit result keeps the existing service result and live-item mapping")
         void editMapsEveryWriterResult(OperatorFiles.WriteResult outcome) throws Exception {
             File file = createSimpleKitFile("editable");
@@ -3471,6 +3749,7 @@ class KitServiceImplTest {
         @Test
         @DisplayName("a real new kit is a complete root map at mode 0600 with an editable snapshot")
         void createPublishesCompletePrivateFile() throws Exception {
+            Assumptions.assumeTrue(java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix"));
             new File(tempDir, "kits").mkdirs();
             service = createService();
             KitDefinition kit = createTestKit("private");
@@ -3517,6 +3796,7 @@ class KitServiceImplTest {
         @Test
         @DisplayName("a successful edit replaces the inode, preserves ordinary permissions, and leaves hard-link aliases unchanged")
         void editUsesReplacementSemantics() throws Exception {
+            Assumptions.assumeTrue(java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix"));
             File file = createSimpleKitFile("editable");
             java.nio.file.Path alias = tempDir.toPath().resolve("alias.yml");
             Files.createLink(alias, file.toPath());
