@@ -5,6 +5,7 @@ import com.ultikits.plugins.kits.entity.KitClaimData;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
 import com.ultikits.ultitools.annotations.Service;
+import com.ultikits.ultitools.config.CrashSafeYamlFiles;
 import com.ultikits.ultitools.config.OperatorFiles;
 import com.ultikits.ultitools.exceptions.DataAccessException;
 import com.ultikits.ultitools.interfaces.DataOperator;
@@ -322,14 +323,6 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
-     * Creates the empty file a new kit is about to be written to, failing when it exists. A seam,
-     * package-private so a test can make the write after it fail.
-     */
-    void claimNewFile(Path file) throws IOException {
-        Files.createFile(file);
-    }
-
-    /**
      * Whether a kit name holds a path: a separator ({@code /} or {@code \\}) or {@code ..} anywhere. The
      * rule a sender is told; the file writer's own check ({@link #kitFileFor}) is the authoritative one.
      * <p>
@@ -413,7 +406,7 @@ public class KitServiceImpl implements KitService {
      * <b>Why it cannot overwrite operator content.</b> A kit file is created by the operator, and an
      * explicit edit writes only the part it edits (maintainer decision of 2026-10-04, "what code may
      * write, by file type"): this writes the kit's {@code items} key and nothing else, through the
-     * framework's {@link OperatorFiles#write}, against the file exactly as the kit was loaded from it.
+     * framework's {@link CrashSafeYamlFiles#write}, against the file exactly as the kit was loaded from it.
      * The framework publishes the file only when every other line - comments, other keys, unknown keys,
      * values this module replaced in memory when it loaded them - is byte-identical to that snapshot and
      * the file still holds the snapshot's bytes. A file edited, replaced or deleted since the load
@@ -488,7 +481,7 @@ public class KitServiceImpl implements KitService {
         }
         OperatorFiles.WriteResult result;
         try {
-            result = OperatorFiles.write(loadedFrom,
+            result = CrashSafeYamlFiles.write(loadedFrom,
                     Collections.<List<String>, Object>singletonMap(Collections.singletonList("items"), serialized));
         } catch (IOException e) {
             logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
@@ -1175,9 +1168,8 @@ public class KitServiceImpl implements KitService {
      * action ({@code /kits create}), the only time this module writes a whole kit file.
      * <p>
      * <b>Why it cannot overwrite operator content.</b> A file that already loads as the name is never written:
-     * the create fails instead, and the new file is claimed exclusively before anything is written, so a file
-     * that appears in between fails the create too. The kit then keeps a snapshot of the file it created, so the
-     * editor can save its items at once without a reload.
+     * 创建直接通过 {@link CrashSafeYamlFiles#create} 排他发布完整内容，不先占用空的最终文件。
+     * 写入失败时不会删除可能属于其他写入者的目标文件；只有 WRITTEN 才采用新文件快照，供编辑器立即保存。
      */
     boolean createKitFile(String name, KitDefinition kit) {
         try {
@@ -1197,28 +1189,15 @@ public class KitServiceImpl implements KitService {
                         kitsFolder().getAbsolutePath()));
                 return false;
             }
-            YamlConfiguration config = kitYaml(kit);
-            // A create claims its file exclusively before writing, so a file that appeared after the scan
-            // above fails the create instead of being written over.
             Files.createDirectories(created.getAbsoluteFile().toPath().getParent());
-            try {
-                claimNewFile(created.toPath());
-            } catch (FileAlreadyExistsException appeared) {
+            OperatorFiles.WriteResult result = CrashSafeYamlFiles.create(created, kitYaml(kit).getValues(false));
+            if (result != OperatorFiles.WriteResult.WRITTEN) {
                 return false;
-            }
-            boolean written = false;
-            try {
-                config.save(created);
-                written = true;
-            } finally {
-                if (!written) {
-                    // The file this create claimed is removed again, so the failure is not read as
-                    // "a file already exists" and a retry can succeed.
-                    Files.deleteIfExists(created.toPath());
-                }
             }
             kit.setLoadedFrom(readSnapshot(created));
             return true;
+        } catch (FileAlreadyExistsException appeared) {
+            return false;
         } catch (IOException e) {
             logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
             return false;

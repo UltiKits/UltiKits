@@ -6,6 +6,8 @@ import com.ultikits.plugins.kits.config.KitsConfig;
 import com.ultikits.plugins.kits.entity.KitClaimData;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
+import com.ultikits.ultitools.config.CrashSafeYamlFiles;
+import com.ultikits.ultitools.config.OperatorFiles;
 import com.ultikits.ultitools.interfaces.DataOperator;
 import com.ultikits.ultitools.interfaces.Query;
 import com.ultikits.ultitools.interfaces.impl.logger.PluginLogger;
@@ -3407,6 +3409,133 @@ class KitServiceImplTest {
         }
     }
 
+    @Nested
+    @DisplayName("Crash-safe operator kit files")
+    class CrashSafeKitFileTests {
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(OperatorFiles.WriteResult.class)
+        @DisplayName("every crash-safe edit result keeps the existing service result and live-item mapping")
+        void editMapsEveryWriterResult(OperatorFiles.WriteResult outcome) throws Exception {
+            File file = createSimpleKitFile("editable");
+            byte[] before = Files.readAllBytes(file.toPath());
+            KitServiceImpl saving = spy(createService());
+            KitDefinition kit = saving.getKit("editable");
+            String oldItems = kit.getItems();
+            OperatorFiles.Snapshot snapshot = kit.getLoadedFrom();
+            Map<List<String>, Object> edit = Collections.singletonMap(Collections.singletonList("items"), "new-items");
+            doReturn("new-items").when(saving).serializeItems(any(ItemStack[].class));
+            boolean accepted = outcome == OperatorFiles.WriteResult.WRITTEN || outcome == OperatorFiles.WriteResult.UNCHANGED;
+            KitService.SaveResult expected = accepted ? KitService.SaveResult.SUCCESS
+                    : outcome == OperatorFiles.WriteResult.FILE_CHANGED
+                    ? KitService.SaveResult.FILE_CHANGED_ON_DISK : KitService.SaveResult.REFUSED;
+
+            try (MockedStatic<CrashSafeYamlFiles> writer = mockStatic(CrashSafeYamlFiles.class);
+                 MockedStatic<OperatorFiles> legacy = mockStatic(OperatorFiles.class, CALLS_REAL_METHODS)) {
+                writer.when(() -> CrashSafeYamlFiles.write(snapshot, edit)).thenReturn(outcome);
+
+                assertThat(saving.saveKitItems("editable", new ItemStack[]{mockItemStack(Material.STONE)})).isEqualTo(expected);
+
+                writer.verify(() -> CrashSafeYamlFiles.write(snapshot, edit));
+                legacy.verify(() -> OperatorFiles.write(any(), anyMap()), never());
+            }
+            assertThat(kit.getItems()).isEqualTo(accepted ? "new-items" : oldItems);
+            assertThat(Files.readAllBytes(file.toPath())).as("the test writer publishes no bytes").isEqualTo(before);
+        }
+
+        @Test
+        @DisplayName("unsupported atomic edit publication fails without a legacy in-place fallback")
+        void failedPublicationKeepsFileAndLiveItems() throws Exception {
+            File file = createSimpleKitFile("editable");
+            byte[] before = Files.readAllBytes(file.toPath());
+            KitServiceImpl saving = spy(createService());
+            KitDefinition kit = saving.getKit("editable");
+            OperatorFiles.Snapshot snapshot = kit.getLoadedFrom();
+            doReturn("new-items").when(saving).serializeItems(any(ItemStack[].class));
+            try (MockedStatic<CrashSafeYamlFiles> writer = mockStatic(CrashSafeYamlFiles.class);
+                 MockedStatic<OperatorFiles> legacy = mockStatic(OperatorFiles.class, CALLS_REAL_METHODS)) {
+                writer.when(() -> CrashSafeYamlFiles.write(eq(snapshot), anyMap()))
+                        .thenThrow(new java.nio.file.AtomicMoveNotSupportedException("stage", "target", "test refusal"));
+
+                assertThat(saving.saveKitItems("editable", new ItemStack[]{mockItemStack(Material.STONE)}))
+                        .isEqualTo(KitService.SaveResult.FAILED);
+
+                legacy.verify(() -> OperatorFiles.write(any(), anyMap()), never());
+            }
+            assertThat(Files.readAllBytes(file.toPath())).isEqualTo(before);
+            assertThat(kit.getItems()).isEqualTo("someBase64Data");
+            assertThat(kit.getLoadedFrom()).isSameAs(snapshot);
+            verify(mockLogger).error(contains("test refusal"));
+        }
+
+        @Test
+        @DisplayName("a real new kit is a complete root map at mode 0600 with an editable snapshot")
+        void createPublishesCompletePrivateFile() throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            KitDefinition kit = createTestKit("private");
+            kit.setItems("complete-items");
+
+            assertThat(service.createKitFile("private", kit)).isTrue();
+
+            File file = new File(tempDir, "kits/private.yml");
+            assertThat(Files.getPosixFilePermissions(file.toPath()))
+                    .isEqualTo(java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+            YamlConfiguration written = YamlConfiguration.loadConfiguration(file);
+            assertThat(written.getString("items")).isEqualTo("complete-items");
+            assertThat(written.getString("displayName")).isEqualTo(kit.getDisplayName());
+            assertThat(written.getKeys(false)).containsExactlyInAnyOrder("displayName", "description", "icon", "price",
+                    "levelRequired", "permission", "reBuyable", "cooldown", "playerCommands", "consoleCommands", "items");
+            assertThat(kit.getLoadedFrom().getText()).isEqualTo(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+            assertThat(file.getParentFile().list()).containsExactly("private.yml");
+        }
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(value = OperatorFiles.WriteResult.class, names = {"FILE_CHANGED", "REFUSED"})
+        @DisplayName("an unsuccessful crash-safe create returns false without claiming or adopting a file")
+        void createRefusalsKeepNoFileOrSnapshot(OperatorFiles.WriteResult outcome) throws Exception {
+            new File(tempDir, "kits").mkdirs();
+            service = createService();
+            KitDefinition kit = createTestKit("refused");
+            File file = new File(tempDir, "kits/refused.yml");
+            try (MockedStatic<CrashSafeYamlFiles> writer = mockStatic(CrashSafeYamlFiles.class)) {
+                writer.when(() -> CrashSafeYamlFiles.create(eq(file), anyMap())).thenAnswer(call -> {
+                    assertThat(file).as("no empty final file is claimed before publication").doesNotExist();
+                    Map<String, Object> values = call.getArgument(1);
+                    assertThat(values).containsEntry("items", kit.getItems()).containsEntry("icon", kit.getIcon());
+                    return outcome;
+                });
+
+                assertThat(service.createKitFile("refused", kit)).isFalse();
+
+                writer.verify(() -> CrashSafeYamlFiles.create(eq(file), anyMap()));
+            }
+            assertThat(file).doesNotExist();
+            assertThat(kit.getLoadedFrom()).isNull();
+        }
+
+        @Test
+        @DisplayName("a successful edit replaces the inode, preserves ordinary permissions, and leaves hard-link aliases unchanged")
+        void editUsesReplacementSemantics() throws Exception {
+            File file = createSimpleKitFile("editable");
+            java.nio.file.Path alias = tempDir.toPath().resolve("alias.yml");
+            Files.createLink(alias, file.toPath());
+            byte[] before = Files.readAllBytes(file.toPath());
+            Set<java.nio.file.attribute.PosixFilePermission> mode = java.nio.file.attribute.PosixFilePermissions.fromString("rw-r-----");
+            Files.setPosixFilePermissions(file.toPath(), mode);
+            KitServiceImpl saving = spy(createService());
+            doReturn("new-items").when(saving).serializeItems(any(ItemStack[].class));
+
+            assertThat(saving.saveKitItems("editable", new ItemStack[]{mockItemStack(Material.STONE)}))
+                    .isEqualTo(KitService.SaveResult.SUCCESS);
+
+            assertThat(Files.isSameFile(file.toPath(), alias)).isFalse();
+            assertThat(Files.readAllBytes(alias)).isEqualTo(before);
+            assertThat(Files.getPosixFilePermissions(file.toPath())).isEqualTo(mode);
+            assertThat(YamlConfiguration.loadConfiguration(file).getString("items")).isEqualTo("new-items");
+        }
+    }
+
     // =========================================================================
     // Kit names that would become a path outside the kits folder
     // =========================================================================
@@ -3620,32 +3749,25 @@ class KitServiceImplTest {
             assertThat(java.nio.file.Files.readAllBytes(appeared)).isEqualTo(operator);
         }
 
-        /**
-         * A create whose write fails after it claimed its file removes that file again: otherwise the
-         * failure would read as "a file already exists", a retry would be refused, and a reload would
-         * load an empty kit.
-         */
         @Test
-        @DisplayName("a create whose write fails leaves no claimed file and reports an error")
+        @DisplayName("a failed create publication leaves no empty file or loaded kit and permits a retry")
         void failedCreateLeavesNoClaimedFile() throws Exception {
-            org.junit.jupiter.api.Assumptions.assumeTrue(
-                    java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix"), "POSIX permissions");
-            org.junit.jupiter.api.Assumptions.assumeFalse("root".equals(System.getProperty("user.name")),
-                    "root writes a read-only file");
             new File(tempDir, "kits").mkdirs();
-            KitServiceImpl failing = spy(new KitServiceImpl(plugin, config) {
-                @Override
-                void claimNewFile(java.nio.file.Path file) throws IOException {
-                    super.claimNewFile(file);
-                    java.nio.file.Files.setPosixFilePermissions(file,
-                            java.nio.file.attribute.PosixFilePermissions.fromString("r--r--r--"));
-                }
-            });
+            KitServiceImpl failing = spy(createService());
             doReturn("admin-items").when(failing).serializeItems(any(ItemStack[].class));
+            File target = new File(tempDir, "kits/broken.yml");
+            try (MockedStatic<CrashSafeYamlFiles> writer = mockStatic(CrashSafeYamlFiles.class)) {
+                writer.when(() -> CrashSafeYamlFiles.create(eq(target), anyMap())).thenThrow(new IOException("publication failed"));
 
-            assertThat(failing.createKit(playerWithOneItem(), "broken")).isEqualTo(KitService.CreateResult.ERROR);
+                assertThat(failing.createKit(playerWithOneItem(), "broken")).isEqualTo(KitService.CreateResult.ERROR);
 
-            assertThat(new File(tempDir, "kits").list()).isEmpty();
+                writer.verify(() -> CrashSafeYamlFiles.create(eq(target), anyMap()));
+                assertThat(new File(tempDir, "kits").list()).isEmpty();
+                assertThat(failing.getKit("broken")).isNull();
+                verify(mockLogger).error(contains("publication failed"));
+            }
+            assertThat(failing.createKit(playerWithOneItem(), "broken")).isEqualTo(KitService.CreateResult.SUCCESS);
+            assertThat(target).isFile();
         }
 
         @Test

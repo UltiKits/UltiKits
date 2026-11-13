@@ -1,17 +1,17 @@
 # UltiKits - 礼包模块 / Kit System Module
 
-[![UltiTools-API](https://img.shields.io/badge/UltiTools--API-6.3.0%2B-blue)](https://github.com/UltiKits/UltiTools-Reborn)
+[![UltiTools-API](https://img.shields.io/badge/UltiTools--API-6.4.0%2B-blue)](https://github.com/UltiKits/UltiTools-Reborn)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 A standalone kit/gift package module for UltiTools-API. Create, manage, and distribute item kits to players with economy integration, cooldowns, permissions, and GUI browsing.
 
 UltiTools-API 的独立礼包模块。支持创建、管理和分发物品礼包，集成经济系统、冷却时间、权限控制和 GUI 浏览。
 
-**Requires UltiTools-API 6.3.0 or later** (the module declares `api-version: 630`; an older framework refuses to load it). / 需要 UltiTools-API 6.3.0 或更高版本（本模块声明 `api-version: 630`，更早的框架会拒绝加载它）。
+**Requires UltiTools-API 6.4.0 or later** (the module declares `api-version: 640`; an older framework refuses to load it). / 需要 UltiTools-API 6.4.0 或更高版本（本模块声明 `api-version: 640`，更早的框架会拒绝加载它）。
 
-Upgrade UltiTools to 6.3.0 or later before replacing this module's JAR.
+Upgrade UltiTools to 6.4.0 or later before replacing this module's JAR.
 
-更换本模块 JAR 前，请先将 UltiTools 升级到 6.3.0 或更高版本。
+更换本模块 JAR 前，请先将 UltiTools 升级到 6.4.0 或更高版本。
 
 ## Features / 功能
 
@@ -78,6 +78,46 @@ items: "" # Base64 serialized - managed via /kits create or /kits edit
 | `playerCommands` | List | Commands run as the player / 以玩家身份执行的命令 |
 | `consoleCommands` | List | Commands run from console / 以控制台执行的命令 |
 | `items` | String | Base64 serialized items (auto-managed) / Base64 序列化物品 |
+
+## Known limitations / 已知限制
+
+Explicit `/kits create` and editor Save actions use `CrashSafeYamlFiles`. A new kit is published as a complete
+file with permissions `0600` (only its owner can read/write it); an edit changes only `items`, preserving all
+unrelated bytes, the existing nine POSIX permission bits, owner and group. A semantic no-op does not replace the
+file. A changed edit replaces the inode: hard-link aliases keep their old contents instead of following the edit.
+
+显式 `/kits create` 和编辑器保存使用 `CrashSafeYamlFiles`。新礼包以 `0600` 权限发布完整文件（仅所有者可读写）；
+编辑只修改 `items`，保留其他字节、原有九位 POSIX 权限、所有者和组。值未改变时不替换文件；实际修改会替换 inode
+（文件身份），其他硬链接仍保留旧内容，不会跟随修改。
+
+Create/edit requires ordinary files on the default local POSIX filesystem with native atomic rename/link support.
+Non-POSIX filesystems, a Java-exposed ACL view, final symlinks and read-only edit targets are refused. If staging,
+metadata preservation or atomic publication fails, the operation fails without an in-place/copy fallback: existing
+file contents and the loaded kit are unchanged. Do not use a layout that depends on preserving hidden/default ACLs,
+xattrs, security labels, special permission bits, creation times, inode identity or hard-link relationships; use
+ordinary kit files and independent backups instead. The helper cannot detect every incompatible metadata layout.
+
+创建和编辑要求普通文件位于默认本地 POSIX 文件系统，且支持原生原子 rename/link。非 POSIX 文件系统、Java 可见 ACL
+视图、文件路径末尾的符号链接、只读编辑目标都会被拒绝。暂存、元数据保留或原子发布失败时，操作失败，不会退回原地写入
+或复制覆盖；原文件内容和已加载的礼包不变。不要使用依赖隐藏或默认 ACL、扩展属性、安全标签、特殊权限位、创建时间、
+文件身份或硬链接关系的布局；请使用普通礼包文件并保留独立备份。helper 无法检测所有不兼容的元数据布局。
+
+With a functioning OS/filesystem, a process crash leaves the final file old/absent or complete-new, not half-written.
+This is not a power-loss, remote-storage or multi-file transaction guarantee. A crash may leave a sibling named
+`<name>.yml.ultitools-stage-<32 lower-case hex>.tmp`; no startup scan or automatic recovery promotes or deletes it.
+Protect it like the kit file. Stop competing writers and the server, inspect the target and the named temporary
+file, and delete only a temporary file known to be unneeded; otherwise keep it and restore an independently trusted
+backup or explicitly recreate the kit. Do not edit kit files concurrently with create/save: there is no cross-process
+lock, and a change between creation and its snapshot read may be adopted. After external edits, run `/kits reload`
+and close/reopen old editors before saving. The automatic first-start `starter.yml` copy is unchanged and keeps the
+shipped resource's comments; it is not an explicit operator action and does not use this helper.
+
+在操作系统和文件系统正常工作的前提下，进程崩溃后最终文件是旧内容、不存在或完整新内容，不会只写入一半；这不是断电、
+远程存储或多文件事务保证。崩溃可能遗留同目录的 `<name>.yml.ultitools-stage-<32 位小写十六进制>.tmp`，启动时不会扫描、
+提升或自动删除它。请像保护礼包文件一样保护它；先停止其他写入者和服务器，检查目标文件与该临时文件，只删除确认不再需要
+的临时文件，否则保留它并使用独立可信备份恢复，或显式重新创建礼包。创建和保存时不要并发手改礼包文件：没有跨进程锁，
+创建完成到读取快照之间的外部修改也可能成为初始快照。外部修改后先执行 `/kits reload`，关闭并重新打开旧编辑器再保存。
+首次启动自动复制的 `starter.yml` 保持不变，保留随包资源的注释；它不是管理员显式操作，不使用此 helper。
 
 ## Soft Dependencies / 可选依赖
 

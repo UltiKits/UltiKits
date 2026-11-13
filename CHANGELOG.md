@@ -5,6 +5,30 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 本文件记录本项目的所有重要更改，格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)。
 
+## [Unreleased]
+
+### Changed
+
+- Kit creation and explicit editor saves now use UltiTools-API 6.4.0's `CrashSafeYamlFiles`. New kit files are
+  published complete and exclusively at mode `0600`, without first exposing an empty file. Editor saves still
+  change only `items`, preserve unrelated bytes and refuse a stale snapshot; publication now has no in-place
+  fallback. Existing success, conflict, refusal and error replies are unchanged.
+- 礼包创建和编辑器的显式保存现在使用 UltiTools-API 6.4.0 的 `CrashSafeYamlFiles`。新礼包文件以 `0600` 权限
+  排他发布完整内容，不再先暴露空文件。编辑器仍然只修改 `items`、保留其他字节并拒绝过期快照；发布不再退回原地写入。
+  成功、冲突、拒绝和出错时的回复不变。
+- Requires UltiTools-API 6.4.0 or later (`api-version: 640`); upgrade the framework before replacing this module.
+  The previous release's allowance for UltiTools 6.3.x no longer applies. Create/edit requires a local default POSIX
+  filesystem with native atomic rename/link support and no Java-exposed ACL view. Edits preserve ordinary POSIX
+  permissions and owner/group, but replace the inode; hard-link aliases retain old contents. See README's Known
+  limitations before using metadata-dependent layouts. Process-crash completeness is not a power-loss guarantee.
+- 需要 UltiTools-API 6.4.0 或更高版本（`api-version: 640`）；更换模块前先升级框架。上一版本允许使用 6.3.x 框架的
+  条件不再适用。创建和编辑要求默认本地 POSIX 文件系统支持原生原子 rename/link，且不能暴露 Java ACL 视图。
+  编辑保留普通 POSIX 权限、所有者和组，但会替换 inode；硬链接别名仍保留旧内容。依赖特殊元数据的布局请先阅读
+  README 的已知限制。进程崩溃时的完整发布不等于断电安全保证。
+- The automatic first-start `starter.yml` resource copy is unchanged, including its comments; it is not an explicit
+  operator create/edit action (UltiKits/UltiTools-Reborn#890).
+- 首次启动自动复制的 `starter.yml`（包括注释）保持不变；它不属于管理员显式创建或编辑操作（UltiKits/UltiTools-Reborn#890）。
+
 ## [2.1.0] - 2026-11-09
 
 ### Added
