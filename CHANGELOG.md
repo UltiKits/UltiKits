@@ -5,6 +5,39 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 本文件记录本项目的所有重要更改，格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)。
 
+## [Unreleased]
+
+### Changed
+
+- On Windows (or a filesystem with a Java-exposed ACL view or no POSIX attribute view), kit files fall back to an
+  ordinary write without crash-safe protection. Editor saves retain `OperatorFiles.write`'s snapshot and unrelated-byte
+  checks; creation restores the exclusive-claim-then-save path and can leave an empty/partial file after a crash.
+  Each successful operation logs one WARN naming the file and the unsupported capability.
+- Windows（或暴露 Java ACL 视图或没有 POSIX 属性视图的文件系统）上的礼包文件会退回不提供崩溃安全保护的普通写入。
+  编辑器保留 `OperatorFiles.write` 的快照和其他字节检查；创建恢复为先排他占用文件再保存，崩溃时可能留下空文件或残缺文件。
+  每次成功操作记录一条 WARN，列出文件和不支持的能力。
+- On supported filesystems, kit creation and explicit editor saves use UltiTools-API 6.4.0's `CrashSafeYamlFiles`.
+  New files are published complete and exclusively at mode `0600`, without exposing an empty file. Editor saves
+  change only `items` and refuse stale snapshots. Genuine refusals and staging/metadata/publication failures never
+  trigger the ordinary writer. Existing reply texts and result mappings are retained, but read-only/foreign-owned
+  files can now refuse/fail where the old writer succeeded; failures log their exception class and reason.
+- 在支持的文件系统上，礼包创建和编辑器的显式保存使用 UltiTools-API 6.4.0 的 `CrashSafeYamlFiles`。新文件以 `0600`
+  权限排他发布完整内容，不暴露空文件。编辑器只修改 `items` 并拒绝过期快照。真实拒绝和暂存、元数据或发布失败不会触发
+  普通写入。回复文字和结果映射保留，但只读或由其他账号拥有的文件可能在旧 writer 成功的地方拒绝或失败；失败日志包含异常类名和原因。
+- Requires UltiTools-API 6.4.0 or later (`api-version: 640`); upgrade the framework before replacing this module.
+  The previous release's allowance for UltiTools 6.3.x no longer applies. Crash-safe publication requires a local
+  default POSIX filesystem with native atomic rename/link and no Java-exposed ACL view. Kit files must be owned by
+  and writable by the server account. Edits preserve ordinary POSIX permissions and owner/group, but replace the
+  inode; hard-link aliases retain old contents. See README's Known limitations. Process-crash completeness on this
+  path is not a power-loss guarantee.
+- 需要 UltiTools-API 6.4.0 或更高版本（`api-version: 640`）；更换模块前先升级框架。上一版本允许使用 6.3.x 框架的
+  条件不再适用。崩溃安全发布要求默认本地 POSIX 文件系统支持原生原子 rename/link，且不暴露 Java ACL 视图。
+  礼包文件必须由服务器账号拥有且可写。编辑保留普通 POSIX 权限、所有者和组，但会替换 inode；硬链接别名仍保留旧内容。
+  详情见 README 的已知限制；此路径在进程崩溃时的完整发布不等于断电安全保证。
+- The automatic first-start `starter.yml` resource copy is unchanged, including its comments; it is not an explicit
+  operator create/edit action (UltiKits/UltiTools-Reborn#890).
+- 首次启动自动复制的 `starter.yml`（包括注释）保持不变；它不属于管理员显式创建或编辑操作（UltiKits/UltiTools-Reborn#890）。
+
 ## [2.1.0] - 2026-11-09
 
 ### Added

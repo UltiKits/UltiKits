@@ -5,6 +5,7 @@ import com.ultikits.plugins.kits.entity.KitClaimData;
 import com.ultikits.plugins.kits.model.KitDefinition;
 import com.ultikits.ultitools.abstracts.UltiToolsPlugin;
 import com.ultikits.ultitools.annotations.Service;
+import com.ultikits.ultitools.config.CrashSafeYamlFiles;
 import com.ultikits.ultitools.config.OperatorFiles;
 import com.ultikits.ultitools.exceptions.DataAccessException;
 import com.ultikits.ultitools.interfaces.DataOperator;
@@ -30,6 +31,10 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.LinkOption;
+import java.nio.file.attribute.AclFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -322,14 +327,6 @@ public class KitServiceImpl implements KitService {
     }
 
     /**
-     * Creates the empty file a new kit is about to be written to, failing when it exists. A seam,
-     * package-private so a test can make the write after it fail.
-     */
-    void claimNewFile(Path file) throws IOException {
-        Files.createFile(file);
-    }
-
-    /**
      * Whether a kit name holds a path: a separator ({@code /} or {@code \\}) or {@code ..} anywhere. The
      * rule a sender is told; the file writer's own check ({@link #kitFileFor}) is the authoritative one.
      * <p>
@@ -413,7 +410,8 @@ public class KitServiceImpl implements KitService {
      * <b>Why it cannot overwrite operator content.</b> A kit file is created by the operator, and an
      * explicit edit writes only the part it edits (maintainer decision of 2026-10-04, "what code may
      * write, by file type"): this writes the kit's {@code items} key and nothing else, through the
-     * framework's {@link OperatorFiles#write}, against the file exactly as the kit was loaded from it.
+     * framework's {@link CrashSafeYamlFiles#write}, or {@link OperatorFiles#write} only for unsupported ACL/POSIX
+     * filesystems, against the file exactly as the kit was loaded from it.
      * The framework publishes the file only when every other line - comments, other keys, unknown keys,
      * values this module replaced in memory when it loaded them - is byte-identical to that snapshot and
      * the file still holds the snapshot's bytes. A file edited, replaced or deleted since the load
@@ -487,16 +485,23 @@ public class KitServiceImpl implements KitService {
             return SaveResult.FILE_CONFLICT;
         }
         OperatorFiles.WriteResult result;
+        String unsupported;
         try {
-            result = OperatorFiles.write(loadedFrom,
-                    Collections.<List<String>, Object>singletonMap(Collections.singletonList("items"), serialized));
+            unsupported = crashSafeUnsupportedReason(loadedFrom.getFile(), false);
+            Map<List<String>, Object> edit = Collections.singletonMap(Collections.singletonList("items"), serialized);
+            result = unsupported == null ? CrashSafeYamlFiles.write(loadedFrom, edit)
+                    : OperatorFiles.write(loadedFrom, edit);
         } catch (IOException e) {
-            logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
+            logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name,
+                    e.getClass().getSimpleName() + ": " + e.getMessage()));
             return SaveResult.FAILED;
         }
         switch (result) {
             case WRITTEN:
             case UNCHANGED:
+                if (unsupported != null) {
+                    warnUnprotectedWrite(loadedFrom.getFile(), unsupported);
+                }
                 kit.setItems(serialized);
                 // The next save is checked against the file as this one left it - but only a re-read that is this
                 // save's own result is adopted. An operator's edit that landed between the write and this read would
@@ -514,6 +519,50 @@ public class KitServiceImpl implements KitService {
                 // The framework's WARNING names the file, the key and the reason.
                 return SaveResult.REFUSED;
         }
+    }
+
+    /**
+     * Selects the legacy writer only for the ACL/POSIX capability checks used by 6.4.0's strict publisher.
+     * Its public REFUSED result has no reason code, so no refusal or publication exception is retried.
+     * Attribute read errors propagate; absent/special/existing-create/read-only targets stay with the strict gate.
+     * File-based APIs always use the default filesystem. Stage-only and native rename/link failures still fail closed.
+     */
+    @Nullable
+    private String crashSafeUnsupportedReason(File file, boolean creating) throws IOException {
+        Path target = file.toPath().toAbsolutePath();
+        if (creating ? Files.exists(target, LinkOption.NOFOLLOW_LINKS)
+                : !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) || !Files.isWritable(target)) {
+            return null;
+        }
+        if (!creating) {
+            PosixFileAttributeView view = Files.getFileAttributeView(target,
+                    PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+            if (view != null && Collections.disjoint(view.readAttributes().permissions(), EnumSet.of(
+                    PosixFilePermission.OWNER_WRITE, PosixFilePermission.GROUP_WRITE, PosixFilePermission.OTHERS_WRITE))) {
+                return null;
+            }
+        }
+        Path parent = target.getParent().toRealPath();
+        String unsupported = unsupportedAttributes(parent);
+        return unsupported != null || creating ? unsupported : unsupportedAttributes(parent.resolve(target.getFileName()));
+    }
+
+    @Nullable
+    private String unsupportedAttributes(Path path) throws IOException {
+        if (Files.getFileAttributeView(path, AclFileAttributeView.class, LinkOption.NOFOLLOW_LINKS) != null) {
+            return plugin.i18n("kits.log.crash_safe_acl_unsupported");
+        }
+        PosixFileAttributeView view = Files.getFileAttributeView(path,
+                PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+        if (view == null) {
+            return plugin.i18n("kits.log.crash_safe_posix_unsupported");
+        }
+        view.readAttributes(); // A permission or I/O failure is not evidence of unsupported attributes.
+        return null;
+    }
+
+    private void warnUnprotectedWrite(File file, String reason) {
+        logger.warn(String.format(plugin.i18n("kits.log.write_without_crash_safety"), file.getAbsolutePath(), reason));
     }
 
     /**
@@ -1174,10 +1223,10 @@ public class KitServiceImpl implements KitService {
      * Creates a new kit's file, {@code <name>.yml}, holding every key of the kit - the operator's explicit create
      * action ({@code /kits create}), the only time this module writes a whole kit file.
      * <p>
-     * <b>Why it cannot overwrite operator content.</b> A file that already loads as the name is never written:
-     * the create fails instead, and the new file is claimed exclusively before anything is written, so a file
-     * that appears in between fails the create too. The kit then keeps a snapshot of the file it created, so the
-     * editor can save its items at once without a reload.
+     * <b>Why it cannot overwrite operator content.</b> A file that already loads as the name is never written.
+     * Supported filesystems use {@link CrashSafeYamlFiles#create} to publish complete content exclusively, without
+     * claiming an empty final file. Only an unsupported ACL/POSIX layout selects the legacy exclusive-claim/save path.
+     * A genuine refusal or publication failure never selects that path. Only a successful create adopts a snapshot.
      */
     boolean createKitFile(String name, KitDefinition kit) {
         try {
@@ -1197,32 +1246,43 @@ public class KitServiceImpl implements KitService {
                         kitsFolder().getAbsolutePath()));
                 return false;
             }
-            YamlConfiguration config = kitYaml(kit);
-            // A create claims its file exclusively before writing, so a file that appeared after the scan
-            // above fails the create instead of being written over.
             Files.createDirectories(created.getAbsoluteFile().toPath().getParent());
-            try {
-                claimNewFile(created.toPath());
-            } catch (FileAlreadyExistsException appeared) {
-                return false;
-            }
-            boolean written = false;
-            try {
-                config.save(created);
-                written = true;
-            } finally {
-                if (!written) {
-                    // The file this create claimed is removed again, so the failure is not read as
-                    // "a file already exists" and a retry can succeed.
-                    Files.deleteIfExists(created.toPath());
+            String unsupported = crashSafeUnsupportedReason(created, true);
+            YamlConfiguration yaml = kitYaml(kit);
+            if (unsupported == null) {
+                if (CrashSafeYamlFiles.create(created, yaml.getValues(false)) != OperatorFiles.WriteResult.WRITTEN) {
+                    return false;
                 }
+            } else {
+                // Legacy creation still claims exclusively; a late existing entry is never overwritten or deleted.
+                try {
+                    claimNewFile(created.toPath());
+                } catch (FileAlreadyExistsException appeared) {
+                    return false;
+                }
+                boolean written = false;
+                try {
+                    yaml.save(created);
+                    written = true;
+                } finally {
+                    if (!written) {
+                        Files.deleteIfExists(created.toPath());
+                    }
+                }
+                warnUnprotectedWrite(created, unsupported);
             }
             kit.setLoadedFrom(readSnapshot(created));
             return true;
         } catch (IOException e) {
-            logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name, e.getMessage()));
+            logger.error(String.format(plugin.i18n("kits.log.save_file_failed"), name,
+                    e.getClass().getSimpleName() + ": " + e.getMessage()));
             return false;
         }
+    }
+
+    /** Claims only the legacy create target; a seam for a file appearing after the capability preflight. */
+    void claimNewFile(Path file) throws IOException {
+        Files.createFile(file);
     }
 
     /** Every key of a kit, as a kit file holds it; a catalogue fallback display name is left out. */

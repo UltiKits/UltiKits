@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * repository's own records (UltiKits/UltiTools-Reborn#474, #544).
  * <ul>
  *   <li>{@code api-version} is the lowest UltiTools level this build runs on. This module is built
- *       against UltiTools 6.3.0, so it must declare {@code 630}: an older framework then refuses it at
+ *       against UltiTools 6.4.0, so it must declare {@code 640}: an older framework then refuses it at
  *       load with a clear warning instead of failing part-way through start-up.</li>
  *   <li>{@code identify-string} is the key the framework's update check and {@code /upm update} use to
  *       find this module in the UltiCloud catalogue; a module without it is skipped by both. It must
@@ -38,17 +38,17 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Files outside the test classpath are found from the project directory Surefire reports
  * ({@code basedir}), not from whatever directory the runner started in.
  */
-@DisplayName("Release metadata: api-version 630, identify-string and the README's framework floor")
+@DisplayName("Release metadata: api-version 640, identify-string and the README's framework floor")
 class PluginMetadataTest {
 
-    /** The UltiTools level this module needs: 6.3, encoded the way {@code api-version} encodes it. */
-    private static final int REQUIRED_API_VERSION = 630;
+    /** The UltiTools level this module needs: 6.4, encoded the way {@code api-version} encodes it. */
+    private static final int REQUIRED_API_VERSION = 640;
 
-    /** The README's UltiTools-API badge, e.g. {@code UltiTools--API-6.3.0%2B-blue}. */
+    /** The README's UltiTools-API badge, e.g. {@code UltiTools--API-6.4.0%2B-blue}. */
     private static final Pattern BADGE = Pattern.compile("UltiTools--API-(\\d+\\.\\d+\\.\\d+)(?:%2B|\\+)?-");
 
     /**
-     * A minimum-version claim in prose: {@code 6.3.0+}, {@code 6.3.0 或更高版本}, {@code 6.3.0 or later}.
+     * A minimum-version claim in prose: {@code 6.4.0+}, {@code 6.4.0 或更高版本}, {@code 6.4.0 or later}.
      * Only major version 6 is read, which in these READMEs is always the framework (module versions are
      * 1.x/2.x; Paper and Java are written with two components).
      */
@@ -83,7 +83,7 @@ class PluginMetadataTest {
 
     /**
      * Whether {@code major.minor.patch} is exactly the framework level {@code apiVersion} encodes:
-     * {@code 630} is major 6, minor 3. The patch never counts.
+     * {@code 640} is major 6, minor 4. The patch never counts.
      */
     static boolean namesLevel(String version, int apiVersion) {
         String[] parts = version.split("\\.");
@@ -93,8 +93,8 @@ class PluginMetadataTest {
     }
 
     @Test
-    @DisplayName("plugin.yml declares api-version 630")
-    void declaresApiVersion630() throws Exception {
+    @DisplayName("plugin.yml declares api-version 640")
+    void declaresApiVersion640() throws Exception {
         YamlConfiguration yml = shippedPluginYml();
         // Control: this is the module's own descriptor, not some other plugin.yml on the classpath.
         assertThat(yml.getString("main")).as("control: main class").isEqualTo(UltiKits.class.getName());
@@ -116,14 +116,14 @@ class PluginMetadataTest {
     }
 
     @Test
-    @DisplayName("the README's badge and every framework minimum in its prose name UltiTools 6.3")
+    @DisplayName("the README's badge and every framework minimum in its prose name UltiTools 6.4")
     void readmeNamesTheDeclaredFloor() throws Exception {
         String text = read(projectFile("README.md"));
         Matcher badge = BADGE.matcher(text);
         // Control: the badge is really there and parsed, so the comparison below is not vacuous.
         assertThat(badge.find()).as("README carries the UltiTools-API badge").isTrue();
         assertThat(namesLevel(badge.group(1), REQUIRED_API_VERSION))
-                .as("badge %s names UltiTools 6.3", badge.group(1))
+                .as("badge %s names UltiTools 6.4", badge.group(1))
                 .isTrue();
 
         List<String> stale = new ArrayList<>();
@@ -133,18 +133,18 @@ class PluginMetadataTest {
                 stale.add(claim.group());
             }
         }
-        assertThat(stale).as("framework minimums in the README that are not 6.3").isEmpty();
+        assertThat(stale).as("framework minimums in the README that are not 6.4").isEmpty();
     }
 
     @Test
-    @DisplayName("control: 6.3.0 and 6.3.12 name 630; 6.2.0, 6.2.10, 6.4.0 and 7.3.0 do not")
+    @DisplayName("control: 6.4.0 and 6.4.12 name 640; 6.2.0, 6.2.10, 6.3.0 and 7.3.0 do not")
     void levelComparison() {
-        assertThat(namesLevel("6.3.0", 630)).isTrue();
-        assertThat(namesLevel("6.3.12", 630)).isTrue();
-        assertThat(namesLevel("6.2.0", 630)).isFalse();
-        assertThat(namesLevel("6.2.10", 630)).isFalse();
-        assertThat(namesLevel("6.4.0", 630)).isFalse();
-        assertThat(namesLevel("7.3.0", 630)).isFalse();
+        assertThat(namesLevel("6.4.0", 640)).isTrue();
+        assertThat(namesLevel("6.4.12", 640)).isTrue();
+        assertThat(namesLevel("6.2.0", 640)).isFalse();
+        assertThat(namesLevel("6.2.10", 640)).isFalse();
+        assertThat(namesLevel("6.3.0", 640)).isFalse();
+        assertThat(namesLevel("7.3.0", 640)).isFalse();
     }
 
     @Test
